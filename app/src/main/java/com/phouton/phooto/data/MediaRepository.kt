@@ -1,7 +1,6 @@
 package com.phouton.phooto.data
 
 import android.content.ContentUris
-import android.content.ContentValues
 import android.content.Context
 import android.net.Uri
 import android.provider.DocumentsContract
@@ -36,48 +35,157 @@ fun mediaCollectionUri(isVideo: Boolean, id: Long): Uri {
     return ContentUris.withAppendedId(collection, id)
 }
 
+/**
+ * Canonical relative directory path (no storage prefix, no trailing slash), e.g.
+ * "DCIM/Camera". SAF items derive it from their parent doc id ("primary:DCIM/Camera"),
+ * MediaStore items from RELATIVE_PATH ("DCIM/Camera/").
+ */
+private fun MediaItem.canonicalDirPath(): String? = if (safTreeUri != null) {
+    bucketId.substringAfter(":").trim('/')
+} else {
+    relativePath?.trim('/')
+}
+
+/** Case-insensitive grouping key derived from [canonicalDirPath]. */
+private fun MediaItem.canonicalDirKey(): String? = canonicalDirPath()?.lowercase()
+
+/**
+ * Canonical relative file path used to dedup SAF-browsed items against MediaStore items
+ * (e.g. "DCIM/Camera/img.jpg"). SAF doc ids embed the path; MediaStore items derive it
+ * from RELATIVE_PATH + DISPLAY_NAME. Lower-cased for case-insensitive comparison.
+ */
+private fun MediaItem.canonicalPath(): String? {
+    val raw = if (safTreeUri != null) {
+        uri.lastPathSegment?.substringAfter(":")
+    } else {
+        val rel = relativePath ?: return null
+        val name = displayName ?: return null
+        rel + name
+    } ?: return null
+    return raw.lowercase()
+}
+
 object MediaRepository {
+
+    // Bounds for recursive SAF tree browsing to keep load times sane.
+    private const val MaxSafItems = 2000
+    private const val MaxSafDepth = 12
+
+    private val MediaProjection = arrayOf(
+        MediaStore.Files.FileColumns._ID,
+        MediaStore.Files.FileColumns.MEDIA_TYPE,
+        MediaStore.Files.FileColumns.BUCKET_ID,
+        MediaStore.Files.FileColumns.BUCKET_DISPLAY_NAME,
+        MediaStore.Files.FileColumns.RELATIVE_PATH,
+        MediaStore.Files.FileColumns.DISPLAY_NAME,
+        MediaStore.Files.FileColumns.DATE_ADDED,
+    )
 
     suspend fun load(context: Context): GalleryContent = withContext(Dispatchers.IO) {
         val settings = SettingsRepository.settings.value
-        val selectedPrefixes = settings.selectedTreeUris.mapNotNull { uri ->
-            treeUriToRelativePath(context, uri)
-        }
-        // Resolve all .nomedia directories once (single query), not per item.
-        val noMediaDirs: Set<String> = if (settings.respectNoMedia) {
-            queryNoMediaDirs(context)
-        } else {
-            emptySet()
-        }
 
-        val items = queryMedia(context)
-            .filter { item -> passesFilters(item, settings, selectedPrefixes, noMediaDirs) }
+        if (settings.requireExplicit) {
+            // Allow-list: directly browse each granted SAF tree (reveals .nomedia
+            // content, which MediaStore never indexes), supplemented by MediaStore
+            // items under the same relative prefixes (deduped).
+            val safItems = settings.selectedTreeUris
+                .flatMap { treeUri ->
+                    try {
+                        browseTree(context, treeUri)
+                    } catch (e: Exception) {
+                        // Grant expired / provider failure: fall back to the
+                        // MediaStore supplement for this tree.
+                        emptyList()
+                    }
+                }
+            val safPaths = safItems.mapNotNull { it.canonicalPath() }.toHashSet()
+
+            val selectedPrefixes = settings.selectedTreeUris.mapNotNull { treeUri ->
+                treeUriToRelativePath(context, treeUri)
+            }
+            val mediaItems = if (selectedPrefixes.isEmpty()) {
+                emptyList()
+            } else {
+                queryMedia(context)
+                    .filter { item ->
+                        val p = item.relativePath ?: return@filter false
+                        selectedPrefixes.any { p.startsWith(it) }
+                    }
+                    .filterNot { item -> item.canonicalPath() in safPaths }
+            }
+
+            val items = safItems + mediaItems
+            buildFolders(items)
+        } else {
+            // Deny-list: pure MediaStore path + existing filters (unchanged).
+            val selectedPrefixes = settings.selectedTreeUris.mapNotNull { uri ->
+                treeUriToRelativePath(context, uri)
+            }
+            // Resolve all .nomedia directories once (single query), not per item.
+            val noMediaDirs: Set<String> = if (settings.respectNoMedia) {
+                queryNoMediaDirs(context)
+            } else {
+                emptySet()
+            }
+
+            val items = queryMedia(context)
+                .filter { item -> passesFilters(item, settings, selectedPrefixes, noMediaDirs) }
+            buildFolders(items)
+        }
+    }
+
+    /**
+     * Groups items into folders by canonical directory path so that SAF-browsed and
+     * MediaStore-sourced items for the same physical directory land in one album.
+     */
+    private fun buildFolders(items: List<MediaItem>): GalleryContent {
         val loose = mutableListOf<MediaItem>()
         val grouped = LinkedHashMap<String, MutableList<MediaItem>>()
+        val dirNames = HashMap<String, String>()      // key -> display dir path
+        val safTrees = HashMap<String, String?>()      // key -> safTreeUri
+        val safDocIds = HashMap<String, String?>()     // key -> saf parent doc id
+        val mediaStoreBucketIds = HashMap<String, String?>() // key -> MediaStore bucket id
 
         for (item in items) {
-            if (item.relativePath.isNullOrBlank()) {
+            if (item.canonicalDirPath().isNullOrBlank()) {
                 loose.add(item)
-            } else {
-                grouped.getOrPut(item.bucketId) { mutableListOf() }.add(item)
+                continue
+            }
+            val key = item.canonicalDirKey() ?: continue
+            val dirPath = item.canonicalDirPath()
+            grouped.getOrPut(key) { mutableListOf() }.add(item)
+            if (dirPath != null) dirNames.putIfAbsent(key, dirPath)
+            if (item.safTreeUri != null) {
+                safTrees.putIfAbsent(key, item.safTreeUri)
+                if (safDocIds[key] == null) safDocIds[key] = item.bucketId
+            }
+            if (item.mediaStoreBucketId() != null) {
+                mediaStoreBucketIds.putIfAbsent(key, item.mediaStoreBucketId())
             }
         }
 
-        val folders = grouped.values
-            .map { bucket ->
+        val folders = grouped.entries
+            .map { (key, bucket) ->
                 val sorted = bucket.sortedByDescending { it.dateAdded }
+                val dir = dirNames[key] ?: "Unknown"
                 MediaFolder(
-                    bucketId = bucket[0].bucketId,
-                    name = bucket[0].bucketName,
+                    bucketId = dir,
+                    name = dir.substringAfterLast("/").ifBlank { "Storage" },
                     count = bucket.size,
                     previews = sorted.take(3).map { it.uri },
                     dateAdded = sorted.first().dateAdded,
+                    safTreeUri = safTrees[key],
+                    safDocId = safDocIds[key],
+                    mediaStoreBucketId = mediaStoreBucketIds[key],
                 )
             }
             .sortedByDescending { it.dateAdded }
 
-        GalleryContent(folders = folders, looseItems = loose)
+        return GalleryContent(folders = folders, looseItems = loose)
     }
+
+    private fun MediaItem.mediaStoreBucketId(): String? =
+        if (safTreeUri == null && bucketId.isNotBlank()) bucketId else null
 
     /**
      * Applies the Content Discovery settings:
@@ -131,6 +239,138 @@ object MediaRepository {
         return dirs
     }
 
+    // ---------------------------------------------------------------------------
+    // SAF tree browsing
+    //
+    // MediaStore never indexes files inside .nomedia directories, so the only way
+    // to show them is to enumerate the granted tree directly through the Storage
+    // Access Framework. ExternalStorageProvider does NOT hide .nomedia directories
+    // when listing children of a granted tree (only Android/data, Android/obb and
+    // Android/sandbox are hidden).
+    // ---------------------------------------------------------------------------
+
+    /** Recursively browses a granted SAF tree and returns image/video items inside it. */
+    private fun browseTree(context: Context, treeUri: String): List<MediaItem> {
+        val tree = Uri.parse(treeUri)
+        val rootDocId = DocumentsContract.getTreeDocumentId(tree)
+        val rootName = rootDocId.substringAfter(":").substringAfterLast("/")
+            .ifBlank { "Storage" }
+
+        val items = mutableListOf<MediaItem>()
+        // Iterative DFS. Each entry: (parentDocId, parentName, depth).
+        val stack = ArrayDeque<Triple<String, String, Int>>()
+        stack.add(Triple(rootDocId, rootName, 0))
+
+        while (stack.isNotEmpty()) {
+            if (items.size >= MaxSafItems) break
+            val (parentId, parentName, depth) = stack.removeLast()
+            if (depth > MaxSafDepth) continue
+
+            val childrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(
+                tree, parentId,
+            )
+            val projection = arrayOf(
+                DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+                DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+                DocumentsContract.Document.COLUMN_MIME_TYPE,
+                DocumentsContract.Document.COLUMN_LAST_MODIFIED,
+                DocumentsContract.Document.COLUMN_SIZE,
+            )
+            context.contentResolver.query(
+                childrenUri,
+                projection,
+                null,
+                null,
+                null,
+            )?.use { cursor ->
+                val idCol = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_DOCUMENT_ID)
+                val nameCol = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_DISPLAY_NAME)
+                val mimeCol = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_MIME_TYPE)
+                val modCol = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_LAST_MODIFIED)
+                while (cursor.moveToNext()) {
+                    if (items.size >= MaxSafItems) break
+                    val docId = cursor.getString(idCol)
+                    val name = cursor.getString(nameCol)
+                    val mime = cursor.getString(mimeCol)
+                    val isDir = mime == DocumentsContract.Document.MIME_TYPE_DIR
+
+                    if (isDir) {
+                        if (docId != null) {
+                            stack.add(Triple(docId, name ?: docId, depth + 1))
+                        }
+                    } else if (mime != null && (mime.startsWith("image/") || mime.startsWith("video/"))) {
+                        if (docId == null) continue
+                        items.add(
+                            MediaItem(
+                                id = 0L,
+                                uri = DocumentsContract.buildDocumentUriUsingTree(tree, docId),
+                                bucketId = parentId,
+                                bucketName = parentName,
+                                relativePath = null,
+                                dateAdded = if (modCol >= 0) cursor.getLong(modCol) / 1000L else 0L,
+                                isVideo = mime.startsWith("video/"),
+                                displayName = name,
+                                safTreeUri = treeUri,
+                            ),
+                        )
+                    }
+                }
+            }
+        }
+        return items
+    }
+
+    /** Browses a single directory inside a granted SAF tree (no recursion). */
+    private fun browseDirectory(context: Context, treeUri: String, docId: String): List<MediaItem> {
+        val tree = Uri.parse(treeUri)
+        val parentName = docId.substringAfterLast("/")
+        val items = mutableListOf<MediaItem>()
+
+        val childrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(tree, docId)
+        val projection = arrayOf(
+            DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+            DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+            DocumentsContract.Document.COLUMN_MIME_TYPE,
+            DocumentsContract.Document.COLUMN_LAST_MODIFIED,
+        )
+        context.contentResolver.query(
+            childrenUri,
+            projection,
+            null,
+            null,
+            null,
+        )?.use { cursor ->
+            val idCol = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_DOCUMENT_ID)
+            val nameCol = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_DISPLAY_NAME)
+            val mimeCol = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_MIME_TYPE)
+            val modCol = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_LAST_MODIFIED)
+            while (cursor.moveToNext()) {
+                val docIdChild = cursor.getString(idCol)
+                val name = cursor.getString(nameCol)
+                val mime = cursor.getString(mimeCol)
+                val isDir = mime == DocumentsContract.Document.MIME_TYPE_DIR
+                if (isDir) continue
+                if (mime != null && (mime.startsWith("image/") || mime.startsWith("video/"))) {
+                    if (docIdChild == null) continue
+                    items.add(
+                        MediaItem(
+                            id = 0L,
+                            uri = DocumentsContract.buildDocumentUriUsingTree(tree, docIdChild),
+                            bucketId = docId,
+                            bucketName = parentName,
+                            relativePath = null,
+                            dateAdded = if (modCol >= 0) cursor.getLong(modCol) / 1000L else 0L,
+                            isVideo = mime.startsWith("video/"),
+                            displayName = name,
+                            safTreeUri = treeUri,
+                        ),
+                    )
+                }
+            }
+        }
+        return items
+    }
+
     /**
      * Resolves a persisted SAF tree URI to a MediaStore relative path (e.g. "DCIM/").
      * Returns null if it can't be resolved.
@@ -140,7 +380,6 @@ object MediaRepository {
             val uri = Uri.parse(treeUri)
             val docId = DocumentsContract.getTreeDocumentId(uri)
             // docId looks like "primary:DCIM" or "primary:DCIM/Camera".
-            val storageId = docId.substringBefore(":")
             val subPath = docId.substringAfter(":", "")
             val raw = subPath.trim('/')
             val relative = if (raw.isEmpty()) "" else raw + "/"
@@ -150,9 +389,31 @@ object MediaRepository {
         }
     }
 
-    suspend fun loadBucket(context: Context, bucketId: String): List<MediaItem> =
+    suspend fun loadBucket(context: Context, folder: MediaFolder): List<MediaItem> =
         withContext(Dispatchers.IO) {
-            queryMedia(context, bucketId).sortedByDescending { it.dateAdded }
+            val safTree = folder.safTreeUri
+            val safDoc = folder.safDocId
+            if (safTree != null && safDoc != null) {
+                // SAF folder (allow-list): browse the exact directory and merge any
+                // MediaStore items under the same path (deduped).
+                try {
+                    val saf = browseDirectory(context, safTree, safDoc)
+                    val media = queryMediaByPath(context, folder.bucketId)
+                    val safPaths = saf.mapNotNull { it.canonicalPath() }.toHashSet()
+                    (saf + media.filterNot { it.canonicalPath() in safPaths })
+                        .sortedByDescending { it.dateAdded }
+                } catch (e: Exception) {
+                    queryMediaByPath(context, folder.bucketId).sortedByDescending { it.dateAdded }
+                }
+            } else if (folder.mediaStoreBucketId != null) {
+                // Deny-list MediaStore folder.
+                queryMedia(context, folder.mediaStoreBucketId)
+                    .sortedByDescending { it.dateAdded }
+            } else {
+                // Allow-list folder whose SAF browse failed (grant expired): fall back
+                // to MediaStore items under the directory path.
+                queryMediaByPath(context, folder.bucketId).sortedByDescending { it.dateAdded }
+            }
         }
 
     /** Decodes the full-resolution bitmap for [uri]. */
@@ -171,25 +432,57 @@ object MediaRepository {
     suspend fun loadInfo(context: Context, item: MediaItem): MediaInfo? =
         withContext(Dispatchers.IO) {
             try {
-                val projection = arrayOf(
-                    MediaStore.MediaColumns.DISPLAY_NAME,
-                    MediaStore.MediaColumns.SIZE,
-                    MediaStore.MediaColumns.DATE_ADDED,
-                )
-                context.contentResolver.query(
-                    item.uri,
-                    projection,
-                    null,
-                    null,
-                    null,
-                )?.use { cursor ->
-                    if (cursor.moveToFirst()) {
-                        val name = cursor.getString(0) ?: item.uri.lastPathSegment ?: "Unknown"
-                        val size = cursor.getLong(1)
-                        val dateAdded = cursor.getLong(2)
-                        MediaInfo(name, size, 0, 0, dateAdded)
-                    } else {
-                        null
+                if (DocumentsContract.isDocumentUri(context, item.uri)) {
+                    // SAF item: read document columns directly.
+                    val projection = arrayOf(
+                        DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+                        DocumentsContract.Document.COLUMN_SIZE,
+                        DocumentsContract.Document.COLUMN_LAST_MODIFIED,
+                    )
+                    context.contentResolver.query(
+                        item.uri,
+                        projection,
+                        null,
+                        null,
+                        null,
+                    )?.use { cursor ->
+                        if (cursor.moveToFirst()) {
+                            val name = cursor.getString(0)
+                                ?: item.uri.lastPathSegment ?: "Unknown"
+                            val size = cursor.getLong(1)
+                            val lastModified = cursor.getLong(2)
+                            MediaInfo(
+                                name = name,
+                                sizeBytes = size,
+                                width = 0,
+                                height = 0,
+                                dateAdded = if (lastModified > 0) lastModified / 1000L else 0L,
+                            )
+                        } else {
+                            null
+                        }
+                    }
+                } else {
+                    val projection = arrayOf(
+                        MediaStore.MediaColumns.DISPLAY_NAME,
+                        MediaStore.MediaColumns.SIZE,
+                        MediaStore.MediaColumns.DATE_ADDED,
+                    )
+                    context.contentResolver.query(
+                        item.uri,
+                        projection,
+                        null,
+                        null,
+                        null,
+                    )?.use { cursor ->
+                        if (cursor.moveToFirst()) {
+                            val name = cursor.getString(0) ?: item.uri.lastPathSegment ?: "Unknown"
+                            val size = cursor.getLong(1)
+                            val dateAdded = cursor.getLong(2)
+                            MediaInfo(name, size, 0, 0, dateAdded)
+                        } else {
+                            null
+                        }
                     }
                 }
             } catch (e: Exception) {
@@ -201,44 +494,67 @@ object MediaRepository {
     suspend fun delete(context: Context, item: MediaItem): Boolean =
         withContext(Dispatchers.IO) {
             try {
-                context.contentResolver.delete(
-                    item.uri,
-                    null,
-                    null,
-                ) > 0
+                if (DocumentsContract.isDocumentUri(context, item.uri)) {
+                    // SAF item: delete through the document provider (needs write grant).
+                    DocumentsContract.deleteDocument(
+                        context.contentResolver,
+                        item.uri,
+                    )
+                } else {
+                    context.contentResolver.delete(
+                        item.uri,
+                        null,
+                        null,
+                    ) > 0
+                }
             } catch (e: Exception) {
                 false
             }
         }
 
-    private fun queryMedia(context: Context, bucketId: String? = null): List<MediaItem> {
-        val collection = MediaStore.Files.getContentUri("external")
-        val projection = arrayOf(
-            MediaStore.Files.FileColumns._ID,
-            MediaStore.Files.FileColumns.MEDIA_TYPE,
-            MediaStore.Files.FileColumns.BUCKET_ID,
-            MediaStore.Files.FileColumns.BUCKET_DISPLAY_NAME,
-            MediaStore.Files.FileColumns.RELATIVE_PATH,
-            MediaStore.Files.FileColumns.DATE_ADDED,
+    /** Queries MediaStore image/video rows, optionally restricted to a bucket. */
+    private fun queryMedia(context: Context, bucketId: String? = null): List<MediaItem> =
+        queryMediaInternal(
+            context,
+            selection = if (bucketId != null) {
+                "${MediaStore.Files.FileColumns.MEDIA_TYPE} IN (?, ?) AND " +
+                    "${MediaStore.Files.FileColumns.BUCKET_ID} = ?"
+            } else {
+                "${MediaStore.Files.FileColumns.MEDIA_TYPE} IN (?, ?)"
+            },
+            selectionArgs = mutableListOf(
+                MediaStore.Files.FileColumns.MEDIA_TYPE_IMAGE.toString(),
+                MediaStore.Files.FileColumns.MEDIA_TYPE_VIDEO.toString(),
+            ).apply {
+                if (bucketId != null) add(bucketId)
+            }.toTypedArray(),
         )
-        val selection = if (bucketId != null) {
-            "${MediaStore.Files.FileColumns.MEDIA_TYPE} IN (?, ?) AND " +
-                "${MediaStore.Files.FileColumns.BUCKET_ID} = ?"
-        } else {
-            "${MediaStore.Files.FileColumns.MEDIA_TYPE} IN (?, ?)"
-        }
-        val selectionArgs = mutableListOf<String>(
-            MediaStore.Files.FileColumns.MEDIA_TYPE_IMAGE.toString(),
-            MediaStore.Files.FileColumns.MEDIA_TYPE_VIDEO.toString(),
-        ).apply {
-            if (bucketId != null) add(bucketId)
-        }.toTypedArray()
+
+    /** Queries MediaStore image/video rows that live exactly in [dirPath]. */
+    private fun queryMediaByPath(context: Context, dirPath: String): List<MediaItem> =
+        queryMediaInternal(
+            context,
+            selection = "${MediaStore.Files.FileColumns.MEDIA_TYPE} IN (?, ?) AND " +
+                "${MediaStore.Files.FileColumns.RELATIVE_PATH} = ?",
+            selectionArgs = arrayOf(
+                MediaStore.Files.FileColumns.MEDIA_TYPE_IMAGE.toString(),
+                MediaStore.Files.FileColumns.MEDIA_TYPE_VIDEO.toString(),
+                dirPath.trimEnd('/') + "/",
+            ),
+        )
+
+    private fun queryMediaInternal(
+        context: Context,
+        selection: String,
+        selectionArgs: Array<String>,
+    ): List<MediaItem> {
+        val collection = MediaStore.Files.getContentUri("external")
         val sortOrder = "${MediaStore.Files.FileColumns.DATE_ADDED} DESC"
 
         val items = mutableListOf<MediaItem>()
         context.contentResolver.query(
             collection,
-            projection,
+            MediaProjection,
             selection,
             selectionArgs,
             sortOrder,
@@ -248,6 +564,7 @@ object MediaRepository {
             val bucketIdCol = cursor.getColumnIndexOrThrow(MediaStore.Files.FileColumns.BUCKET_ID)
             val bucketNameCol = cursor.getColumnIndexOrThrow(MediaStore.Files.FileColumns.BUCKET_DISPLAY_NAME)
             val pathCol = cursor.getColumnIndexOrThrow(MediaStore.Files.FileColumns.RELATIVE_PATH)
+            val nameCol = cursor.getColumnIndexOrThrow(MediaStore.Files.FileColumns.DISPLAY_NAME)
             val dateCol = cursor.getColumnIndexOrThrow(MediaStore.Files.FileColumns.DATE_ADDED)
 
             while (cursor.moveToNext()) {
@@ -262,6 +579,7 @@ object MediaRepository {
                         relativePath = cursor.getString(pathCol),
                         dateAdded = cursor.getLong(dateCol),
                         isVideo = mediaType == MediaStore.Files.FileColumns.MEDIA_TYPE_VIDEO,
+                        displayName = cursor.getString(nameCol),
                     ),
                 )
             }

@@ -204,6 +204,8 @@ fun GalleryScreen() {
         viewerItems = viewerItems?.filterNot { it.uri == deletedUri }
         albumReloadKey += 1
         closeViewer()
+        // Refresh the root grid so folder counts/previews update after a delete.
+        reload()
     }
 
     // System delete consent dialog (API 30+). On success, remove from grid + cache.
@@ -222,11 +224,14 @@ fun GalleryScreen() {
 
     val requestDelete = { item: MediaItem ->
         scope.launch {
+            // SAF items (from granted tree browsing) delete directly through the
+            // document provider; their id is 0 and not a MediaStore id.
+            val isSafItem = android.provider.DocumentsContract.isDocumentUri(context, item.uri)
             // Try direct delete first (works for app-owned files / API 29+).
             val direct = MediaRepository.delete(context, item)
             if (direct) {
                 removeDeleted(item.uri)
-            } else {
+            } else if (!isSafItem) {
                 // Fallback: request user consent for other apps' files via the
                 // system intent sender (RecoverableSecurityException path).
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
@@ -416,7 +421,7 @@ private fun MainGalleryGrid(
                     items(current.folders, key = { "folder:${it.bucketId}" }) { folder ->
                         FolderTile(folder = folder, onClick = { rect -> onFolderClick(folder, rect) })
                     }
-                    items(current.looseItems, key = { "item:${it.id}" }) { item ->
+                    items(current.looseItems, key = { "item:${it.uri}" }) { item ->
                         ImageTile(item, onClick = { rect ->
                             onItemClick(current.looseItems, current.looseItems.indexOf(item), rect)
                         })
@@ -441,7 +446,7 @@ private fun AlbumGrid(
     var items by remember { mutableStateOf<List<MediaItem>?>(null) }
 
     LaunchedEffect(folder.bucketId, reloadKey) {
-        items = MediaRepository.loadBucket(context, folder.bucketId)
+        items = MediaRepository.loadBucket(context, folder)
     }
 
     // Fade the whole album out on reverse so the root Albums view shows through.

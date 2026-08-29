@@ -62,10 +62,13 @@ fun SettingsScreen(onBack: () -> Unit, onSettingsChanged: () -> Unit) {
     ) { uri: Uri? ->
         if (uri != null) {
             try {
-                context.contentResolver.takePersistableUriPermission(
-                    uri,
-                    Intent.FLAG_GRANT_READ_URI_PERMISSION,
-                )
+                // Persist BOTH read + write so SAF deletes inside the granted tree
+                // keep working across reboots. OpenDocumentTree grants both when the
+                // user picks a tree, so OR-ing the constants mirrors the returned
+                // intent flags (which the contract doesn't expose).
+                val takeFlags = Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                    Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                context.contentResolver.takePersistableUriPermission(uri, takeFlags)
             } catch (_: Exception) {
                 // Non-persistable provider; access still valid for this session.
             }
@@ -125,7 +128,7 @@ fun SettingsScreen(onBack: () -> Unit, onSettingsChanged: () -> Unit) {
             item {
                 SettingsToggleRow(
                     title = "Respect .nomedia",
-                    subtitle = "Hide media in folders marked with a .nomedia file.",
+                    subtitle = "Hide MediaStore media in .nomedia folders. Folders you add are always shown.",
                     checked = settings.respectNoMedia,
                     onCheckedChange = {
                         SettingsRepository.setRespectNoMedia(it)
@@ -138,7 +141,7 @@ fun SettingsScreen(onBack: () -> Unit, onSettingsChanged: () -> Unit) {
                 SettingsToggleRow(
                     title = "Require explicit permission",
                     subtitle = if (settings.requireExplicit) {
-                        "Show only media inside the directories you add."
+                        "Show only media inside the directories you add (including .nomedia folders)."
                     } else {
                         "Show all media, except the directories you add."
                     },

@@ -58,7 +58,7 @@ app/src/main/java/com/phouton/phooto/
 │   └── theme/Theme.kt         # AMOLED shadcn palette + MaterialTheme
 └── data/
     ├── MediaItem.kt           # MediaItem / MediaFolder models
-    ├── MediaRepository.kt     # MediaStore queries + Content Discovery filtering
+    ├── MediaRepository.kt     # MediaStore + SAF tree browsing, Content Discovery
     └── SettingsRepository.kt  # SharedPreferences-backed settings (StateFlow)
 ```
 
@@ -149,15 +149,20 @@ edge-to-edge rendering.
 
 ### 5.5 Settings — Content Discovery
 - **Gear icon** → Settings screen (slide transition).
-- **Respect .nomedia** (toggle): hides media whose directory (or ancestor) has a
-  `.nomedia` marker. Resolved once per load via a single query.
+- **Respect .nomedia** (toggle): hides MediaStore-indexed media whose directory (or
+  ancestor) has a `.nomedia` marker. Folders you explicitly add are always shown.
 - **Require explicit permission** (toggle): switches between allow-list and deny-list.
 - **Directory list** (always available; behavior depends on the flag):
   - **ON (allow-list):** only media inside selected directories is shown; each selected
-    directory appears as an album. Empty list → nothing shown.
+    directory (and subdirectory with media) appears as an album. Empty list → nothing shown.
   - **OFF (deny-list):** all media is shown except the selected directories.
+- **SAF directory browsing:** in allow-list mode, each granted directory is enumerated
+  directly through the Storage Access Framework (recursive tree browse), so content
+  inside `.nomedia` folders that Android's media scanner never indexes still appears.
+  MediaStore items under the same directories are merged in and deduplicated by path.
 - Directory picker uses the system **Storage Access Framework** (`OpenDocumentTree`) with
-  `takePersistableUriPermission` so access survives restarts.
+  `takePersistableUriPermission` (read + write) so access survives restarts and deletes
+  keep working.
 - Settings persist in SharedPreferences (`SettingsRepository`, exposed via `StateFlow`).
 
 ---
@@ -226,7 +231,9 @@ apk-output/phooto-arm64-android16-release.apk
 ## 8. Known Notes / Out of Scope
 
 - Crop is a placeholder ("Coming soon" toast).
-- `.nomedia` resolution relies on MediaStore indexing of `.nomedia` files; on some OEM
-  volumes it may not be indexed.
+- `.nomedia` content is shown only inside directories the user explicitly adds. Content
+  outside granted directories stays hidden because Android's media scanner never indexes
+  it — showing it device-wide would require `MANAGE_EXTERNAL_STORAGE` ("All files access"),
+  which Phooto intentionally does not request.
 - Selected-directory matching assumes the primary external volume (`primary:` tree URIs).
 - No network features, no cloud backup, no EXIF editing.

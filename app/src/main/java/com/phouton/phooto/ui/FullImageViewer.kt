@@ -85,7 +85,6 @@ private val DeleteRed = Color(0xFFEF4444)
  * - Swipe left/right: next/previous image (pager slide).
  * - Double-tap: animated zoom in/out around the tap point.
  * - Pinch: zoom/pan.
- * - Two-finger rotation: rotates the image in the gesture's direction.
  * - Long-press / swipe up: slides the action drawer up from the bottom.
  * - Swipe down (at 1x): dismisses.
  * - Counter pill (top-left): current/total.
@@ -307,18 +306,16 @@ private fun ZoomableImage(
 
     var scale by remember { mutableFloatStateOf(1f) }
     var offset by remember { mutableStateOf(Offset.Zero) }
-    var rotation by remember { mutableFloatStateOf(0f) }
 
     LaunchedEffect(scale) { onZoomedChange(scale > 1.01f) }
 
-    val transformableState = rememberTransformableState { centroid, zoomChange, panChange, rotationChange ->
+    val transformableState = rememberTransformableState { centroid, zoomChange, panChange, _ ->
         val newScale = (scale * zoomChange).coerceIn(1f, 5f)
         if (newScale != scale) {
             offset = offset + (centroid - offset) * (1f - zoomChange)
         }
         scale = newScale
         offset = offset + panChange
-        rotation = (rotation + rotationChange) % 360f
         val halfW = containerSize.width * (scale - 1f) / 2f
         val halfH = containerSize.height * (scale - 1f) / 2f
         offset = Offset(
@@ -403,7 +400,6 @@ private fun ZoomableImage(
                 .graphicsLayer {
                     scaleX = scale
                     scaleY = scale
-                    rotationZ = rotation
                     translationX = offset.x
                     translationY = offset.y
                 },

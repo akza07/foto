@@ -17,3 +17,9 @@ local.properties
 # Release signing credentials & keystore
 /keystore/
 keystore.properties
+
+# Built APK output
+/apk-output/
+
+# Knowledge graph caches
+/graphify-out/cache/
