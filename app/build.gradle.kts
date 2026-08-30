@@ -80,7 +80,6 @@ dependencies {
     implementation(libs.androidx.lifecycle.runtime.compose)
     implementation(libs.coil.compose)
     implementation(libs.coil.video)
-    implementation(libs.coil.gif)
     implementation(libs.haze)
     debugImplementation(libs.androidx.compose.ui.tooling)
 

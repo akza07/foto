@@ -53,6 +53,7 @@ import androidx.compose.ui.unit.sp
 import com.phouton.phooto.data.SettingsRepository
 import com.phouton.phooto.data.thumbnails.ExternalReloadSink
 import com.phouton.phooto.data.thumbnails.ThumbCache
+import com.phouton.phooto.data.thumbnails.VideoFrameCache
 import com.phouton.phooto.ui.theme.AmoledBlack
 import com.phouton.phooto.ui.theme.Border
 import com.phouton.phooto.ui.theme.Surface as ThemeSurface
@@ -144,18 +145,6 @@ fun SettingsScreen(onBack: () -> Unit, onSettingsChanged: () -> Unit) {
                     checked = settings.preferHighRefreshRate,
                     onCheckedChange = {
                         SettingsRepository.setPreferHighRefreshRate(it)
-                        onSettingsChanged()
-                    },
-                )
-            }
-
-            item {
-                SettingsToggleRow(
-                    title = "Animate previews in grid",
-                    subtitle = "Play GIFs and animated images at low frame rate inside the grid. Videos show a play badge and animate only in the viewer.",
-                    checked = settings.animateGridPreviews,
-                    onCheckedChange = {
-                        SettingsRepository.setAnimateGridPreviews(it)
                         onSettingsChanged()
                     },
                 )
@@ -339,6 +328,7 @@ fun SettingsScreen(onBack: () -> Unit, onSettingsChanged: () -> Unit) {
                 clearing = true
                 scope.launch {
                     ThumbCache.clear()
+                    VideoFrameCache.clear(context)
                     clearing = false
                     cacheBytes = 0L
                     // Ask gallery to reload so progress bar reappears and tiles re-decode.

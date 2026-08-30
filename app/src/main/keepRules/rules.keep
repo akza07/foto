@@ -4,6 +4,10 @@
 # For more details, see
 #   https://d.android.com/r/tools/r8/keep-rules
 
+# Keep Coil's video decoder and its service-loader entries.
+-keep class coil3.video.** { *; }
+-keep class coil3.util.DecoderServiceLoaderTarget { *; }
+
 # If your project uses WebView with JS, uncomment the following
 # and specify the fully qualified class name to the JavaScript interface
 # class:

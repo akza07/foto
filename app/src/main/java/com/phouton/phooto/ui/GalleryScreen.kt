@@ -709,8 +709,6 @@ private fun FolderStack(previews: List<Uri>, modifier: Modifier = Modifier) {
 @Composable
 private fun ImageTile(item: MediaItem, onClick: (Rect) -> Unit) {
     var tileRect by remember { mutableStateOf(Rect.Zero) }
-    val settings by SettingsRepository.settings.collectAsState()
-    val animated = item.isAnimated && settings.animateGridPreviews
     Box(
         modifier = Modifier
             .fillMaxWidth()
@@ -720,17 +718,28 @@ private fun ImageTile(item: MediaItem, onClick: (Rect) -> Unit) {
             .onGloballyPositioned { tileRect = it.boundsInWindow() }
             .clickable { onClick(tileRect) },
     ) {
-        Thumb(
-            item = item,
-            animated = animated,
-            pacingEnabled = animated,
-            modifier = Modifier.fillMaxSize(),
-        )
         if (item.isVideo) {
+            // Fast poster: MediaStore system thumbnail / private frame cache /
+            // Coil fallback. Never a black or shimmering gap for long.
+            VideoPosterThumb(
+                item = item,
+                modifier = Modifier.fillMaxSize(),
+            )
+        } else {
+            // Static thumbnail base for images (loads in ms).
+            Thumb(
+                item = item,
+                animated = false,
+                modifier = Modifier.fillMaxSize(),
+            )
+        }
+        if (item.isVideo) {
+            // Always show a prominent play badge, drawn last so it's on top.
             VideoBadge(
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
-                    .padding(6.dp),
+                    .padding(8.dp)
+                    .zIndex(1f),
             )
         }
     }
@@ -783,28 +792,25 @@ private fun Thumb(uri: Uri, modifier: Modifier = Modifier) {
 /**
  * Item-aware variant: routes through `ThumbCache` so each tile shares Coil's
  * disk + memory cache. [animated] controls whether GIF / animated WebP / HEIF
- * tiles play inline (true) or stay on the static first frame (false, default —
- * cheaper for grid scrolling). When [pacingEnabled] is true the animation is
- * capped to [ThumbCache.GRID_ANIMATION_FPS] and plays once.
+ * tiles play inline (true) or stay on the static first frame (false, default).
+ * Grid tiles loop 3× when animated; viewer uses infinite.
  */
 @Composable
 private fun Thumb(
     item: MediaItem,
     animated: Boolean = false,
-    pacingEnabled: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
     val key = remember(item.uri, item.lastModified, item.sizeBytes, item.mimeType) {
         ThumbCache.keyFor(item)
     }
-    val model = remember(item.uri, animated, pacingEnabled) {
+    val model = remember(item.uri, animated) {
         ThumbCache.buildRequest(
             ctx = context,
             item = item,
             key = key,
             animated = animated,
-            pacingEnabled = pacingEnabled,
         )
     }
     SubcomposeAsyncImage(
@@ -894,30 +900,29 @@ private fun FlyInTile(
             .background(SurfaceColor)
             .clickable { onClick(targetRect) },
     ) {
-        val settings by SettingsRepository.settings.collectAsState()
-        val animated = item.isAnimated && settings.animateGridPreviews
-        Thumb(
-            item = item,
-            animated = animated,
-            pacingEnabled = animated,
-            modifier = Modifier
-                .fillMaxSize()
-                .graphicsLayer {
-                    // Back cards darken toward their resting state, matching FolderStack's scrim.
-                    val p = ((phase.value - s) / (1f - s)).coerceIn(0f, 1f)
-                    val scrim = when (index) {
-                        1 -> (1f - p) * 0.15f
-                        2 -> (1f - p) * 0.35f
-                        else -> 0f
-                    }
-                    alpha = 1f - scrim
-                },
-        )
+        val thumbAlphaMod = Modifier
+            .fillMaxSize()
+            .graphicsLayer {
+                val p = ((phase.value - s) / (1f - s)).coerceIn(0f, 1f)
+                val scrim = when (index) {
+                    1 -> (1f - p) * 0.15f
+                    2 -> (1f - p) * 0.35f
+                    else -> 0f
+                }
+                alpha = 1f - scrim
+            }
+        // Static poster base for everything (fast, no blank tiles).
+        if (item.isVideo) {
+            VideoPosterThumb(item = item, modifier = thumbAlphaMod)
+        } else {
+            Thumb(item = item, animated = false, modifier = thumbAlphaMod)
+        }
         if (item.isVideo) {
             VideoBadge(
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
-                    .padding(6.dp),
+                    .padding(8.dp)
+                    .zIndex(1f),
             )
         }
     }

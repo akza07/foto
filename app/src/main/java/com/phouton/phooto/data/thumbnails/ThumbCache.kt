@@ -1,21 +1,16 @@
 package com.phouton.phooto.data.thumbnails
 
 import android.content.Context
-import android.graphics.Canvas
 import android.net.Uri
 import coil3.ImageLoader
 import coil3.SingletonImageLoader
 import coil3.disk.DiskCache
-import coil3.gif.AnimatedTransformation
-import coil3.gif.animatedTransformation
-import coil3.gif.repeatCount
 import coil3.memory.MemoryCache
 import coil3.request.CachePolicy
 import coil3.request.ImageRequest
 import coil3.size.Size
 import coil3.video.videoFramePercent
 import com.phouton.phooto.data.MediaItem
-import java.io.File
 import java.security.MessageDigest
 import okio.Path.Companion.toOkioPath
 import kotlinx.coroutines.CoroutineScope
@@ -99,6 +94,9 @@ object ThumbCache {
             diskCache = disk
 
             ImageLoader.Builder(ctx)
+                .components {
+                    add(coil3.video.VideoFrameDecoder.Factory())
+                }
                 .memoryCache {
                     MemoryCache.Builder()
                         .maxSizePercent(ctx, 0.25)
@@ -257,25 +255,17 @@ object ThumbCache {
      * request is sized to [targetSize] so the decode + memory footprint stay
      * small. With [animated] = true the source is decoded at [targetSize] too
      * (so the grid doesn't pay full-res), but via an animated decoder so GIF /
-     * WebP / HEIF frames play.
-     *
-     * When [pacingEnabled] is true, the animated drawable is capped to
-     * [GRID_ANIMATION_FPS] via an [AnimatedTransformation] and set to
-     * [repeatCount] = 1 (one-shot). The viewer passes `pacingEnabled = false`
-     * for full-speed infinite looping.
+     * WebP / HEIF frames play. Grid tiles animate continuously (no loop cap —
+     * a fixed repeatCount can blank an AnimatedImageDrawable after it finishes).
      */
-    @OptIn(coil3.annotation.ExperimentalCoilApi::class)
     fun buildRequest(
         ctx: Context,
         item: MediaItem,
         key: String,
         animated: Boolean,
         targetSize: Int = THUMB_LONG_EDGE_PX,
-        pacingEnabled: Boolean = false,
     ): ImageRequest {
-        // Grid tiles and viewer tiles share the same disk entry but need
-        // distinct memory keys so the decoded drawables don't collide.
-        val memKey = if (animated && pacingEnabled) "$key:grid:${GRID_ANIMATION_FPS}fps" else key
+        val memKey = if (animated) "$key:anim" else key
         val b = ImageRequest.Builder(ctx)
             .data(item.uri)
             .diskCacheKey(key)
@@ -287,39 +277,9 @@ object ThumbCache {
         if (item.isVideo) {
             b.videoFramePercent(VIDEO_FRAME_START_PERCENT)
         }
-        if (animated) {
-            if (pacingEnabled) {
-                b.repeatCount(1)
-                b.animatedTransformation(PacingTransformation(GRID_ANIMATION_FPS))
-            }
-            // else: infinite loop at native speed (Coil default) — don't set repeatCount.
-        }
+        // NOTE: intentionally no repeatCount() here. AnimatedImageDrawable loops
+        // forever by default; that's the desired grid preview behavior.
         return b.build()
-    }
-
-    @OptIn(coil3.annotation.ExperimentalCoilApi::class)
-    private class PacingTransformation(private val targetFps: Float) : AnimatedTransformation {
-        private var lastDrawnNanos = 0L
-        private val intervalNanos = (1_000_000_000L / targetFps).toLong()
-        override fun transform(canvas: Canvas): coil3.gif.PixelOpacity {
-            val now = System.nanoTime()
-            // Coil calls transform for every frame; returning TRANSLUCENT vs
-            // OPAQUE doesn't skip the frame, but we can throttle by sleeping
-            // is not an option. Instead we use frame-delay rewriting via the
-            // fact that AnimatedImageDrawable respects the drawable's own delay.
-            // For Coil 3, the pacing is best-effort: we coalesce by tracking
-            // time and letting the drawable advance only when interval elapsed.
-            // If not enough time passed, we still return but the caller will
-            // have drawn the previous frame again — effectively throttling.
-            // This is intentionally simple; GIFs already have ~100ms delays.
-            if (now - lastDrawnNanos < intervalNanos) {
-                // Not enough time — keep previous frame visible by doing nothing
-                // extra. The drawable's own clock will advance, but at ~8fps
-                // the visual effect is low-fps.
-            }
-            lastDrawnNanos = now
-            return coil3.gif.PixelOpacity.TRANSLUCENT
-        }
     }
 
     // ---- progress accounting -------------------------------------------------
