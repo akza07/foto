@@ -256,9 +256,6 @@ fun SettingsScreen(onBack: () -> Unit, onSettingsChanged: () -> Unit) {
                 )
             }
 
-            // ── Folders ──────────────────────────────────────────────
-            item { SettingsSectionHeader(title = "Folders", topPadding = 16.dp) }
-
             item {
                 Text(
                     text = when {
