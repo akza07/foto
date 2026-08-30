@@ -76,7 +76,6 @@ import coil3.compose.AsyncImage
 import coil3.request.ImageRequest
 import com.phouton.phooto.data.MediaItem
 import com.phouton.phooto.ui.theme.AmoledBlack
-import com.phouton.phooto.ui.theme.EmptySurface
 import com.phouton.phooto.ui.theme.Surface as ThemeSurface
 import com.phouton.phooto.ui.theme.TextMuted
 import com.phouton.phooto.ui.theme.TextPrimary
@@ -252,7 +251,9 @@ fun FullImageViewer(
         modifier = Modifier
             .fillMaxSize()
             .onSizeChanged { containerSize = it }
-            .background(AmoledBlack.copy(alpha = backgroundAlpha))
+            // Opaque pitch black so the grid never shows through; the alpha
+            // variant is only meaningful during the exit fade.
+            .background(if (leaving) AmoledBlack.copy(alpha = backgroundAlpha) else AmoledBlack)
             // Multi-touch watch: as soon as a second finger lands, every single-finger
             // gesture yields to the pinch-zoom on the image below.
             .pointerInput(Unit) {
@@ -291,6 +292,9 @@ fun FullImageViewer(
             state = pagerState,
             modifier = Modifier
                 .fillMaxSize()
+                // Explicit opaque black so sliding between pages never reveals
+                // any lighter backdrop (theme surface / grid) through gaps.
+                .background(AmoledBlack)
                 .clip(pagerShape)
                 .graphicsLayer {
                     scaleX = lerp(fromScaleX, 1f, p)
@@ -438,7 +442,7 @@ private fun ZoomableImage(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(EmptySurface)
+            .background(AmoledBlack)
             .onSizeChanged { containerSize = it },
     ) {
         AsyncImage(

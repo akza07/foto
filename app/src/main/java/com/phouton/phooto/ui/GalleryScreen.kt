@@ -21,6 +21,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -76,6 +77,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
@@ -382,6 +384,10 @@ private const val ReverseDurationMs = 260
 private const val StaggerCap = 20
 private const val MaxStagger = 0.6f
 
+// Max items AoT-warmed into the thumbnail cache per gallery load (newest
+// first). Caps the first-run decode cost for very large libraries.
+private const val CACHE_WARM_CAP = 600
+
 // Where each album tile sits in the collapsed pile (matches FolderStack exactly).
 // First item (index 0) is the front cover on top; back cards peek at 4/8dp.
 private fun collapsedOffsetDp(index: Int): Pair<Float, Float> = when (index) {
@@ -437,13 +443,21 @@ fun GalleryScreen(
     // Pre-warm the thumbnail cache for everything currently in the gallery.
     // Folder previews are URIs only (we don't keep the full MediaItem around
     // after buildFolders), so we warm them via their URI; loose items carry
-    // enough metadata to use the full key derivation.
+    // enough metadata to use the full key derivation. Folder contents are then
+    // AoT-warmed so opening any album is instant — all of this drives the same
+    // "Caching previews · N%" progress pill (only real work is counted).
     LaunchedEffect(content) {
         val snapshot = content ?: return@LaunchedEffect
         snapshot.folders.forEach { folder ->
             folder.previews.forEach { uri -> ThumbCache.enqueueIfMissingUri(uri) }
         }
         snapshot.looseItems.forEach { item -> ThumbCache.enqueueIfMissing(item) }
+
+        // AoT warm every item in every folder (deduped, chunked, capped).
+        val allItems = MediaRepository.loadAllItems(context, snapshot)
+            .distinctBy { it.uri }
+            .take(CACHE_WARM_CAP)
+        ThumbCache.enqueueAllIfMissing(allItems)
     }
 
     val doClose = {
@@ -1547,6 +1561,17 @@ private fun StackLayer(uri: Uri?, modifier: Modifier, scrim: Float) {
  */
 @Composable
 private fun Thumb(uri: Uri, modifier: Modifier = Modifier) {
+    val key = remember(uri) { ThumbCache.keyForUri(uri) }
+    val cached = remember(key) { ThumbCache.loadThumb(key) }
+    if (cached != null) {
+        Image(
+            bitmap = cached.asImageBitmap(),
+            contentDescription = null,
+            contentScale = ContentScale.Crop,
+            modifier = modifier,
+        )
+        return
+    }
     SubcomposeAsyncImage(
         model = uri,
         contentDescription = null,
@@ -1577,6 +1602,17 @@ private fun Thumb(
     val context = LocalContext.current
     val key = remember(item.uri, item.lastModified, item.sizeBytes, item.mimeType) {
         ThumbCache.keyFor(item)
+    }
+    // Load from our persisted thumbnail cache first (instant), else via Coil.
+    val cached = remember(key) { ThumbCache.loadThumb(key) }
+    if (cached != null) {
+        Image(
+            bitmap = cached.asImageBitmap(),
+            contentDescription = null,
+            contentScale = ContentScale.Crop,
+            modifier = modifier,
+        )
+        return
     }
     val model = remember(item.uri, animated) {
         ThumbCache.buildRequest(

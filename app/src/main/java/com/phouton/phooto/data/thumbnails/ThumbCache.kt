@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.Uri
 import coil3.ImageLoader
 import coil3.SingletonImageLoader
+import coil3.toBitmap
 import coil3.disk.DiskCache
 import coil3.memory.MemoryCache
 import coil3.request.CachePolicy
@@ -11,6 +12,7 @@ import coil3.request.ImageRequest
 import coil3.size.Size
 import coil3.video.videoFramePercent
 import com.phouton.phooto.data.MediaItem
+import java.io.File
 import java.security.MessageDigest
 import okio.Path.Companion.toOkioPath
 import kotlinx.coroutines.CoroutineScope
@@ -21,6 +23,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 
 /**
@@ -44,6 +47,8 @@ object ThumbCache {
 
     private const val DISK_CACHE_DIR = "image_cache"
     private const val DISK_CACHE_MAX_BYTES = 512L * 1024 * 1024 // 512 MB
+    // Our own persisted thumbnail JPEGs (Coil won't persist content-URI sources).
+    private const val THUMB_CACHE_DIR = "thumb_cache"
 
     /** Long-edge target (px) for grid tiles. Drives Coil's `.size(...)` hint. */
     const val THUMB_LONG_EDGE_PX = 320
@@ -125,27 +130,35 @@ object ThumbCache {
         // NOTE: don't trust `diskCache.size` — DiskLruCache.size() is a
         // journal-based counter that returns 0 until entries are touched in
         // this process, so after a restart it under-reports (and would disable
-        // the "Clear cache" button). Walk the real directory instead.
-        val dir = appContext?.filesDir?.resolve(DISK_CACHE_DIR) ?: return 0L
+        // the "Clear cache" button). Walk the real directories instead.
+        val app = appContext ?: return 0L
+        val dirs = listOfNotNull(
+            app.filesDir.resolve(DISK_CACHE_DIR).takeIf { it.exists() },
+            app.filesDir.resolve(THUMB_CACHE_DIR).takeIf { it.exists() },
+        )
         return try {
-            dir.walkTopDown().filter { it.isFile }.sumOf { it.length() }
+            dirs.sumOf { dir ->
+                dir.walkTopDown().filter { it.isFile }.sumOf { it.length() }
+            }
         } catch (_: Exception) {
             0L
         }
     }
 
     /**
-     * Returns the total on-disk size in bytes of BOTH caches (Coil image_cache
-     * + video poster frames). Walks the actual directories because Coil's
-     * DiskLruCache.size() under-reports after a restart.
+     * Returns the total on-disk size in bytes of the caches (Coil image_cache
+     * + our thumb_cache + video poster frames). Walks the actual directories
+     * because Coil's DiskLruCache.size() under-reports after a restart.
      */
     fun totalCacheBytes(): Long {
         val app = appContext ?: return 0L
         return try {
             val imageDir = app.filesDir.resolve(DISK_CACHE_DIR)
+            val thumbDir = app.filesDir.resolve(THUMB_CACHE_DIR)
             val framesDir = app.filesDir.resolve("frames")
             val dirs = listOfNotNull(
                 imageDir.takeIf { it.exists() },
+                thumbDir.takeIf { it.exists() },
                 framesDir.takeIf { it.exists() },
             )
             dirs.sumOf { dir ->
@@ -166,14 +179,16 @@ object ThumbCache {
             diskCache?.clear()
         } catch (_: Exception) {
         }
-        try {
-            appContext?.filesDir?.resolve(DISK_CACHE_DIR)?.let { dir ->
-                if (dir.exists()) {
-                    // Also sweep any leftover journal / tmp files Coil may have left.
-                    dir.listFiles()?.forEach { it.deleteRecursively() }
+        for (dirName in listOf(DISK_CACHE_DIR, THUMB_CACHE_DIR)) {
+            try {
+                appContext?.filesDir?.resolve(dirName)?.let { dir ->
+                    if (dir.exists()) {
+                        // Also sweep any leftover journal / tmp files Coil may have left.
+                        dir.listFiles()?.forEach { it.deleteRecursively() }
+                    }
                 }
+            } catch (_: Exception) {
             }
-        } catch (_: Exception) {
         }
         // Clear Coil's memory cache so stale bitmaps don't outlive the disk purge.
         try {
@@ -188,6 +203,17 @@ object ThumbCache {
             pendingTotal = 0
             pendingDone = 0
             _progress.value = Progress()
+        }
+    }
+
+    /** Loads a persisted thumbnail JPEG, or null if missing/corrupt. */
+    fun loadThumb(key: String): android.graphics.Bitmap? {
+        val f = thumbFile(key)
+        if (!f.isFile) return null
+        return try {
+            android.graphics.BitmapFactory.decodeFile(f.absolutePath)
+        } catch (_: Exception) {
+            null
         }
     }
 
@@ -211,32 +237,25 @@ object ThumbCache {
     }
 
     /**
-     * If [item] doesn't already have a disk entry, kick off a Coil request
-     * sized to [THUMB_LONG_EDGE_PX] so the bytes land in the persistent cache.
-     * Returns true if a request was enqueued, false if it was already cached
-     * (or we're shut down).
+     * If [item] doesn't already have a persisted thumbnail, kick off a Coil
+     * request sized to [THUMB_LONG_EDGE_PX] and save the decoded bitmap as a
+     * JPEG under `filesDir/thumb_cache/<key>.jpg`. Returns true if a request
+     * was enqueued, false if it was already cached (or we're shut down).
+     *
+     * Coil does NOT persist content-URI sources to the disk cache, so the
+     * decoded thumbnail is stored as a plain file we read back directly.
+     * Accounting note: only *real* work is counted — an item already on disk
+     * bumps nothing, so a warm cache never shows the pill.
      */
     fun enqueueIfMissing(item: MediaItem, loader: ImageLoader? = null): Boolean {
         if (shutdown || !initialized) return false
         val ctx = appContext ?: return false
         val key = keyFor(item)
-        val disk = diskCache ?: return false
-        if (disk.openSnapshot(key) != null) {
-            bumpDone()
+        if (thumbFile(key).isFile) {
             return false
         }
         bumpTotal()
-
-        scope.launch {
-            try {
-                val request = buildRequest(ctx, item, key, animated = false, targetSize = THUMB_LONG_EDGE_PX)
-                (loader ?: SingletonImageLoader.get(ctx)).execute(request)
-            } catch (_: Exception) {
-                // Best-effort: cache miss is fine, the next render will retry.
-            } finally {
-                bumpDone()
-            }
-        }
+        enqueueOne(ctx, item, key, loader)
         return true
     }
 
@@ -250,10 +269,8 @@ object ThumbCache {
     fun enqueueIfMissingUri(uri: Uri, loader: ImageLoader? = null): Boolean {
         if (shutdown || !initialized) return false
         val ctx = appContext ?: return false
-        val key = keyByUri[uri] ?: sha1Hex(uri.toString()).also { keyByUri[uri] = it }
-        val disk = diskCache ?: return false
-        if (disk.openSnapshot(key) != null) {
-            bumpDone()
+        val key = keyForUri(uri)
+        if (thumbFile(key).isFile) {
             return false
         }
         bumpTotal()
@@ -262,11 +279,13 @@ object ThumbCache {
             try {
                 val request = ImageRequest.Builder(ctx)
                     .data(uri)
-                    .diskCacheKey(key)
                     .memoryCacheKey(key)
                     .size(Size(THUMB_LONG_EDGE_PX, THUMB_LONG_EDGE_PX))
                     .build()
-                (loader ?: SingletonImageLoader.get(ctx)).execute(request)
+                val result = (loader ?: SingletonImageLoader.get(ctx)).execute(request)
+                if (result is coil3.request.SuccessResult) {
+                    persistThumbnail(key, result.image)
+                }
             } catch (_: Exception) {
                 // Best-effort.
             } finally {
@@ -274,6 +293,94 @@ object ThumbCache {
             }
         }
         return true
+    }
+
+    /** Stable cache key for a URI-only cover preview. */
+    fun keyForUri(uri: Uri): String =
+        keyByUri[uri] ?: sha1Hex(uri.toString()).also { keyByUri[uri] = it }
+
+    /**
+     * Enqueues thumbnails for a batch of items (the AoT warm-up pass) with a
+     * per-URI dedupe and rate-limited chunking so a large library doesn't
+     * thrash the disk/CPU. Items already on disk are skipped and don't count
+     * toward progress — the pill only reflects real work. Runs on the cache's
+     * IO scope (disk checks + enqueues off the main thread).
+     */
+    fun enqueueAllIfMissing(
+        items: List<MediaItem>,
+        chunkSize: Int = 15,
+        delayMs: Long = 50,
+    ) {
+        if (shutdown || !initialized) return
+        val ctx = appContext ?: return
+
+        scope.launch {
+            val seen = HashSet<Uri>()
+            for (chunk in items.chunked(chunkSize)) {
+                for (item in chunk) {
+                    if (!seen.add(item.uri)) continue
+                    val key = keyFor(item)
+                    if (thumbFile(key).isFile) continue
+                    bumpTotal()
+                    enqueueOne(ctx, item, key, null)
+                }
+                if (delayMs > 0) delay(delayMs)
+            }
+        }
+    }
+
+    /**
+     * Kicks off a Coil decode for one thumbnail and persists the decoded
+     * bitmap; pairs a [bumpDone] with the [bumpTotal].
+     */
+    private fun enqueueOne(
+        ctx: Context,
+        item: MediaItem,
+        key: String,
+        loader: ImageLoader?,
+    ) {
+        scope.launch {
+            try {
+                val request = buildRequest(ctx, item, key, animated = false, targetSize = THUMB_LONG_EDGE_PX)
+                val result = (loader ?: SingletonImageLoader.get(ctx)).execute(request)
+                if (result is coil3.request.SuccessResult) {
+                    persistThumbnail(key, result.image)
+                }
+            } catch (_: Exception) {
+                // Best-effort: cache miss is fine, the next render will retry.
+            } finally {
+                bumpDone()
+            }
+        }
+    }
+
+    /** Path to a persisted thumbnail's JPEG file (app-private, survives restarts). */
+    private fun thumbFile(key: String): File {
+        val dir = File(appContext?.filesDir ?: return File(""), THUMB_CACHE_DIR).apply { mkdirs() }
+        return File(dir, "$key.jpg")
+    }
+
+    /**
+     * Encodes a decoded thumbnail bitmap to JPEG and writes it atomically
+     * (tmp + rename) to the thumb cache dir. Coil doesn't persist content-URI
+     * sources to disk, so this is what makes thumbnails survive restarts.
+     */
+    private fun persistThumbnail(key: String, image: coil3.Image) {
+        val target = thumbFile(key)
+        val tmp = File(target.parentFile, "$key.jpg.tmp")
+        try {
+            val bitmap = image.toBitmap()
+            val ok = tmp.outputStream().use { out ->
+                bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 88, out)
+            }
+            if (ok) {
+                try { target.delete() } catch (_: Exception) {}
+                if (tmp.renameTo(target)) return
+            }
+            try { tmp.delete() } catch (_: Exception) {}
+        } catch (_: Exception) {
+            try { tmp.delete() } catch (_: Exception) {}
+        }
     }
 
     /**

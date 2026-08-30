@@ -432,6 +432,16 @@ object MediaRepository {
             }
         }
 
+    /**
+     * All items in every visible folder plus all loose items, in one pass.
+     * Used to AoT-warm the thumbnail cache so opening any album is instant.
+     */
+    suspend fun loadAllItems(context: Context, content: GalleryContent): List<MediaItem> =
+        withContext(Dispatchers.IO) {
+            val folderItems = content.folders.flatMap { loadBucket(context, it) }
+            folderItems + content.looseItems
+        }
+
     /** Decodes the full-resolution bitmap for [uri]. */
     suspend fun loadFullBitmap(context: Context, uri: Uri): android.graphics.Bitmap? =
         withContext(Dispatchers.IO) {
