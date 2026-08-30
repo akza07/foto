@@ -73,12 +73,12 @@ fun SettingsScreen(onBack: () -> Unit, onSettingsChanged: () -> Unit) {
     var showClearConfirm by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
-        cacheBytes = with(kotlinx.coroutines.Dispatchers.IO) { ThumbCache.cacheBytes() }
+        cacheBytes = with(kotlinx.coroutines.Dispatchers.IO) { ThumbCache.totalCacheBytes() }
     }
 
     val refreshCacheSize = {
         scope.launch(kotlinx.coroutines.Dispatchers.IO) {
-            val bytes = ThumbCache.cacheBytes()
+            val bytes = ThumbCache.totalCacheBytes()
             cacheBytes = bytes
         }
     }
@@ -157,7 +157,7 @@ fun SettingsScreen(onBack: () -> Unit, onSettingsChanged: () -> Unit) {
                 val subtitle = when {
                     clearing -> "Clearing…"
                     cacheBytes == null -> "Calculating…"
-                    cacheBytes == 0L -> "No cached thumbnails"
+                    cacheBytes == 0L -> "Nothing cached"
                     else -> formatCacheSize(cacheBytes!!)
                 }
                 Surface(

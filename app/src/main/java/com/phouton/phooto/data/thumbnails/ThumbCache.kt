@@ -122,9 +122,35 @@ object ThumbCache {
 
     /** Returns the total on-disk size in bytes, or 0 if unknown. Cheap. */
     fun cacheBytes(): Long {
+        // NOTE: don't trust `diskCache.size` — DiskLruCache.size() is a
+        // journal-based counter that returns 0 until entries are touched in
+        // this process, so after a restart it under-reports (and would disable
+        // the "Clear cache" button). Walk the real directory instead.
         val dir = appContext?.filesDir?.resolve(DISK_CACHE_DIR) ?: return 0L
         return try {
-            diskCache?.size ?: dir.walkTopDown().filter { it.isFile }.sumOf { it.length() }
+            dir.walkTopDown().filter { it.isFile }.sumOf { it.length() }
+        } catch (_: Exception) {
+            0L
+        }
+    }
+
+    /**
+     * Returns the total on-disk size in bytes of BOTH caches (Coil image_cache
+     * + video poster frames). Walks the actual directories because Coil's
+     * DiskLruCache.size() under-reports after a restart.
+     */
+    fun totalCacheBytes(): Long {
+        val app = appContext ?: return 0L
+        return try {
+            val imageDir = app.filesDir.resolve(DISK_CACHE_DIR)
+            val framesDir = app.filesDir.resolve("frames")
+            val dirs = listOfNotNull(
+                imageDir.takeIf { it.exists() },
+                framesDir.takeIf { it.exists() },
+            )
+            dirs.sumOf { dir ->
+                dir.walkTopDown().filter { it.isFile }.sumOf { it.length() }
+            }
         } catch (_: Exception) {
             0L
         }
