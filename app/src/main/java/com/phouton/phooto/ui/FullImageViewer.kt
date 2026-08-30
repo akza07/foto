@@ -429,17 +429,10 @@ private fun ZoomableImage(
         )
     }
 
-    // Route through the thumbnail cache so animated GIFs / WebPs / HEIFs play
-    // inline. The cache key is derived from URI + mtime + size so edits bust
-    // the cached entry.
+    // Load the ORIGINAL file so pinch-zoom reveals full detail.
+    // Grid tiles use a 320px ThumbCache entry; the viewer must not.
     val model = remember(item.uri, item.lastModified, item.sizeBytes, item.mimeType) {
-        val key = com.phouton.phooto.data.thumbnails.ThumbCache.keyFor(item)
-        com.phouton.phooto.data.thumbnails.ThumbCache.buildRequest(
-            ctx,
-            item,
-            key,
-            true,
-        )
+        com.phouton.phooto.data.thumbnails.ThumbCache.buildFullRequest(ctx, item)
     }
 
     Box(

@@ -308,6 +308,28 @@ object ThumbCache {
         return b.build()
     }
 
+    /**
+     * Builds an [ImageRequest] for the full-screen viewer at original
+     * resolution. Unlike [buildRequest] it uses [Size.ORIGINAL] so pinch-zoom
+     * reveals full detail instead of a 320px cached thumbnail. No custom
+     * disk/memory keys are set so the thumb cache entry is not overwritten.
+     */
+    fun buildFullRequest(
+        ctx: Context,
+        item: MediaItem,
+    ): ImageRequest {
+        val b = ImageRequest.Builder(ctx)
+            .data(item.uri)
+            .size(Size.ORIGINAL)
+            .listener(
+                onError = { _, _ -> /* viewer shows EmptySurface */ },
+            )
+        if (item.isVideo) {
+            b.videoFramePercent(VIDEO_FRAME_START_PERCENT)
+        }
+        return b.build()
+    }
+
     // ---- progress accounting -------------------------------------------------
 
     private val totalLock = Any()

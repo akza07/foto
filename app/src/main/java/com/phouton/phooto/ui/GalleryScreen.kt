@@ -950,12 +950,14 @@ fun GalleryScreen(
             BusyOverlay(message = message)
         }
 
-        // Thumbnail sync bar overlays the top of the gallery so it stays visible
-        // above the album grid, full-image viewer, and settings screen alike.
+        // Floating pill overlay, centered below the app bar (in safe area).
+        // Positioned once at the root so it covers both the Albums grid and
+        // the open album grid without z-fighting.
         ThumbnailSyncBar(
             modifier = Modifier
                 .align(Alignment.TopCenter)
-                .padding(horizontal = 16.dp, vertical = 8.dp),
+                .statusBarsPadding()
+                .padding(top = 64.dp),
         )
     }
 }
