@@ -227,13 +227,13 @@ fun FullImageViewer(
     val currentItem = items.getOrNull(currentIndex)
 
     // Preload adjacent pages so page swipes never flash black while loading.
-    val context = androidx.compose.ui.platform.LocalContext.current
+    val ctx = androidx.compose.ui.platform.LocalContext.current
     LaunchedEffect(currentIndex) {
-        val imageLoader = coil3.SingletonImageLoader.get(context)
+        val imageLoader = coil3.SingletonImageLoader.get(ctx)
         listOf(currentIndex - 1, currentIndex, currentIndex + 1)
             .filter { it in items.indices }
             .forEach { i ->
-                val req = ImageRequest.Builder(context)
+                val req = ImageRequest.Builder(ctx)
                     .data(items[i].uri)
                     .build()
                 imageLoader.enqueue(req)
@@ -393,6 +393,7 @@ private fun ZoomableImage(
     onLongPress: () -> Unit,
     multiTouchActive: Boolean,
 ) {
+    val ctx = androidx.compose.ui.platform.LocalContext.current
     val scope = rememberCoroutineScope()
     var containerSize by remember { mutableStateOf(IntSize.Zero) }
 
@@ -424,6 +425,19 @@ private fun ZoomableImage(
         )
     }
 
+    // Route through the thumbnail cache so animated GIFs / WebPs / HEIFs play
+    // inline. The cache key is derived from URI + mtime + size so edits bust
+    // the cached entry.
+    val model = remember(item.uri, item.lastModified, item.sizeBytes, item.mimeType) {
+        val key = com.phouton.phooto.data.thumbnails.ThumbCache.keyFor(item)
+        com.phouton.phooto.data.thumbnails.ThumbCache.buildRequest(
+            ctx,
+            item,
+            key,
+            true,
+        )
+    }
+
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -431,7 +445,7 @@ private fun ZoomableImage(
             .onSizeChanged { containerSize = it },
     ) {
         AsyncImage(
-            model = item.uri,
+            model = model,
             contentDescription = null,
             contentScale = ContentScale.Fit,
             modifier = Modifier

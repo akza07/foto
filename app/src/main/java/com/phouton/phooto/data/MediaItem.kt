@@ -15,6 +15,17 @@ data class MediaItem(
     /** Set when this item was discovered by directly browsing a granted SAF tree
      * (as opposed to MediaStore). Non-null only for SAF-originated items. */
     val safTreeUri: String? = null,
+    /** MIME type from MediaStore or DocumentsContract. Used to decide whether a
+     * tile should render animated (image/gif, image/webp, image/heif) and as a
+     * tiebreaker in the thumbnail cache key. */
+    val mimeType: String? = null,
+    /** Last-modified epoch seconds (MediaStore DATE_MODIFIED or DocumentsContract
+     * COLUMN_LAST_MODIFIED). Mixed into the thumbnail cache key so edits bust
+     * the cached entry. */
+    val lastModified: Long = 0L,
+    /** File size in bytes (MediaStore SIZE or DocumentsContract COLUMN_SIZE).
+     * Mixed into the thumbnail cache key for additional entropy. */
+    val sizeBytes: Long = 0L,
 )
 
 data class MediaFolder(

@@ -10,11 +10,16 @@ import androidx.activity.enableEdgeToEdge
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.tooling.preview.Preview
 import com.phouton.phooto.data.SettingsRepository
+import com.phouton.phooto.data.thumbnails.ExternalReloadSink
+import com.phouton.phooto.data.thumbnails.SyncCoordinator
+import com.phouton.phooto.data.thumbnails.ThumbCache
 import com.phouton.phooto.ui.GalleryScreen
 import com.phouton.phooto.ui.PermissionGate
 import com.phouton.phooto.ui.theme.PhootoTheme
 
 class MainActivity : ComponentActivity() {
+    private lateinit var syncCoordinator: SyncCoordinator
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         // Draw edge-to-edge: the app's black background extends behind the status bar
@@ -24,6 +29,10 @@ class MainActivity : ComponentActivity() {
         // Initialize settings so the persisted "prefer 120Hz" flag is loaded before
         // we read it below (GalleryScreen also calls init — it's idempotent).
         SettingsRepository.init(this)
+
+        // Set up the Coil image-loader-backed thumbnail cache before any Compose
+        // code runs so the first gallery frame can already hit it.
+        ThumbCache.init(this)
 
         // Read settings once here so the window-level hint is in place before the
         // first frame is composed. The Compose tree still receives the flag via a
@@ -41,6 +50,22 @@ class MainActivity : ComponentActivity() {
                 PermissionGate(preferHighRefreshRate = settings.preferHighRefreshRate)
             }
         }
+
+        // Observe MediaStore so we can reconcile the thumbnail cache when files
+        // are added or removed. The actual reload is plumbed by GalleryScreen
+        // registering its `reload` lambda on ExternalReloadSink when composed.
+        syncCoordinator = SyncCoordinator(onChange = {
+            ExternalReloadSink.current?.invoke()
+        })
+        syncCoordinator.start(this)
+    }
+
+    override fun onDestroy() {
+        if (::syncCoordinator.isInitialized) {
+            syncCoordinator.stop(this)
+        }
+        ThumbCache.shutdown()
+        super.onDestroy()
     }
 }
 

@@ -53,7 +53,9 @@ import com.phouton.phooto.ui.theme.TextPrimary
 private val ShadcnRadius = RoundedCornerShape(12.dp)
 
 @Composable
-fun PermissionGate(preferHighRefreshRate: Boolean = false) {
+fun PermissionGate(
+    preferHighRefreshRate: Boolean = false,
+) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
 

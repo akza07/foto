@@ -51,6 +51,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -81,6 +82,8 @@ import com.phouton.phooto.data.MediaItem
 import com.phouton.phooto.data.MediaRepository
 import com.phouton.phooto.data.SettingsRepository
 import com.phouton.phooto.data.mediaCollectionUri
+import com.phouton.phooto.data.thumbnails.ExternalReloadSink
+import com.phouton.phooto.data.thumbnails.ThumbCache
 import com.phouton.phooto.ui.theme.AmoledBlack
 import com.phouton.phooto.ui.theme.Border
 import com.phouton.phooto.ui.theme.Surface as SurfaceColor
@@ -126,7 +129,9 @@ private fun collapsedOffsetDp(index: Int): Pair<Float, Float> = when (index) {
 }
 
 @Composable
-fun GalleryScreen(modifier: Modifier = Modifier) {
+fun GalleryScreen(
+    modifier: Modifier = Modifier,
+) {
     val context = LocalContext.current
     SettingsRepository.init(context)
     var content by remember { mutableStateOf<GalleryContent?>(null) }
@@ -149,6 +154,29 @@ fun GalleryScreen(modifier: Modifier = Modifier) {
     }
 
     val reload = { reloadKey += 1 }
+
+    // Surface the reload callback to MainActivity so its MediaStore observer
+    // (debounced inside SyncCoordinator) can trigger gallery refreshes.
+    DisposableEffect(Unit) {
+        ExternalReloadSink.current = reload
+        onDispose {
+            if (ExternalReloadSink.current === reload) {
+                ExternalReloadSink.current = null
+            }
+        }
+    }
+
+    // Pre-warm the thumbnail cache for everything currently in the gallery.
+    // Folder previews are URIs only (we don't keep the full MediaItem around
+    // after buildFolders), so we warm them via their URI; loose items carry
+    // enough metadata to use the full key derivation.
+    LaunchedEffect(content) {
+        val snapshot = content ?: return@LaunchedEffect
+        snapshot.folders.forEach { folder ->
+            folder.previews.forEach { uri -> ThumbCache.enqueueIfMissingUri(uri) }
+        }
+        snapshot.looseItems.forEach { item -> ThumbCache.enqueueIfMissing(item) }
+    }
 
     val doClose = {
         openFolder = null
@@ -339,6 +367,14 @@ fun GalleryScreen(modifier: Modifier = Modifier) {
         toastMessage?.let { message ->
             Toast(message = message, key = toastKey, onDismiss = { toastMessage = null })
         }
+
+        // Thumbnail sync bar overlays the top of the gallery so it stays visible
+        // above the album grid, full-image viewer, and settings screen alike.
+        ThumbnailSyncBar(
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .padding(horizontal = 16.dp, vertical = 8.dp),
+        )
     }
 }
 
@@ -683,7 +719,7 @@ private fun ImageTile(item: MediaItem, onClick: (Rect) -> Unit) {
             .clickable { onClick(tileRect) },
     ) {
         Thumb(
-            uri = item.uri,
+            item = item,
             modifier = Modifier.fillMaxSize(),
         )
     }
@@ -709,13 +745,51 @@ private fun StackLayer(uri: Uri?, modifier: Modifier, scrim: Float) {
 }
 
 /**
- * Loads a thumbnail via Coil, showing an animated shimmer skeleton until the image
- * is ready so tiles never appear as random gaps.
+ * Loads a thumbnail via Coil, showing an animated shimmer skeleton until the
+ * image is ready so tiles never appear as random gaps.
+ *
+ * The `uri`-only overload is used for folder-cover previews where we don't
+ * have a full `MediaItem`. The `item` overload uses the thumbnail cache
+ * (`ThumbCache`) so scroll is backed by Coil's persistent disk + memory cache.
  */
 @Composable
 private fun Thumb(uri: Uri, modifier: Modifier = Modifier) {
     SubcomposeAsyncImage(
         model = uri,
+        contentDescription = null,
+        contentScale = ContentScale.Crop,
+        modifier = modifier,
+    ) {
+        val state by painter.state.collectAsState()
+        if (state is AsyncImagePainter.State.Success) {
+            SubcomposeAsyncImageContent()
+        } else {
+            SkeletonShimmer()
+        }
+    }
+}
+
+/**
+ * Item-aware variant: routes through `ThumbCache` so each tile shares Coil's
+ * disk + memory cache. [animated] controls whether GIF / animated WebP / HEIF
+ * tiles play inline (true) or stay on the static first frame (false, default —
+ * cheaper for grid scrolling).
+ */
+@Composable
+private fun Thumb(
+    item: MediaItem,
+    animated: Boolean = false,
+    modifier: Modifier = Modifier,
+) {
+    val context = LocalContext.current
+    val key = remember(item.uri, item.lastModified, item.sizeBytes, item.mimeType) {
+        ThumbCache.keyFor(item)
+    }
+    val model = remember(item.uri, animated) {
+        ThumbCache.buildRequest(ctx = context, item = item, key = key, animated = animated)
+    }
+    SubcomposeAsyncImage(
+        model = model,
         contentDescription = null,
         contentScale = ContentScale.Crop,
         modifier = modifier,
@@ -802,7 +876,7 @@ private fun FlyInTile(
             .clickable { onClick(targetRect) },
     ) {
         Thumb(
-            uri = item.uri,
+            item = item,
             modifier = Modifier
                 .fillMaxSize()
                 .graphicsLayer {

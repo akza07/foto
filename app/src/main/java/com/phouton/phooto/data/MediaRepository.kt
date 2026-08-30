@@ -79,6 +79,9 @@ object MediaRepository {
         MediaStore.Files.FileColumns.RELATIVE_PATH,
         MediaStore.Files.FileColumns.DISPLAY_NAME,
         MediaStore.Files.FileColumns.DATE_ADDED,
+        MediaStore.Files.FileColumns.MIME_TYPE,
+        MediaStore.Files.FileColumns.DATE_MODIFIED,
+        MediaStore.Files.FileColumns.SIZE,
     )
 
     suspend fun load(context: Context): GalleryContent = withContext(Dispatchers.IO) {
@@ -287,6 +290,7 @@ object MediaRepository {
                 val nameCol = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_DISPLAY_NAME)
                 val mimeCol = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_MIME_TYPE)
                 val modCol = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_LAST_MODIFIED)
+                val sizeCol = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_SIZE)
                 while (cursor.moveToNext()) {
                     if (items.size >= MaxSafItems) break
                     val docId = cursor.getString(idCol)
@@ -300,6 +304,8 @@ object MediaRepository {
                         }
                     } else if (mime != null && (mime.startsWith("image/") || mime.startsWith("video/"))) {
                         if (docId == null) continue
+                        val mod = if (modCol >= 0) cursor.getLong(modCol) / 1000L else 0L
+                        val size = if (sizeCol >= 0) cursor.getLong(sizeCol) else 0L
                         items.add(
                             MediaItem(
                                 id = 0L,
@@ -307,10 +313,13 @@ object MediaRepository {
                                 bucketId = parentId,
                                 bucketName = parentName,
                                 relativePath = null,
-                                dateAdded = if (modCol >= 0) cursor.getLong(modCol) / 1000L else 0L,
+                                dateAdded = mod,
                                 isVideo = mime.startsWith("video/"),
                                 displayName = name,
                                 safTreeUri = treeUri,
+                                mimeType = mime,
+                                lastModified = mod,
+                                sizeBytes = size,
                             ),
                         )
                     }
@@ -332,6 +341,7 @@ object MediaRepository {
             DocumentsContract.Document.COLUMN_DISPLAY_NAME,
             DocumentsContract.Document.COLUMN_MIME_TYPE,
             DocumentsContract.Document.COLUMN_LAST_MODIFIED,
+            DocumentsContract.Document.COLUMN_SIZE,
         )
         context.contentResolver.query(
             childrenUri,
@@ -344,6 +354,7 @@ object MediaRepository {
             val nameCol = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_DISPLAY_NAME)
             val mimeCol = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_MIME_TYPE)
             val modCol = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_LAST_MODIFIED)
+            val sizeCol = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_SIZE)
             while (cursor.moveToNext()) {
                 val docIdChild = cursor.getString(idCol)
                 val name = cursor.getString(nameCol)
@@ -352,6 +363,8 @@ object MediaRepository {
                 if (isDir) continue
                 if (mime != null && (mime.startsWith("image/") || mime.startsWith("video/"))) {
                     if (docIdChild == null) continue
+                    val mod = if (modCol >= 0) cursor.getLong(modCol) / 1000L else 0L
+                    val size = if (sizeCol >= 0) cursor.getLong(sizeCol) else 0L
                     items.add(
                         MediaItem(
                             id = 0L,
@@ -359,10 +372,13 @@ object MediaRepository {
                             bucketId = docId,
                             bucketName = parentName,
                             relativePath = null,
-                            dateAdded = if (modCol >= 0) cursor.getLong(modCol) / 1000L else 0L,
+                            dateAdded = mod,
                             isVideo = mime.startsWith("video/"),
                             displayName = name,
                             safTreeUri = treeUri,
+                            mimeType = mime,
+                            lastModified = mod,
+                            sizeBytes = size,
                         ),
                     )
                 }
@@ -566,6 +582,9 @@ object MediaRepository {
             val pathCol = cursor.getColumnIndexOrThrow(MediaStore.Files.FileColumns.RELATIVE_PATH)
             val nameCol = cursor.getColumnIndexOrThrow(MediaStore.Files.FileColumns.DISPLAY_NAME)
             val dateCol = cursor.getColumnIndexOrThrow(MediaStore.Files.FileColumns.DATE_ADDED)
+            val mimeCol = cursor.getColumnIndexOrThrow(MediaStore.Files.FileColumns.MIME_TYPE)
+            val modifiedCol = cursor.getColumnIndexOrThrow(MediaStore.Files.FileColumns.DATE_MODIFIED)
+            val sizeCol = cursor.getColumnIndexOrThrow(MediaStore.Files.FileColumns.SIZE)
 
             while (cursor.moveToNext()) {
                 val id = cursor.getLong(idCol)
@@ -580,6 +599,10 @@ object MediaRepository {
                         dateAdded = cursor.getLong(dateCol),
                         isVideo = mediaType == MediaStore.Files.FileColumns.MEDIA_TYPE_VIDEO,
                         displayName = cursor.getString(nameCol),
+                        mimeType = cursor.getString(mimeCol),
+                        // DATE_MODIFIED is epoch seconds, matching DATE_ADDED.
+                        lastModified = cursor.getLong(modifiedCol),
+                        sizeBytes = cursor.getLong(sizeCol),
                     ),
                 )
             }
