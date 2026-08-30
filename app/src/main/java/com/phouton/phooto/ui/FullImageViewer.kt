@@ -118,15 +118,22 @@ internal suspend fun PointerInputScope.detectMultiTouch(
  * it travels past [threshold] px in either direction. The drag is abandoned the
  * instant a second finger lands, so a two-finger pinch can never open the drawer
  * or dismiss the viewer.
+ *
+ * Horizontal travel past the touch slop is treated as a horizontal swipe (the
+ * pager's domain) and the gesture is abandoned so the HorizontalPager below
+ * gets a clean, unconsumed x-delta. Only the y-component is consumed so that
+ * vertical motion still wins over sibling tap detectors.
  */
 internal suspend fun PointerInputScope.detectVerticalSwipe(
     threshold: Float,
     onSwipeUp: () -> Unit,
     onSwipeDown: () -> Unit,
 ) {
+    val touchSlop = viewConfiguration.touchSlop
     awaitEachGesture {
         val down = awaitFirstDown(requireUnconsumed = false)
         var acc = 0f
+        var horizontalTravel = 0f
         while (true) {
             val event = awaitPointerEvent()
             if (event.changes.count { it.pressed } >= 2) return@awaitEachGesture
@@ -134,7 +141,10 @@ internal suspend fun PointerInputScope.detectVerticalSwipe(
             // position - previousPosition == movement since the last event.
             // (The positionChange() extension is shadowed by an internal member with
             // the same name, so use the raw offsets instead.)
-            acc += drag.position.y - drag.previousPosition.y
+            val dx = drag.position.x - drag.previousPosition.x
+            val dy = drag.position.y - drag.previousPosition.y
+            acc += dy
+            horizontalTravel += dx
             if (acc <= -threshold) {
                 onSwipeUp()
                 return@awaitEachGesture
@@ -142,8 +152,14 @@ internal suspend fun PointerInputScope.detectVerticalSwipe(
                 onSwipeDown()
                 return@awaitEachGesture
             }
-            // Consume the drag so no sibling detector treats it as something else.
-            drag.consume()
+            // Once the gesture is clearly horizontal, hand off to the pager so
+            // its own touch slop / fling detection can take over.
+            if (kotlin.math.abs(horizontalTravel) > touchSlop) {
+                return@awaitEachGesture
+            }
+            // Consume only when we have vertical movement, so the pager still
+            // sees the unconsumed x-delta and can scroll the page.
+            if (dy != 0f) drag.consume()
         }
     }
 }
