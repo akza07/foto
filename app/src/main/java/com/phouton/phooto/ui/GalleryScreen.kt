@@ -20,6 +20,8 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -33,7 +35,9 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
@@ -44,7 +48,14 @@ import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.outlined.Check
+import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.ContentCopy
+import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.outlined.DriveFileMove
+import androidx.compose.material.icons.outlined.SelectAll
 import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -66,11 +77,14 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -108,6 +122,259 @@ import kotlinx.coroutines.launch
 
 private val TileShape = RoundedCornerShape(12.dp)
 private val GridSpacing = 8.dp
+// Height of the selection action bar so grids can reserve space for it.
+private val ActionBarHeightDp = 96.dp
+
+// ── Multi-select state & UI ────────────────────────────────────────────────
+
+/** Holds the gallery's selection-mode state and the set of selected items/folders. */
+data class SelectionState(
+    val active: Boolean = false,
+    val selected: List<MediaItem> = emptyList(),
+    val selectedFolders: List<MediaFolder> = emptyList(),
+)
+
+/** Number of selection units (folders count as 1 each, loose items as 1 each). */
+val SelectionState.size: Int get() = selected.size + selectedFolders.size
+
+/** Floating bottom action bar shown in selection mode with the bulk actions. */
+@Composable
+private fun SelectionActionBar(
+    count: Int,
+    onClose: () -> Unit,
+    onDelete: () -> Unit,
+    onCopy: () -> Unit,
+    onMove: () -> Unit,
+    onShare: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Surface(
+        modifier = modifier
+            .fillMaxWidth()
+            .navigationBarsPadding(),
+        color = SurfaceColor,
+        shadowElevation = 12.dp,
+    ) {
+        Column {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 8.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                IconButton(onClick = onClose) {
+                    Icon(
+                        imageVector = Icons.Outlined.Close,
+                        contentDescription = "Exit selection",
+                        tint = TextPrimary,
+                    )
+                }
+                Text(
+                    text = "$count selected",
+                    color = TextPrimary,
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.weight(1f),
+                )
+            }
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 4.dp),
+                horizontalArrangement = Arrangement.SpaceEvenly,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                SelectionAction(Icons.Outlined.Delete, "Delete", onDelete)
+                SelectionAction(Icons.Outlined.ContentCopy, "Copy", onCopy)
+                SelectionAction(Icons.Outlined.DriveFileMove, "Move", onMove)
+                SelectionAction(Icons.Outlined.Share, "Share", onShare)
+            }
+        }
+    }
+}
+
+@Composable
+private fun SelectionAction(
+    icon: ImageVector,
+    label: String,
+    onClick: () -> Unit,
+) {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = Modifier
+            .clip(RoundedCornerShape(10.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 6.dp),
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = label,
+            tint = TextPrimary,
+            modifier = Modifier.width(22.dp),
+        )
+        Spacer(Modifier.height(4.dp))
+        Text(
+            text = label,
+            color = TextMuted,
+            fontSize = 11.sp,
+            fontWeight = FontWeight.Medium,
+        )
+    }
+}
+
+/** Circular selection indicator shown in the top-left of a tile in selection mode. */
+@Composable
+private fun SelectionBadge(selected: Boolean, modifier: Modifier = Modifier) {
+    Box(
+        modifier = modifier
+            .size(24.dp)
+            .clip(RoundedCornerShape(50))
+            .background(if (selected) TextPrimary else AmoledBlack.copy(alpha = 0.5f))
+            .border(
+                width = if (selected) 0.dp else 1.dp,
+                color = TextPrimary,
+                shape = RoundedCornerShape(50),
+            ),
+        contentAlignment = Alignment.Center,
+    ) {
+        if (selected) {
+            Icon(
+                imageVector = Icons.Outlined.Check,
+                contentDescription = "Selected",
+                tint = SurfaceColor,
+                modifier = Modifier.size(14.dp),
+            )
+        }
+    }
+}
+
+/** Confirmation dialog for deleting multiple selected items. */
+@Composable
+private fun MultiDeleteConfirmDialog(
+    count: Int,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(AmoledBlack.copy(alpha = 0.7f))
+            .clickable(onClick = onDismiss, indication = null, interactionSource = null),
+        contentAlignment = Alignment.Center,
+    ) {
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 32.dp),
+            shape = RoundedCornerShape(16.dp),
+            color = SurfaceColor,
+            shadowElevation = 0.dp,
+        ) {
+            Column(modifier = Modifier.padding(24.dp)) {
+                Text(
+                    text = "Delete $count item${if (count == 1) "" else "s"}?",
+                    color = TextPrimary,
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    text = "This action can't be undone.",
+                    color = TextMuted,
+                    fontSize = 14.sp,
+                )
+                Spacer(Modifier.height(24.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    // Cancel (outlined).
+                    Surface(
+                        modifier = Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(10.dp))
+                            .clickable(onClick = onDismiss, indication = null, interactionSource = null),
+                        shape = RoundedCornerShape(10.dp),
+                        color = Color.Transparent,
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(44.dp),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text(
+                                text = "Cancel",
+                                color = TextPrimary,
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Medium,
+                            )
+                        }
+                    }
+                    // Confirm (red accent).
+                    Surface(
+                        modifier = Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(10.dp))
+                            .clickable(onClick = onConfirm, indication = null, interactionSource = null),
+                        shape = RoundedCornerShape(10.dp),
+                        color = DeleteRed,
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(44.dp),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text(
+                                text = "Delete",
+                                color = Color.White,
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/** Simple centered spinner + label overlay while a long operation runs. */
+@Composable
+private fun BusyOverlay(message: String) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(AmoledBlack.copy(alpha = 0.6f)),
+        contentAlignment = Alignment.Center,
+    ) {
+        Surface(
+            shape = RoundedCornerShape(16.dp),
+            color = SurfaceColor,
+            shadowElevation = 8.dp,
+        ) {
+            Row(
+                modifier = Modifier.padding(horizontal = 20.dp, vertical = 16.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                CircularProgressIndicator(
+                    modifier = Modifier.width(20.dp),
+                    strokeWidth = 2.dp,
+                    color = TextPrimary,
+                )
+                Text(
+                    text = message,
+                    color = TextPrimary,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Medium,
+                )
+            }
+        }
+    }
+}
 
 // Transition timings.
 private const val ForwardDurationMs = 320
@@ -148,6 +415,7 @@ fun GalleryScreen(
     var pendingDeleteItem by remember { mutableStateOf<MediaItem?>(null) }
     var showSettings by remember { mutableStateOf(false) }
     var reloadKey by remember { mutableStateOf(0) }
+    var selection by remember { mutableStateOf<SelectionState>(SelectionState()) }
 
     LaunchedEffect(reloadKey) {
         content = MediaRepository.load(context)
@@ -209,10 +477,53 @@ fun GalleryScreen(
         viewerSourceRect = rect
     }
 
+    // Selection helpers ------------------------------------------------------
+    val clearSelection = {
+        selection = SelectionState()
+    }
+
+    val isSelecting = selection.active
+    val selectionList = selection.selected
+    val selectedFolders = selection.selectedFolders
+    val selectedCount = selection.size
+
+    val toggleSelect = { item: MediaItem ->
+        selection = if (selection.active) {
+            selection.copy(
+                selected = if (item in selectionList) {
+                    selectionList - item
+                } else {
+                    selectionList + item
+                },
+            )
+        } else {
+            // Entering selection mode starts with exactly this item.
+            SelectionState(active = true, selected = listOf(item))
+        }
+    }
+
+    val toggleSelectFolder = { folder: MediaFolder ->
+        selection = if (selection.active) {
+            selection.copy(
+                selectedFolders = if (folder in selectedFolders) {
+                    selectedFolders - folder
+                } else {
+                    selectedFolders + folder
+                },
+            )
+        } else {
+            // Entering selection mode starts with exactly this folder.
+            SelectionState(active = true, selectedFolders = listOf(folder))
+        }
+    }
+
+    // BackHandler: selection mode owns the back button.
     BackHandler(
-        enabled = openFolder != null || viewerItems != null || showSettings,
+        enabled = isSelecting || openFolder != null || viewerItems != null || showSettings,
         onBack = {
-            if (showSettings) {
+            if (isSelecting) {
+                clearSelection()
+            } else if (showSettings) {
                 showSettings = false
             } else if (viewerItems != null) {
                 closeViewer()
@@ -222,6 +533,7 @@ fun GalleryScreen(
         },
     )
 
+    // Single-item delete (from the full-image viewer).
     val removeDeleted = { deletedUri: android.net.Uri ->
         val current = content
         if (current != null) {
@@ -233,6 +545,20 @@ fun GalleryScreen(
         albumReloadKey += 1
         closeViewer()
         // Refresh the root grid so folder counts/previews update after a delete.
+        reload()
+    }
+
+    // Batch variant: removes a set of URIs in one pass and reloads once.
+    val removeDeletedBatch = { deletedUris: Set<android.net.Uri> ->
+        val current = content
+        if (current != null) {
+            content = current.copy(
+                looseItems = current.looseItems.filterNot { it.uri in deletedUris },
+            )
+        }
+        viewerItems = viewerItems?.filterNot { it.uri in deletedUris }
+        albumReloadKey += 1
+        closeViewer()
         reload()
     }
 
@@ -282,6 +608,193 @@ fun GalleryScreen(
         }
     }
 
+    // ── Selection resolution ────────────────────────────────────────────────
+    // Expands the current selection into a flat list of MediaItems: selected
+    // folders contribute every item inside them (loaded on demand), selected
+    // loose items contribute themselves. Used by delete/copy/move/share.
+    val resolveSelectionItems: suspend () -> List<MediaItem> = {
+        buildList {
+            addAll(selectionList)
+            for (folder in selectedFolders) {
+                addAll(MediaRepository.loadBucket(context, folder))
+            }
+        }
+    }
+
+    // ── Multi-delete ────────────────────────────────────────────────────────
+    // When multiple items are deleted, the system consent dialog (API 30+)
+    // handles the whole batch; direct deletes remove items one by one.
+    var pendingBatchDelete by remember { mutableStateOf<List<MediaItem>?>(null) }
+    val batchDeleteScope = rememberCoroutineScope()
+    val batchDeleteLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartIntentSenderForResult()
+    ) { result ->
+        val batch = pendingBatchDelete
+        pendingBatchDelete = null
+        if (result.resultCode == android.app.Activity.RESULT_OK && batch != null) {
+            batchDeleteScope.launch {
+                val deletedUris = batch.filter { MediaRepository.delete(context, it) }
+                    .map { it.uri }
+                    .toSet()
+                removeDeletedBatch(deletedUris)
+                clearSelection()
+            }
+        } else {
+            clearSelection()
+        }
+    }
+
+    val requestBatchDelete = { items: List<MediaItem> ->
+        batchDeleteScope.launch {
+            // Separate SAF items (deleted directly) from MediaStore items.
+            val saf = items.filter {
+                android.provider.DocumentsContract.isDocumentUri(context, it.uri)
+            }
+            val media = items.filterNot { it in saf }
+
+            // Direct deletes first (works for app-owned files / SAF grants).
+            val deletedUris = mutableSetOf<android.net.Uri>()
+            saf.forEach { item ->
+                if (MediaRepository.delete(context, item)) deletedUris += item.uri
+            }
+
+            val direct = media.filter { MediaRepository.delete(context, it) }
+            direct.forEach { deletedUris += it.uri }
+
+            if (deletedUris.isNotEmpty()) removeDeletedBatch(deletedUris)
+
+            val remaining = media.filterNot { it in direct }
+            if (remaining.isNotEmpty() && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                val deleteUris = remaining.map { mediaCollectionUri(it.isVideo, it.id) }
+                try {
+                    val pendingIntent = MediaStore.createDeleteRequest(
+                        context.contentResolver,
+                        deleteUris,
+                    )
+                    pendingBatchDelete = remaining
+                    val request =
+                        androidx.activity.result.IntentSenderRequest.Builder(pendingIntent).build()
+                    batchDeleteLauncher.launch(request)
+                } catch (e: Exception) {
+                    pendingBatchDelete = null
+                }
+            }
+        }
+    }
+
+    // ── Copy / Move ────────────────────────────────────────────────────────
+    var pendingCopy by remember { mutableStateOf<List<MediaItem>?>(null) }
+    var pendingMove by remember { mutableStateOf<List<MediaItem>?>(null) }
+    var busyMessage by remember { mutableStateOf<String?>(null) }
+    val transferScope = rememberCoroutineScope()
+
+    // Shared: pick a destination tree, then run the transfer in the background.
+    val treePicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocumentTree()
+    ) { uri: Uri? ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        try {
+            val takeFlags = Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+            context.contentResolver.takePersistableUriPermission(uri, takeFlags)
+        } catch (_: Exception) {
+        }
+
+        val toCopy = pendingCopy
+        val toMove = pendingMove
+        pendingCopy = null
+        pendingMove = null
+        if (toCopy != null && toCopy.isNotEmpty()) {
+            val items = toCopy
+            val count = items.size
+            busyMessage = "Copying $count item${if (count == 1) "" else "s"}…"
+            transferScope.launch {
+                val done = MediaRepository.copyTo(context, items, uri)
+                busyMessage = null
+                clearSelection()
+                if (done > 0) {
+                    toastKey += 1
+                    toastMessage = "Copied $done item${if (done == 1) "" else "s"}"
+                    reload()
+                } else {
+                    toastKey += 1
+                    toastMessage = "Couldn't copy"
+                }
+            }
+        } else if (toMove != null && toMove.isNotEmpty()) {
+            val items = toMove
+            val count = items.size
+            busyMessage = "Moving $count item${if (count == 1) "" else "s"}…"
+            transferScope.launch {
+                val done = MediaRepository.moveTo(context, items, uri)
+                busyMessage = null
+                clearSelection()
+                if (done > 0) {
+                    toastKey += 1
+                    toastMessage = "Moved $done item${if (done == 1) "" else "s"}"
+                    reload()
+                } else {
+                    toastKey += 1
+                    toastMessage = "Couldn't move"
+                }
+            }
+        }
+    }
+
+    val launchCopy: () -> Unit = {
+        transferScope.launch {
+            val items = resolveSelectionItems()
+            if (items.isNotEmpty()) {
+                pendingCopy = items
+                treePicker.launch(null)
+            }
+        }
+    }
+
+    val launchMove: () -> Unit = {
+        transferScope.launch {
+            val items = resolveSelectionItems()
+            if (items.isNotEmpty()) {
+                pendingMove = items
+                treePicker.launch(null)
+            }
+        }
+    }
+
+    // ── Share ───────────────────────────────────────────────────────────────
+    val shareSelection: () -> Unit = {
+        transferScope.launch {
+            val items = resolveSelectionItems()
+            if (items.isEmpty()) return@launch
+            if (items.size == 1) {
+                val item = items.first()
+                val send = Intent(Intent.ACTION_SEND).apply {
+                    type = if (item.isVideo) "video/*" else "image/*"
+                    putExtra(Intent.EXTRA_STREAM, item.uri)
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                }
+                context.startActivity(Intent.createChooser(send, null))
+            } else {
+                val uris = items.map { it.uri }
+                // Use the broadest MIME type that covers the batch so video+image
+                // mixes share cleanly (recipients filter per URI).
+                val anyVideo = items.any { it.isVideo }
+                val anyImage = items.any { !it.isVideo }
+                val shareType = when {
+                    anyVideo && anyImage -> "*/*"
+                    anyVideo -> "video/*"
+                    else -> "image/*"
+                }
+                val send = Intent(Intent.ACTION_SEND_MULTIPLE).apply {
+                    type = shareType
+                    putParcelableArrayListExtra(Intent.EXTRA_STREAM, ArrayList(uris))
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                }
+                context.startActivity(Intent.createChooser(send, null))
+            }
+        }
+    }
+
     val shareItem = { item: MediaItem ->
         val send = Intent(Intent.ACTION_SEND).apply {
             type = if (item.isVideo) "video/*" else "image/*"
@@ -308,6 +821,24 @@ fun GalleryScreen(
             },
             onItemClick = { list, index, rect -> openViewer(list, index, rect) },
             onSettingsClick = { showSettings = true },
+            selection = selection,
+            onToggleSelect = toggleSelect,
+            onLongSelect = toggleSelect,
+            onToggleFolder = toggleSelectFolder,
+            onLongSelectFolder = toggleSelectFolder,
+            onSelectAll = {
+                val loose = content?.looseItems.orEmpty()
+                val folders = content?.folders.orEmpty()
+                val allSelected = selection.selected.toSet() == loose.toSet() &&
+                    selection.selectedFolders.toSet() == folders.toSet()
+                if (selection.active && allSelected && (loose.isNotEmpty() || folders.isNotEmpty())) {
+                    // Already all selected: deselect everything.
+                    SelectionState(active = true)
+                } else {
+                    SelectionState(active = true, selected = loose, selectedFolders = folders)
+                }
+            },
+            onExitSelection = clearSelection,
         )
 
         AnimatedVisibility(
@@ -330,6 +861,20 @@ fun GalleryScreen(
                 onBack = closeFolder,
                 onItemClick = { list, index, rect -> openViewer(list, index, rect) },
                 reloadKey = albumReloadKey,
+                selection = selection,
+                onToggleSelect = toggleSelect,
+                onLongSelect = toggleSelect,
+                onSelectAll = { items ->
+                    selection = if (selection.active && items.isNotEmpty() &&
+                        selection.selected.toSet() == items.toSet()
+                    ) {
+                        // Already all selected: deselect everything.
+                        SelectionState(active = true)
+                    } else {
+                        SelectionState(active = true, selected = items)
+                    }
+                },
+                onExitSelection = clearSelection,
             )
         }
 
@@ -359,6 +904,39 @@ fun GalleryScreen(
             )
         }
 
+        // Multi-select action bar + selection mode state.
+        if (isSelecting) {
+            SelectionActionBar(
+                count = selectedCount,
+                onClose = clearSelection,
+                onDelete = {
+                    if (selectedCount > 0) {
+                        batchDeleteScope.launch {
+                            val items = resolveSelectionItems()
+                            if (items.isNotEmpty()) pendingBatchDelete = items
+                        }
+                    }
+                },
+                onCopy = launchCopy,
+                onMove = launchMove,
+                onShare = shareSelection,
+                modifier = Modifier.align(Alignment.BottomCenter),
+            )
+        }
+
+        // Batch-delete confirmation dialog.
+        val batch = pendingBatchDelete
+        if (batch != null && batch.isNotEmpty()) {
+            MultiDeleteConfirmDialog(
+                count = batch.size,
+                onConfirm = {
+                    pendingBatchDelete = null
+                    requestBatchDelete(batch)
+                },
+                onDismiss = { pendingBatchDelete = null },
+            )
+        }
+
         val infoTarget = infoItem
         if (infoTarget != null) {
             InfoSheet(item = infoTarget, onClose = { infoItem = null })
@@ -366,6 +944,10 @@ fun GalleryScreen(
 
         toastMessage?.let { message ->
             Toast(message = message, key = toastKey, onDismiss = { toastMessage = null })
+        }
+
+        busyMessage?.let { message ->
+            BusyOverlay(message = message)
         }
 
         // Thumbnail sync bar overlays the top of the gallery so it stays visible
@@ -384,6 +966,13 @@ private fun MainGalleryGrid(
     onFolderClick: (MediaFolder, Rect) -> Unit,
     onItemClick: (List<MediaItem>, Int, Rect) -> Unit,
     onSettingsClick: () -> Unit,
+    selection: SelectionState,
+    onToggleSelect: (MediaItem) -> Unit,
+    onLongSelect: (MediaItem) -> Unit,
+    onToggleFolder: (MediaFolder) -> Unit,
+    onLongSelectFolder: (MediaFolder) -> Unit,
+    onSelectAll: () -> Unit,
+    onExitSelection: () -> Unit,
 ) {
     Column(
         modifier = Modifier
@@ -400,21 +989,46 @@ private fun MainGalleryGrid(
                 .padding(horizontal = 20.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text(
-                text = "Albums",
-                color = TextPrimary,
-                fontSize = 28.sp,
-                fontWeight = FontWeight.SemiBold,
-                letterSpacing = (-0.5).sp,
-                modifier = Modifier.weight(1f),
-            )
-            IconButton(onClick = onSettingsClick) {
-                Icon(
-                    imageVector = Icons.Outlined.Settings,
-                    contentDescription = "Settings",
-                    tint = TextPrimary,
-                    modifier = Modifier.width(24.dp),
+            if (selection.active) {
+                IconButton(onClick = onExitSelection) {
+                    Icon(
+                        imageVector = Icons.Outlined.Close,
+                        contentDescription = "Exit selection",
+                        tint = TextPrimary,
+                    )
+                }
+                Spacer(Modifier.width(4.dp))
+                Text(
+                    text = "${selection.size} selected",
+                    color = TextPrimary,
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.weight(1f),
                 )
+                IconButton(onClick = onSelectAll) {
+                    Icon(
+                        imageVector = Icons.Outlined.SelectAll,
+                        contentDescription = "Select all",
+                        tint = TextPrimary,
+                    )
+                }
+            } else {
+                Text(
+                    text = "Albums",
+                    color = TextPrimary,
+                    fontSize = 28.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    letterSpacing = (-0.5).sp,
+                    modifier = Modifier.weight(1f),
+                )
+                IconButton(onClick = onSettingsClick) {
+                    Icon(
+                        imageVector = Icons.Outlined.Settings,
+                        contentDescription = "Settings",
+                        tint = TextPrimary,
+                        modifier = Modifier.width(24.dp),
+                    )
+                }
             }
         }
 
@@ -449,18 +1063,35 @@ private fun MainGalleryGrid(
                         start = 12.dp,
                         top = 12.dp,
                         end = 12.dp,
-                        bottom = 12.dp + WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding(),
+                        bottom = if (selection.active) {
+                            ActionBarHeightDp + 12.dp +
+                                WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
+                        } else {
+                            12.dp + WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
+                        },
                     ),
                     horizontalArrangement = Arrangement.spacedBy(GridSpacing),
                     verticalArrangement = Arrangement.spacedBy(GridSpacing),
                 ) {
                     items(current.folders, key = { "folder:${it.bucketId}" }) { folder ->
-                        FolderTile(folder = folder, onClick = { rect -> onFolderClick(folder, rect) })
+                        FolderTile(
+                            folder = folder,
+                            selection = selection,
+                            onToggleSelect = onToggleFolder,
+                            onLongSelect = onLongSelectFolder,
+                            onClick = { rect -> onFolderClick(folder, rect) },
+                        )
                     }
                     items(current.looseItems, key = { "item:${it.uri}" }) { item ->
-                        ImageTile(item, onClick = { rect ->
-                            onItemClick(current.looseItems, current.looseItems.indexOf(item), rect)
-                        })
+                        ImageTile(
+                            item = item,
+                            selection = selection,
+                            onToggleSelect = onToggleSelect,
+                            onLongSelect = onLongSelect,
+                            onClick = { rect ->
+                                onItemClick(current.looseItems, current.looseItems.indexOf(item), rect)
+                            },
+                        )
                     }
                 }
             }
@@ -476,6 +1107,11 @@ private fun AlbumGrid(
     onBack: () -> Unit,
     onItemClick: (List<MediaItem>, Int, Rect) -> Unit,
     reloadKey: Int,
+    selection: SelectionState,
+    onToggleSelect: (MediaItem) -> Unit,
+    onLongSelect: (MediaItem) -> Unit,
+    onSelectAll: (List<MediaItem>) -> Unit,
+    onExitSelection: () -> Unit,
 ) {
     val context = LocalContext.current
     val density = LocalDensity.current
@@ -548,7 +1184,12 @@ private fun AlbumGrid(
                         start = 12.dp,
                         top = 56.dp + 12.dp + WindowInsets.statusBars.asPaddingValues().calculateTopPadding(),
                         end = 12.dp,
-                        bottom = 12.dp + WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding(),
+                        bottom = if (selection.active) {
+                            ActionBarHeightDp + 12.dp +
+                                WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
+                        } else {
+                            12.dp + WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
+                        },
                     ),
                     horizontalArrangement = Arrangement.spacedBy(GridSpacing),
                     verticalArrangement = Arrangement.spacedBy(GridSpacing),
@@ -563,10 +1204,19 @@ private fun AlbumGrid(
                                 index = index,
                                 source = sourceRect,
                                 phase = phase,
+                                selection = selection,
+                                onToggleSelect = onToggleSelect,
+                                onLongSelect = onLongSelect,
                                 onClick = { rect -> onItemClick(displayItems, index, rect) },
                             )
                         } else {
-                            ImageTile(item, onClick = { rect -> onItemClick(displayItems, index, rect) })
+                            ImageTile(
+                                item = item,
+                                selection = selection,
+                                onToggleSelect = onToggleSelect,
+                                onLongSelect = onLongSelect,
+                                onClick = { rect -> onItemClick(displayItems, index, rect) },
+                            )
                         }
                     }
                 }
@@ -607,29 +1257,55 @@ private fun AlbumGrid(
                     },
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                IconButton(onClick = onBack) {
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
-                        contentDescription = "Back",
-                        tint = TextPrimary,
-                    )
-                }
-                Spacer(Modifier.width(4.dp))
-                Column {
+                if (selection.active) {
+                    // Selection mode: the header's back button exits selection.
+                    IconButton(onClick = onExitSelection) {
+                        Icon(
+                            imageVector = Icons.Outlined.Close,
+                            contentDescription = "Exit selection",
+                            tint = TextPrimary,
+                        )
+                    }
+                    Spacer(Modifier.width(4.dp))
                     Text(
-                        text = folder.name,
+                        text = "${selection.selected.size} selected",
                         color = TextPrimary,
                         fontSize = 16.sp,
                         fontWeight = FontWeight.SemiBold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f),
                     )
-                    Text(
-                        text = "${folder.count} items",
-                        color = TextMuted,
-                        fontSize = 12.sp,
-                        maxLines = 1,
-                    )
+                    IconButton(onClick = { onSelectAll(displayItems) }) {
+                        Icon(
+                            imageVector = Icons.Outlined.SelectAll,
+                            contentDescription = "Select all",
+                            tint = TextPrimary,
+                        )
+                    }
+                } else {
+                    IconButton(onClick = onBack) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
+                            contentDescription = "Back",
+                            tint = TextPrimary,
+                        )
+                    }
+                    Spacer(Modifier.width(4.dp))
+                    Column {
+                        Text(
+                            text = folder.name,
+                            color = TextPrimary,
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        Text(
+                            text = "${folder.count} items",
+                            color = TextMuted,
+                            fontSize = 12.sp,
+                            maxLines = 1,
+                        )
+                    }
                 }
             }
         }
@@ -637,19 +1313,65 @@ private fun AlbumGrid(
 }
 
 @Composable
-private fun FolderTile(folder: MediaFolder, onClick: (Rect) -> Unit) {
+private fun FolderTile(
+    folder: MediaFolder,
+    onClick: (Rect) -> Unit,
+    selection: SelectionState = SelectionState(),
+    onToggleSelect: (MediaFolder) -> Unit = {},
+    onLongSelect: (MediaFolder) -> Unit = {},
+) {
     var stackRect by remember { mutableStateOf(Rect.Zero) }
+    val isSelecting = selection.active
+    val isSelected = folder in selection.selectedFolders
+    val haptics = LocalHapticFeedback.current
 
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable { onClick(stackRect) },
+            .then(
+                if (isSelecting) {
+                    Modifier.clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                    ) { onToggleSelect(folder) }
+                } else {
+                    Modifier.combinedClickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                        onClick = { onClick(stackRect) },
+                        onLongClick = {
+                            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                            onLongSelect(folder)
+                        },
+                    )
+                },
+            ),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        FolderStack(
-            previews = folder.previews,
-            modifier = Modifier.onGloballyPositioned { stackRect = it.boundsInWindow() },
-        )
+        Box {
+            FolderStack(
+                previews = folder.previews,
+                modifier = Modifier.onGloballyPositioned { stackRect = it.boundsInWindow() },
+            )
+            // Selection badge (top-left), shown in selection mode; reflects state.
+            if (isSelecting) {
+                SelectionBadge(
+                    selected = isSelected,
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .padding(8.dp)
+                        .zIndex(2f),
+                )
+            }
+            if (isSelecting && !isSelected) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .clip(TileShape)
+                        .background(AmoledBlack.copy(alpha = 0.4f)),
+                )
+            }
+        }
         Text(
             text = folder.name,
             color = TextPrimary,
@@ -707,8 +1429,18 @@ private fun FolderStack(previews: List<Uri>, modifier: Modifier = Modifier) {
 }
 
 @Composable
-private fun ImageTile(item: MediaItem, onClick: (Rect) -> Unit) {
+private fun ImageTile(
+    item: MediaItem,
+    onClick: (Rect) -> Unit,
+    selection: SelectionState = SelectionState(),
+    onToggleSelect: (MediaItem) -> Unit = {},
+    onLongSelect: (MediaItem) -> Unit = {},
+) {
     var tileRect by remember { mutableStateOf(Rect.Zero) }
+    val isSelecting = selection.active
+    val isSelected = item in selection.selected
+    val haptics = LocalHapticFeedback.current
+
     Box(
         modifier = Modifier
             .fillMaxWidth()
@@ -716,7 +1448,24 @@ private fun ImageTile(item: MediaItem, onClick: (Rect) -> Unit) {
             .clip(TileShape)
             .background(SurfaceColor)
             .onGloballyPositioned { tileRect = it.boundsInWindow() }
-            .clickable { onClick(tileRect) },
+            .then(
+                if (isSelecting) {
+                    Modifier.clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                    ) { onToggleSelect(item) }
+                } else {
+                    Modifier.combinedClickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                        onClick = { onClick(tileRect) },
+                        onLongClick = {
+                            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                            onLongSelect(item)
+                        },
+                    )
+                },
+            ),
     ) {
         if (item.isVideo) {
             // Fast poster: MediaStore system thumbnail / private frame cache /
@@ -740,6 +1489,24 @@ private fun ImageTile(item: MediaItem, onClick: (Rect) -> Unit) {
                     .align(Alignment.BottomEnd)
                     .padding(8.dp)
                     .zIndex(1f),
+            )
+        }
+        // Selection badge (top-left), shown in selection mode; reflects state.
+        if (isSelecting) {
+            SelectionBadge(
+                selected = isSelected,
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .padding(8.dp)
+                    .zIndex(2f),
+            )
+        }
+        // Dimmed overlay when selection mode is active but this item isn't chosen.
+        if (isSelecting && !isSelected) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(AmoledBlack.copy(alpha = 0.4f)),
             )
         }
     }
@@ -869,6 +1636,9 @@ private fun FlyInTile(
     source: Rect,
     phase: Animatable<Float, *>,
     onClick: (Rect) -> Unit,
+    selection: SelectionState = SelectionState(),
+    onToggleSelect: (MediaItem) -> Unit = {},
+    onLongSelect: (MediaItem) -> Unit = {},
 ) {
     val density = LocalDensity.current
     var targetRect by remember { mutableStateOf(Rect.Zero) }
@@ -881,6 +1651,10 @@ private fun FlyInTile(
     // Everything below reads the animated phase and is computed in the draw phase
     // (inside graphicsLayer) so per-frame updates never recompose the composable.
     val s = ((index.toFloat() / StaggerCap).coerceIn(0f, 1f)) * MaxStagger
+
+    val isSelecting = selection.active
+    val isSelected = item in selection.selected
+    val haptics = LocalHapticFeedback.current
 
     // zIndex: higher = on top. The first item (index 0) stays on top throughout,
     // matching the folder stack where the newest preview is the front cover.
@@ -902,7 +1676,24 @@ private fun FlyInTile(
             }
             .clip(TileShape)
             .background(SurfaceColor)
-            .clickable { onClick(targetRect) },
+            .then(
+                if (isSelecting) {
+                    Modifier.clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                    ) { onToggleSelect(item) }
+                } else {
+                    Modifier.combinedClickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                        onClick = { onClick(targetRect) },
+                        onLongClick = {
+                            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                            onLongSelect(item)
+                        },
+                    )
+                },
+            ),
     ) {
         val thumbAlphaMod = Modifier
             .fillMaxSize()
@@ -927,6 +1718,23 @@ private fun FlyInTile(
                     .align(Alignment.BottomEnd)
                     .padding(8.dp)
                     .zIndex(1f),
+            )
+        }
+        // Selection badge (top-left), shown in selection mode; reflects state.
+        if (isSelecting) {
+            SelectionBadge(
+                selected = isSelected,
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .padding(8.dp)
+                    .zIndex(2f),
+            )
+        }
+        if (isSelecting && !isSelected) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(AmoledBlack.copy(alpha = 0.4f)),
             )
         }
     }

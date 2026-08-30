@@ -528,6 +528,111 @@ object MediaRepository {
             }
         }
 
+    /**
+     * Copies [items] into the directory tree [destTreeUri] (picked by the user
+     * via OpenDocumentTree). Returns the number of items copied successfully.
+     *
+     * Works for both MediaStore and SAF items: each is streamed into a new
+     * document created under the destination tree.
+     */
+    suspend fun copyTo(context: Context, items: List<MediaItem>, destTreeUri: Uri): Int =
+        withContext(Dispatchers.IO) {
+            if (items.isEmpty()) return@withContext 0
+            val destDir = rootDocumentOf(context, destTreeUri) ?: return@withContext 0
+            var copied = 0
+            for (item in items) {
+                try {
+                    if (createAndCopy(context, item, destDir)) copied++
+                } catch (_: Exception) {
+                }
+            }
+            copied
+        }
+
+    /**
+     * Moves [items] into the directory tree [destTreeUri]: copies each item then
+     * deletes the source document (for SAF items). MediaStore sources that can't
+     * be deleted directly are left for the caller to request system consent for.
+     * Returns the number of items that were fully moved (copied + source deleted).
+     */
+    suspend fun moveTo(context: Context, items: List<MediaItem>, destTreeUri: Uri): Int =
+        withContext(Dispatchers.IO) {
+            if (items.isEmpty()) return@withContext 0
+            val destDir = rootDocumentOf(context, destTreeUri) ?: return@withContext 0
+            var moved = 0
+            for (item in items) {
+                try {
+                    if (createAndCopy(context, item, destDir)) {
+                        if (deleteSource(context, item)) moved++
+                    }
+                } catch (_: Exception) {
+                }
+            }
+            moved
+        }
+
+    /**
+     * Deletes the source of a move. SAF items delete through the document
+     * provider; MediaStore items try a direct contentResolver delete (works for
+     * app-owned files; others need the system consent flow).
+     */
+    private fun deleteSource(context: Context, item: MediaItem): Boolean = try {
+        if (DocumentsContract.isDocumentUri(context, item.uri)) {
+            DocumentsContract.deleteDocument(context.contentResolver, item.uri)
+        } else {
+            context.contentResolver.delete(item.uri, null, null) > 0
+        }
+    } catch (_: Exception) {
+        false
+    }
+
+    /** Resolves a picked tree URI to its root document URI, or null on failure. */
+    private fun rootDocumentOf(context: Context, treeUri: Uri): Uri? = try {
+        val docId = DocumentsContract.getTreeDocumentId(treeUri)
+        DocumentsContract.buildDocumentUriUsingTree(treeUri, docId)
+    } catch (_: Exception) {
+        null
+    }
+
+    /** Creates a document for [item] under [destDir] and streams the bytes in. */
+    private fun createAndCopy(context: Context, item: MediaItem, destDir: Uri): Boolean {
+        val baseName = item.displayName
+            ?: item.uri.lastPathSegment
+            ?: "file_${System.currentTimeMillis()}"
+        val mime = item.mimeType ?: "application/octet-stream"
+        val dot = baseName.lastIndexOf('.')
+        val stem = if (dot > 0) baseName.substring(0, dot) else baseName
+        val ext = if (dot > 0) baseName.substring(dot) else ""
+
+        // If a document with the same name already exists, append a numeric
+        // suffix so copies/moves never silently overwrite a file.
+        var dst = DocumentsContract.createDocument(
+            context.contentResolver,
+            destDir,
+            mime,
+            baseName,
+        )
+        var attempt = 1
+        while (dst == null && attempt < 100) {
+            dst = DocumentsContract.createDocument(
+                context.contentResolver,
+                destDir,
+                mime,
+                "$stem ($attempt)$ext",
+            )
+            attempt++
+        }
+        dst ?: return false
+
+        context.contentResolver.openInputStream(item.uri)?.use { input ->
+            context.contentResolver.openOutputStream(dst, "w")?.use { output ->
+                input.copyTo(output)
+                return true
+            }
+        }
+        return false
+    }
+
     /** Queries MediaStore image/video rows, optionally restricted to a bucket. */
     private fun queryMedia(context: Context, bucketId: String? = null): List<MediaItem> =
         queryMediaInternal(

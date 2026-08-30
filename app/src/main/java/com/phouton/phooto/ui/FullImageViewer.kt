@@ -60,11 +60,13 @@ import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.PointerInputScope
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
@@ -396,6 +398,7 @@ private fun ZoomableImage(
 ) {
     val ctx = androidx.compose.ui.platform.LocalContext.current
     val scope = rememberCoroutineScope()
+    val haptics = LocalHapticFeedback.current
     var containerSize by remember { mutableStateOf(IntSize.Zero) }
 
     var scale by remember { mutableFloatStateOf(1f) }
@@ -456,7 +459,10 @@ private fun ZoomableImage(
                 .pointerInput(multiTouchActive) {
                     if (multiTouchActive) return@pointerInput
                     detectTapGestures(
-                        onLongPress = { onLongPress() },
+                        onLongPress = {
+                            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                            onLongPress()
+                        },
                         onDoubleTap = { tap ->
                             scope.launch {
                                 val w = containerSize.width.toFloat().coerceAtLeast(1f)
