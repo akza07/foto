@@ -13,8 +13,9 @@ import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.gestures.rememberTransformableState
 import androidx.compose.foundation.gestures.transformable
 import androidx.compose.foundation.layout.Arrangement
@@ -59,6 +60,7 @@ import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.PointerInputScope
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
@@ -81,10 +83,77 @@ private val SheetRadius = RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp)
 private val DeleteRed = Color(0xFFEF4444)
 
 /**
+ * Watches pointer count and reports when the gesture becomes multi-touch
+ * ([onMultiTouchStart], as soon as a second finger lands) and when every pointer
+ * has lifted ([onMultiTouchEnd]). While multi-touch is active, single-finger
+ * gestures (vertical swipe, pager slide, taps) must yield to pinch-zoom.
+ */
+internal suspend fun PointerInputScope.detectMultiTouch(
+    onMultiTouchStart: () -> Unit,
+    onMultiTouchEnd: () -> Unit,
+) {
+    awaitEachGesture {
+        awaitFirstDown(requireUnconsumed = false)
+        var multi = false
+        while (true) {
+            val event = awaitPointerEvent()
+            val pressed = event.changes.count { it.pressed }
+            if (!multi) {
+                if (pressed >= 2) {
+                    multi = true
+                    onMultiTouchStart()
+                } else if (pressed == 0) {
+                    break
+                }
+            } else if (pressed == 0) {
+                onMultiTouchEnd()
+                break
+            }
+        }
+    }
+}
+
+/**
+ * Tracks a single-finger vertical drag and fires [onSwipeUp] / [onSwipeDown] once
+ * it travels past [threshold] px in either direction. The drag is abandoned the
+ * instant a second finger lands, so a two-finger pinch can never open the drawer
+ * or dismiss the viewer.
+ */
+internal suspend fun PointerInputScope.detectVerticalSwipe(
+    threshold: Float,
+    onSwipeUp: () -> Unit,
+    onSwipeDown: () -> Unit,
+) {
+    awaitEachGesture {
+        val down = awaitFirstDown(requireUnconsumed = false)
+        var acc = 0f
+        while (true) {
+            val event = awaitPointerEvent()
+            if (event.changes.count { it.pressed } >= 2) return@awaitEachGesture
+            val drag = event.changes.firstOrNull { it.id == down.id } ?: return@awaitEachGesture
+            // position - previousPosition == movement since the last event.
+            // (The positionChange() extension is shadowed by an internal member with
+            // the same name, so use the raw offsets instead.)
+            acc += drag.position.y - drag.previousPosition.y
+            if (acc <= -threshold) {
+                onSwipeUp()
+                return@awaitEachGesture
+            } else if (acc >= threshold) {
+                onSwipeDown()
+                return@awaitEachGesture
+            }
+            // Consume the drag so no sibling detector treats it as something else.
+            drag.consume()
+        }
+    }
+}
+
+/**
  * Full-image viewer as a horizontal pager.
  * - Swipe left/right: next/previous image (pager slide).
  * - Double-tap: animated zoom in/out around the tap point.
- * - Pinch: zoom/pan.
+ * - Pinch: zoom/pan. While two fingers are down, all single-finger gestures
+ *   (swipe up/down, pager slide, taps, buttons) are suppressed.
  * - Long-press / swipe up: slides the action drawer up from the bottom.
  * - Swipe down (at 1x): dismisses.
  * - Counter pill (top-left): current/total.
@@ -156,28 +225,33 @@ fun FullImageViewer(
     }
 
     var containerSize by remember { mutableStateOf(IntSize.Zero) }
+    // True while two or more fingers are down. While true, single-finger gestures
+    // (swipe up/down, pager slide, taps) are suppressed and only pinch-zoom applies.
+    var multiTouchActive by remember { mutableStateOf(false) }
 
     Box(
         modifier = Modifier
             .fillMaxSize()
             .onSizeChanged { containerSize = it }
             .background(AmoledBlack.copy(alpha = backgroundAlpha))
+            // Multi-touch watch: as soon as a second finger lands, every single-finger
+            // gesture yields to the pinch-zoom on the image below.
+            .pointerInput(Unit) {
+                detectMultiTouch(
+                    onMultiTouchStart = { multiTouchActive = true },
+                    onMultiTouchEnd = { multiTouchActive = false },
+                )
+            }
             // Vertical drags (at 1x): swipe up -> drawer, swipe down -> dismiss.
-            .pointerInput(currentPageZoomed, drawerVisible, leaving) {
-                if (!currentPageZoomed && !drawerVisible && !leaving) {
-                    var acc = 0f
-                    detectVerticalDragGestures(
-                        onDragEnd = { acc = 0f },
-                        onDragCancel = { acc = 0f },
-                    ) { _, dragAmount ->
-                        acc += dragAmount
-                        if (acc < -swipeThreshold) {
-                            drawerVisible = true
-                            acc = 0f
-                        } else if (acc > swipeThreshold) {
-                            close()
-                        }
-                    }
+            // Abandoned the instant a second finger joins, so a pinch can't open the
+            // drawer. Re-armed (via key change) once the multi-touch gesture ends.
+            .pointerInput(currentPageZoomed, drawerVisible, leaving, multiTouchActive) {
+                if (!currentPageZoomed && !drawerVisible && !leaving && !multiTouchActive) {
+                    detectVerticalSwipe(
+                        threshold = swipeThreshold,
+                        onSwipeUp = { drawerVisible = true },
+                        onSwipeDown = { close() },
+                    )
                 }
             },
     ) {
@@ -206,12 +280,13 @@ fun FullImageViewer(
                     translationY = lerp(sourceRect.center.y - containerH / 2f, 0f, p)
                     alpha = 1f
                 },
-            userScrollEnabled = !currentPageZoomed,
+            userScrollEnabled = !currentPageZoomed && !multiTouchActive,
         ) { page ->
             ZoomableImage(
                 item = items[page],
                 onZoomedChange = { zoomed -> currentPageZoomed = zoomed },
                 onLongPress = { drawerVisible = true },
+                multiTouchActive = multiTouchActive,
             )
         }
 
@@ -300,6 +375,7 @@ private fun ZoomableImage(
     item: MediaItem,
     onZoomedChange: (Boolean) -> Unit,
     onLongPress: () -> Unit,
+    multiTouchActive: Boolean,
 ) {
     val scope = rememberCoroutineScope()
     var containerSize by remember { mutableStateOf(IntSize.Zero) }
@@ -344,7 +420,10 @@ private fun ZoomableImage(
             contentScale = ContentScale.Fit,
             modifier = Modifier
                 .fillMaxSize()
-                .pointerInput(Unit) {
+                // Re-keyed on multiTouchActive so taps / long-press are dead while a
+                // two-finger pinch is in effect (only pinch-zoom should act then).
+                .pointerInput(multiTouchActive) {
+                    if (multiTouchActive) return@pointerInput
                     detectTapGestures(
                         onLongPress = { onLongPress() },
                         onDoubleTap = { tap ->
