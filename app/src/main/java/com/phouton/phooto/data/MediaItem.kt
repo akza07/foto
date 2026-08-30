@@ -26,6 +26,22 @@ data class MediaItem(
     /** File size in bytes (MediaStore SIZE or DocumentsContract COLUMN_SIZE).
      * Mixed into the thumbnail cache key for additional entropy. */
     val sizeBytes: Long = 0L,
+) {
+    /**
+     * True when the source is a multi-frame image Coil can animate inline
+     * (GIF, animated WebP, animated HEIF/HEIC). Cheap to compute from
+     * [mimeType]; we don't decode the file to verify.
+     */
+    val isAnimated: Boolean
+        get() = mimeType in ANIMATED_MIME_TYPES
+}
+
+private val ANIMATED_MIME_TYPES = setOf(
+    "image/gif",
+    "image/webp",
+    "image/heif",
+    "image/heic",
+    "image/avif",
 )
 
 data class MediaFolder(

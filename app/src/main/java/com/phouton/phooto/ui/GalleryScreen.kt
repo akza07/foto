@@ -709,6 +709,8 @@ private fun FolderStack(previews: List<Uri>, modifier: Modifier = Modifier) {
 @Composable
 private fun ImageTile(item: MediaItem, onClick: (Rect) -> Unit) {
     var tileRect by remember { mutableStateOf(Rect.Zero) }
+    val settings by SettingsRepository.settings.collectAsState()
+    val animated = item.isAnimated && settings.animateGridPreviews
     Box(
         modifier = Modifier
             .fillMaxWidth()
@@ -720,8 +722,17 @@ private fun ImageTile(item: MediaItem, onClick: (Rect) -> Unit) {
     ) {
         Thumb(
             item = item,
+            animated = animated,
+            pacingEnabled = animated,
             modifier = Modifier.fillMaxSize(),
         )
+        if (item.isVideo) {
+            VideoBadge(
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(6.dp),
+            )
+        }
     }
 }
 
@@ -773,20 +784,28 @@ private fun Thumb(uri: Uri, modifier: Modifier = Modifier) {
  * Item-aware variant: routes through `ThumbCache` so each tile shares Coil's
  * disk + memory cache. [animated] controls whether GIF / animated WebP / HEIF
  * tiles play inline (true) or stay on the static first frame (false, default —
- * cheaper for grid scrolling).
+ * cheaper for grid scrolling). When [pacingEnabled] is true the animation is
+ * capped to [ThumbCache.GRID_ANIMATION_FPS] and plays once.
  */
 @Composable
 private fun Thumb(
     item: MediaItem,
     animated: Boolean = false,
+    pacingEnabled: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
     val key = remember(item.uri, item.lastModified, item.sizeBytes, item.mimeType) {
         ThumbCache.keyFor(item)
     }
-    val model = remember(item.uri, animated) {
-        ThumbCache.buildRequest(ctx = context, item = item, key = key, animated = animated)
+    val model = remember(item.uri, animated, pacingEnabled) {
+        ThumbCache.buildRequest(
+            ctx = context,
+            item = item,
+            key = key,
+            animated = animated,
+            pacingEnabled = pacingEnabled,
+        )
     }
     SubcomposeAsyncImage(
         model = model,
@@ -875,8 +894,12 @@ private fun FlyInTile(
             .background(SurfaceColor)
             .clickable { onClick(targetRect) },
     ) {
+        val settings by SettingsRepository.settings.collectAsState()
+        val animated = item.isAnimated && settings.animateGridPreviews
         Thumb(
             item = item,
+            animated = animated,
+            pacingEnabled = animated,
             modifier = Modifier
                 .fillMaxSize()
                 .graphicsLayer {
@@ -890,6 +913,13 @@ private fun FlyInTile(
                     alpha = 1f - scrim
                 },
         )
+        if (item.isVideo) {
+            VideoBadge(
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(6.dp),
+            )
+        }
     }
 }
 

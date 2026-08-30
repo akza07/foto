@@ -24,7 +24,11 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.Cached
 import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.DeleteSweep
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Surface
@@ -32,8 +36,13 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -42,13 +51,14 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.phouton.phooto.data.SettingsRepository
+import com.phouton.phooto.data.thumbnails.ExternalReloadSink
+import com.phouton.phooto.data.thumbnails.ThumbCache
 import com.phouton.phooto.ui.theme.AmoledBlack
 import com.phouton.phooto.ui.theme.Border
 import com.phouton.phooto.ui.theme.Surface as ThemeSurface
 import com.phouton.phooto.ui.theme.TextMuted
 import com.phouton.phooto.ui.theme.TextPrimary
-import androidx.compose.runtime.collectAsState
-import androidx.compose.ui.draw.clip
+import kotlinx.coroutines.launch
 
 private val RowShape = RoundedCornerShape(12.dp)
 
@@ -56,21 +66,31 @@ private val RowShape = RoundedCornerShape(12.dp)
 fun SettingsScreen(onBack: () -> Unit, onSettingsChanged: () -> Unit) {
     val context = LocalContext.current
     val settings by SettingsRepository.settings.collectAsState()
+    val scope = rememberCoroutineScope()
+    var cacheBytes by remember { mutableStateOf<Long?>(null) }
+    var clearing by remember { mutableStateOf(false) }
+    var showClearConfirm by remember { mutableStateOf(false) }
+
+    LaunchedEffect(Unit) {
+        cacheBytes = with(kotlinx.coroutines.Dispatchers.IO) { ThumbCache.cacheBytes() }
+    }
+
+    val refreshCacheSize = {
+        scope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            val bytes = ThumbCache.cacheBytes()
+            cacheBytes = bytes
+        }
+    }
 
     val treePicker = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocumentTree()
     ) { uri: Uri? ->
         if (uri != null) {
             try {
-                // Persist BOTH read + write so SAF deletes inside the granted tree
-                // keep working across reboots. OpenDocumentTree grants both when the
-                // user picks a tree, so OR-ing the constants mirrors the returned
-                // intent flags (which the contract doesn't expose).
                 val takeFlags = Intent.FLAG_GRANT_READ_URI_PERMISSION or
                     Intent.FLAG_GRANT_WRITE_URI_PERMISSION
                 context.contentResolver.takePersistableUriPermission(uri, takeFlags)
             } catch (_: Exception) {
-                // Non-persistable provider; access still valid for this session.
             }
             SettingsRepository.addTreeUri(uri.toString())
             onSettingsChanged()
@@ -114,16 +134,99 @@ fun SettingsScreen(onBack: () -> Unit, onSettingsChanged: () -> Unit) {
             contentPadding = androidx.compose.foundation.layout.PaddingValues(20.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
+            // ── Display ──────────────────────────────────────────────
+            item { SettingsSectionHeader(title = "Display") }
+
             item {
-                Text(
-                    text = "Content Discovery",
-                    color = TextMuted,
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    letterSpacing = 0.8.sp,
-                    modifier = Modifier.padding(top = 8.dp, bottom = 4.dp),
+                SettingsToggleRow(
+                    title = "Prefer 120Hz refresh rate",
+                    subtitle = "Ask the system to run at up to 120Hz on supported displays for smoother scrolling and animations. Has no effect on devices that don't support it.",
+                    checked = settings.preferHighRefreshRate,
+                    onCheckedChange = {
+                        SettingsRepository.setPreferHighRefreshRate(it)
+                        onSettingsChanged()
+                    },
                 )
             }
+
+            item {
+                SettingsToggleRow(
+                    title = "Animate previews in grid",
+                    subtitle = "Play GIFs and animated images at low frame rate inside the grid. Videos show a play badge and animate only in the viewer.",
+                    checked = settings.animateGridPreviews,
+                    onCheckedChange = {
+                        SettingsRepository.setAnimateGridPreviews(it)
+                        onSettingsChanged()
+                    },
+                )
+            }
+
+            // ── Storage ──────────────────────────────────────────────
+            item { SettingsSectionHeader(title = "Storage", topPadding = 16.dp) }
+
+            item {
+                val subtitle = when {
+                    clearing -> "Clearing…"
+                    cacheBytes == null -> "Calculating…"
+                    cacheBytes == 0L -> "No cached thumbnails"
+                    else -> formatCacheSize(cacheBytes!!)
+                }
+                Surface(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RowShape)
+                        .clickable(enabled = !clearing && (cacheBytes ?: 0L) > 0L) {
+                            showClearConfirm = true
+                        },
+                    shape = RowShape,
+                    color = ThemeSurface,
+                    shadowElevation = 0.dp,
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 14.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Box(
+                            modifier = Modifier.width(28.dp),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            if (clearing) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.width(18.dp),
+                                    strokeWidth = 2.dp,
+                                    color = TextPrimary,
+                                )
+                            } else {
+                                Icon(
+                                    imageVector = Icons.Outlined.DeleteSweep,
+                                    contentDescription = null,
+                                    tint = TextPrimary,
+                                    modifier = Modifier.width(20.dp),
+                                )
+                            }
+                        }
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Clear thumbnail cache",
+                                color = TextPrimary,
+                                fontSize = 15.sp,
+                                fontWeight = FontWeight.Medium,
+                            )
+                            Spacer(Modifier.height(2.dp))
+                            Text(
+                                text = subtitle,
+                                color = TextMuted,
+                                fontSize = 13.sp,
+                            )
+                        }
+                    }
+                }
+            }
+
+            // ── Content Discovery ────────────────────────────────────
+            item { SettingsSectionHeader(title = "Content Discovery", topPadding = 16.dp) }
 
             item {
                 SettingsToggleRow(
@@ -153,31 +256,9 @@ fun SettingsScreen(onBack: () -> Unit, onSettingsChanged: () -> Unit) {
                 )
             }
 
-            item {
-                Text(
-                    text = "Display",
-                    color = TextMuted,
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    letterSpacing = 0.8.sp,
-                    modifier = Modifier.padding(top = 16.dp, bottom = 4.dp),
-                )
-            }
+            // ── Folders ──────────────────────────────────────────────
+            item { SettingsSectionHeader(title = "Folders", topPadding = 16.dp) }
 
-            item {
-                SettingsToggleRow(
-                    title = "Prefer 120Hz refresh rate",
-                    subtitle = "Ask the system to run at up to 120Hz on supported displays for smoother scrolling and animations. Has no effect on devices that don't support it, and the system may still use a lower rate in power-save mode or under thermal throttling.",
-                    checked = settings.preferHighRefreshRate,
-                    onCheckedChange = {
-                        SettingsRepository.setPreferHighRefreshRate(it)
-                        onSettingsChanged()
-                    },
-                )
-            }
-
-            // The directory list + folder picker are always available; only the
-            // semantics change based on the explicit-permission flag.
             item {
                 Text(
                     text = when {
@@ -232,8 +313,7 @@ fun SettingsScreen(onBack: () -> Unit, onSettingsChanged: () -> Unit) {
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Box(
-                            modifier = Modifier
-                                .width(28.dp),
+                            modifier = Modifier.width(28.dp),
                             contentAlignment = Alignment.Center,
                         ) {
                             Icon(
@@ -249,6 +329,150 @@ fun SettingsScreen(onBack: () -> Unit, onSettingsChanged: () -> Unit) {
                             fontSize = 15.sp,
                             fontWeight = FontWeight.Medium,
                         )
+                    }
+                }
+            }
+        }
+    }
+
+    if (showClearConfirm) {
+        ClearCacheConfirmDialog(
+            onConfirm = {
+                showClearConfirm = false
+                clearing = true
+                scope.launch {
+                    ThumbCache.clear()
+                    clearing = false
+                    cacheBytes = 0L
+                    // Ask gallery to reload so progress bar reappears and tiles re-decode.
+                    ExternalReloadSink.current?.invoke()
+                    onSettingsChanged()
+                    refreshCacheSize()
+                }
+            },
+            onDismiss = { showClearConfirm = false },
+        )
+    }
+}
+
+@Composable
+private fun SettingsSectionHeader(
+    title: String,
+    topPadding: androidx.compose.ui.unit.Dp = 8.dp,
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = topPadding),
+    ) {
+        Text(
+            text = title,
+            color = TextMuted,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.SemiBold,
+            letterSpacing = 0.8.sp,
+            modifier = Modifier.padding(bottom = 6.dp),
+        )
+        HorizontalDivider(
+            color = Border,
+            thickness = 1.dp,
+        )
+        Spacer(Modifier.height(4.dp))
+    }
+}
+
+private fun formatCacheSize(bytes: Long): String {
+    val kb = bytes / 1024.0
+    val mb = kb / 1024.0
+    return when {
+        mb >= 1 -> String.format("%.1f MB cached", mb)
+        kb >= 1 -> String.format("%.0f KB cached", kb)
+        else -> "$bytes B cached"
+    }
+}
+
+@Composable
+private fun ClearCacheConfirmDialog(
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(AmoledBlack.copy(alpha = 0.7f))
+            .clickable(onClick = onDismiss, indication = null, interactionSource = null),
+        contentAlignment = Alignment.Center,
+    ) {
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 32.dp),
+            shape = RoundedCornerShape(16.dp),
+            color = ThemeSurface,
+            shadowElevation = 0.dp,
+        ) {
+            Column(modifier = Modifier.padding(24.dp)) {
+                Text(
+                    text = "Clear thumbnail cache?",
+                    color = TextPrimary,
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    text = "Cached previews will be deleted and regenerated the next time you scroll. This may take a moment.",
+                    color = TextMuted,
+                    fontSize = 14.sp,
+                    lineHeight = 20.sp,
+                )
+                Spacer(Modifier.height(24.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    Surface(
+                        modifier = Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(10.dp))
+                            .clickable(onClick = onDismiss, indication = null, interactionSource = null),
+                        shape = RoundedCornerShape(10.dp),
+                        color = androidx.compose.ui.graphics.Color.Transparent,
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(44.dp),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text(
+                                text = "Cancel",
+                                color = TextPrimary,
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Medium,
+                            )
+                        }
+                    }
+                    Surface(
+                        modifier = Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(10.dp))
+                            .clickable(onClick = onConfirm, indication = null, interactionSource = null),
+                        shape = RoundedCornerShape(10.dp),
+                        color = TextPrimary,
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(44.dp),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text(
+                                text = "Clear",
+                                color = AmoledBlack,
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                        }
                     }
                 }
             }
