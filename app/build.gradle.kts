@@ -25,6 +25,12 @@ android {
         versionName = "1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        // Restrict native libraries to the ABIs we ship APKs for. Add more here
+        // if you build for other architectures (e.g. x86_64 for an emulator).
+        ndk {
+            abiFilters += listOf("arm64-v8a")
+        }
     }
 
     signingConfigs {

@@ -311,8 +311,16 @@ private fun ZoomableImage(
 
     val transformableState = rememberTransformableState { centroid, zoomChange, panChange, _ ->
         val newScale = (scale * zoomChange).coerceIn(1f, 5f)
+        // centroid is reported in this modifier's local coords (origin at the
+        // top-left of the AsyncImage), but graphicsLayer applies scaleX/scaleY
+        // around the layer's center by default. Compensate relative to the
+        // center so the image point under the pinch midpoint stays anchored.
+        val center = Offset(
+            containerSize.width / 2f,
+            containerSize.height / 2f,
+        )
         if (newScale != scale) {
-            offset = offset + (centroid - offset) * (1f - zoomChange)
+            offset = offset + (centroid - center - offset) * (1f - zoomChange)
         }
         scale = newScale
         offset = offset + panChange
