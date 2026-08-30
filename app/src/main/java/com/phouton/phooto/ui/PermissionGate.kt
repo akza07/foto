@@ -35,6 +35,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.preferredFrameRate
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -52,7 +53,7 @@ import com.phouton.phooto.ui.theme.TextPrimary
 private val ShadcnRadius = RoundedCornerShape(12.dp)
 
 @Composable
-fun PermissionGate() {
+fun PermissionGate(preferHighRefreshRate: Boolean = false) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
 
@@ -76,8 +77,18 @@ fun PermissionGate() {
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
+    // Per-composable vote for a higher refresh rate. The platform aggregates
+    // these votes with any other surfaces in the window and picks the highest
+    // compatible rate. Applying it here propagates to GalleryScreen,
+    // FullImageViewer, and SettingsScreen without further changes.
+    val rootModifier = if (preferHighRefreshRate) {
+        Modifier.preferredFrameRate(120f)
+    } else {
+        Modifier
+    }
+
     if (granted) {
-        GalleryScreen()
+        GalleryScreen(modifier = rootModifier)
     } else {
         val permissions = requiredPermissions()
         val shouldShowRationale = permissions.any { permission ->
@@ -86,7 +97,7 @@ fun PermissionGate() {
         }
 
         Box(
-            modifier = Modifier
+            modifier = rootModifier
                 .fillMaxSize()
                 .background(AmoledBlack)
                 .padding(24.dp),

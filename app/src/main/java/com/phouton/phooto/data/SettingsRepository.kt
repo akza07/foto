@@ -10,6 +10,7 @@ data class AppSettings(
     val respectNoMedia: Boolean = true,
     val requireExplicit: Boolean = false,
     val selectedTreeUris: List<String> = emptyList(),
+    val preferHighRefreshRate: Boolean = true,
 )
 
 object SettingsRepository {
@@ -17,6 +18,7 @@ object SettingsRepository {
     private const val KEY_RESPECT_NO_MEDIA = "respect_no_media"
     private const val KEY_REQUIRE_EXPLICIT = "require_explicit"
     private const val KEY_TREE_URIS = "tree_uris"
+    private const val KEY_PREFER_HIGH_REFRESH_RATE = "prefer_high_refresh_rate"
 
     private val _settings = MutableStateFlow(AppSettings())
     val settings: StateFlow<AppSettings> = _settings.asStateFlow()
@@ -31,6 +33,7 @@ object SettingsRepository {
             requireExplicit = prefs.getBoolean(KEY_REQUIRE_EXPLICIT, false),
             selectedTreeUris = prefs.getString(KEY_TREE_URIS, "")?.split("\n").orEmpty()
                 .filter { it.isNotBlank() },
+            preferHighRefreshRate = prefs.getBoolean(KEY_PREFER_HIGH_REFRESH_RATE, true),
         )
     }
 
@@ -42,6 +45,11 @@ object SettingsRepository {
     fun setRequireExplicit(value: Boolean) {
         prefs.edit().putBoolean(KEY_REQUIRE_EXPLICIT, value).apply()
         _settings.value = _settings.value.copy(requireExplicit = value)
+    }
+
+    fun setPreferHighRefreshRate(value: Boolean) {
+        prefs.edit().putBoolean(KEY_PREFER_HIGH_REFRESH_RATE, value).apply()
+        _settings.value = _settings.value.copy(preferHighRefreshRate = value)
     }
 
     fun addTreeUri(uri: String) {

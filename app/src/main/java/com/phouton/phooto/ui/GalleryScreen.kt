@@ -126,7 +126,7 @@ private fun collapsedOffsetDp(index: Int): Pair<Float, Float> = when (index) {
 }
 
 @Composable
-fun GalleryScreen() {
+fun GalleryScreen(modifier: Modifier = Modifier) {
     val context = LocalContext.current
     SettingsRepository.init(context)
     var content by remember { mutableStateOf<GalleryContent?>(null) }
@@ -271,7 +271,7 @@ fun GalleryScreen() {
     // The root Albums grid stays composed underneath the album, so when the album
     // fades on back, the folder stack is already exactly where the collapsing tiles
     // land — the "after" state is the real top-level view, never a swap-in.
-    Box(modifier = Modifier.fillMaxSize()) {
+    Box(modifier = modifier.fillMaxSize()) {
         MainGalleryGrid(
             content = content,
             onFolderClick = { folder, rect ->

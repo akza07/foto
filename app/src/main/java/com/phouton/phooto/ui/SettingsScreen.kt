@@ -153,6 +153,29 @@ fun SettingsScreen(onBack: () -> Unit, onSettingsChanged: () -> Unit) {
                 )
             }
 
+            item {
+                Text(
+                    text = "Display",
+                    color = TextMuted,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    letterSpacing = 0.8.sp,
+                    modifier = Modifier.padding(top = 16.dp, bottom = 4.dp),
+                )
+            }
+
+            item {
+                SettingsToggleRow(
+                    title = "Prefer 120Hz refresh rate",
+                    subtitle = "Ask the system to run at up to 120Hz on supported displays for smoother scrolling and animations. Has no effect on devices that don't support it, and the system may still use a lower rate in power-save mode or under thermal throttling.",
+                    checked = settings.preferHighRefreshRate,
+                    onCheckedChange = {
+                        SettingsRepository.setPreferHighRefreshRate(it)
+                        onSettingsChanged()
+                    },
+                )
+            }
+
             // The directory list + folder picker are always available; only the
             // semantics change based on the explicit-permission flag.
             item {
