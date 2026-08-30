@@ -760,6 +760,10 @@ private fun StackLayer(uri: Uri?, modifier: Modifier, scrim: Float) {
                     .fillMaxSize()
                     .graphicsLayer { alpha = 1f - scrim },
             )
+        } else {
+            // No cover to show: lifted zinc surface + broken-image glyph so the
+            // empty stack reads as "no preview" rather than a black tile.
+            EmptyPreview(modifier = Modifier.fillMaxSize())
         }
     }
 }
@@ -781,10 +785,10 @@ private fun Thumb(uri: Uri, modifier: Modifier = Modifier) {
         modifier = modifier,
     ) {
         val state by painter.state.collectAsState()
-        if (state is AsyncImagePainter.State.Success) {
-            SubcomposeAsyncImageContent()
-        } else {
-            SkeletonShimmer()
+        when (val s = state) {
+            is AsyncImagePainter.State.Success -> SubcomposeAsyncImageContent()
+            is AsyncImagePainter.State.Error -> EmptyPreview()
+            else -> SkeletonShimmer()
         }
     }
 }
@@ -820,10 +824,10 @@ private fun Thumb(
         modifier = modifier,
     ) {
         val state by painter.state.collectAsState()
-        if (state is AsyncImagePainter.State.Success) {
-            SubcomposeAsyncImageContent()
-        } else {
-            SkeletonShimmer()
+        when (val s = state) {
+            is AsyncImagePainter.State.Success -> SubcomposeAsyncImageContent()
+            is AsyncImagePainter.State.Error -> EmptyPreview()
+            else -> SkeletonShimmer()
         }
     }
 }

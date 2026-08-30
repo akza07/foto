@@ -20,7 +20,7 @@ import androidx.compose.ui.platform.LocalContext
 import com.phouton.phooto.data.MediaItem
 import com.phouton.phooto.data.thumbnails.ThumbCache
 import com.phouton.phooto.data.thumbnails.VideoFrameCache
-import com.phouton.phooto.ui.theme.Surface
+import com.phouton.phooto.ui.theme.EmptySurface
 import coil3.compose.AsyncImagePainter
 import coil3.compose.SubcomposeAsyncImage
 import coil3.compose.SubcomposeAsyncImageContent
@@ -93,7 +93,7 @@ fun VideoPosterThumb(
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
-                        .background(Surface.copy(alpha = 0.6f)),
+                        .background(EmptySurface),
                 )
             }
         }
@@ -113,7 +113,7 @@ fun VideoPosterThumb(
         Box(
             modifier = modifier
                 .fillMaxSize()
-                .background(Surface.copy(alpha = 0.6f)),
+                .background(EmptySurface),
         )
     }
 }

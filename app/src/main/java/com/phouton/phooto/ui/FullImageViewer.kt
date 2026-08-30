@@ -74,6 +74,7 @@ import coil3.compose.AsyncImage
 import coil3.request.ImageRequest
 import com.phouton.phooto.data.MediaItem
 import com.phouton.phooto.ui.theme.AmoledBlack
+import com.phouton.phooto.ui.theme.EmptySurface
 import com.phouton.phooto.ui.theme.Surface as ThemeSurface
 import com.phouton.phooto.ui.theme.TextMuted
 import com.phouton.phooto.ui.theme.TextPrimary
@@ -441,7 +442,7 @@ private fun ZoomableImage(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(AmoledBlack)
+            .background(EmptySurface)
             .onSizeChanged { containerSize = it },
     ) {
         AsyncImage(

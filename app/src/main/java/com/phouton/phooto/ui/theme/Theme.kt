@@ -12,6 +12,9 @@ val Surface = Color(0xFF09090B)
 val Border = Color(0xFF27272A)
 val TextPrimary = Color(0xFFFAFAFA)
 val TextMuted = Color(0xFFA1A1AA)
+// Lifted zinc-900 surface for tiles/viewer pages that have no preview to show,
+// so an empty state can never be mistaken for the pure-black background.
+val EmptySurface = Color(0xFF18181B)
 
 private val PhootoDarkColorScheme = darkColorScheme(
     primary = TextPrimary,
