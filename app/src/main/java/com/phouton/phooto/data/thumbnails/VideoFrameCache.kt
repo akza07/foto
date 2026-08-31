@@ -50,6 +50,28 @@ object VideoFrameCache {
         return f.isFile && f.length() > 0L
     }
 
+    /**
+     * Long edge of the cached poster via a bounds-only decode (cheap: no
+     * pixels are read), or null if missing/corrupt. Lets callers detect stale
+     * posters (e.g. legacy rep-frame thumbnails smaller than today's target)
+     * without decoding the bitmap.
+     */
+    fun posterLongEdge(context: Context, uri: Uri): Int? {
+        val f = posterFile(dirFor(context, uri))
+        if (!f.isFile || f.length() == 0L) return null
+        return try {
+            val opts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            BitmapFactory.decodeFile(f.absolutePath, opts)
+            if (opts.outWidth > 0 && opts.outHeight > 0) {
+                maxOf(opts.outWidth, opts.outHeight)
+            } else {
+                null
+            }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
     /** Loads the cached poster, or null if missing/corrupt. */
     fun load(context: Context, uri: Uri): Bitmap? {
         val f = posterFile(dirFor(context, uri))

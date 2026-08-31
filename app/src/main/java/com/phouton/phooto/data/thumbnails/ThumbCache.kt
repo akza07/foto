@@ -308,7 +308,9 @@ object ThumbCache {
      */
     fun enqueueAllIfMissing(
         items: List<MediaItem>,
-        chunkSize: Int = 15,
+        // Video poster extraction (MediaMetadataRetriever seek) is heavier than
+        // a Coil image decode, so the AoT pass works in smaller chunks.
+        chunkSize: Int = 6,
         delayMs: Long = 50,
     ) {
         if (shutdown || !initialized) return
@@ -319,10 +321,18 @@ object ThumbCache {
             for (chunk in items.chunked(chunkSize)) {
                 for (item in chunk) {
                     if (!seen.add(item.uri)) continue
-                    val key = keyFor(item)
-                    if (thumbFile(key).isFile) continue
+                    // Videos are gated on their frame-0 poster (the artifact
+                    // the UI reads), not the legacy Coil thumb file — otherwise
+                    // old thumb entries would block poster extraction forever.
+                    val alreadyCached = if (item.isVideo) {
+                        (VideoFrameCache.posterLongEdge(ctx, item.uri) ?: 0) >=
+                            VideoPosterExtractor.POSTER_LONG_EDGE
+                    } else {
+                        thumbFile(keyFor(item)).isFile
+                    }
+                    if (alreadyCached) continue
                     bumpTotal()
-                    enqueueOne(ctx, item, key, null)
+                    enqueueOne(ctx, item, keyFor(item), null)
                 }
                 if (delayMs > 0) delay(delayMs)
             }
@@ -332,6 +342,13 @@ object ThumbCache {
     /**
      * Kicks off a Coil decode for one thumbnail and persists the decoded
      * bitmap; pairs a [bumpDone] with the [bumpTotal].
+     *
+     * Videos take a different path: Coil's 320px frame-at-10% thumb is never
+     * read by video tiles, so the work is spent on what the UI actually shows
+     * — a frame-0 poster at [VideoPosterExtractor.POSTER_LONG_EDGE] px via
+     * [VideoPosterExtractor], persisted with [VideoFrameCache]. This makes the
+     * AoT warm pass pre-warm the real poster pipeline: grid tiles and the
+     * viewer's poster veil both read the same disk cache afterwards.
      */
     private fun enqueueOne(
         ctx: Context,
@@ -341,10 +358,14 @@ object ThumbCache {
     ) {
         scope.launch {
             try {
-                val request = buildRequest(ctx, item, key, animated = false, targetSize = THUMB_LONG_EDGE_PX)
-                val result = (loader ?: SingletonImageLoader.get(ctx)).execute(request)
-                if (result is coil3.request.SuccessResult) {
-                    persistThumbnail(key, result.image)
+                if (item.isVideo) {
+                    extractAndSavePoster(ctx, item)
+                } else {
+                    val request = buildRequest(ctx, item, key, animated = false, targetSize = THUMB_LONG_EDGE_PX)
+                    val result = (loader ?: SingletonImageLoader.get(ctx)).execute(request)
+                    if (result is coil3.request.SuccessResult) {
+                        persistThumbnail(key, result.image)
+                    }
                 }
             } catch (_: Exception) {
                 // Best-effort: cache miss is fine, the next render will retry.
@@ -352,6 +373,19 @@ object ThumbCache {
                 bumpDone()
             }
         }
+    }
+
+    /**
+     * Extracts frame 0 as the video's poster (unless a fresh one is already
+     * cached) and persists it to [VideoFrameCache]. One-time ~50-150 ms per
+     * video; every later read is a JPEG decode from disk. Staleness uses a
+     * bounds-only header read — no bitmap decode.
+     */
+    private suspend fun extractAndSavePoster(ctx: Context, item: MediaItem) {
+        val edge = VideoPosterExtractor.POSTER_LONG_EDGE
+        if ((VideoFrameCache.posterLongEdge(ctx, item.uri) ?: 0) >= edge) return
+        val poster = VideoPosterExtractor.extract(ctx, item.uri, edge) ?: return
+        VideoFrameCache.save(ctx, item.uri, poster)
     }
 
     /** Path to a persisted thumbnail's JPEG file (app-private, survives restarts). */

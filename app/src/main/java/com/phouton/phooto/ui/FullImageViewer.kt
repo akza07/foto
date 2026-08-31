@@ -57,6 +57,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -168,7 +169,8 @@ internal suspend fun PointerInputScope.detectVerticalSwipe(
 
 /**
  * Full-image viewer as a horizontal pager.
- * - Swipe left/right: next/previous image (pager slide).
+ * - Swipe left/right: next/previous image (pager slide). On video pages,
+ *   swiping is locked while the video plays — pause first to navigate.
  * - Double-tap: animated zoom in/out around the tap point.
  * - Pinch: zoom/pan. While two fingers are down, all single-finger gestures
  *   (swipe up/down, pager slide, taps, buttons) are suppressed.
@@ -204,6 +206,11 @@ fun FullImageViewer(
 
     var drawerVisible by remember { mutableStateOf(false) }
     var currentPageZoomed by remember { mutableStateOf(false) }
+    var videoControlsVisible by remember { mutableStateOf(true) }
+    // True while the current video page is actively playing. While playing,
+    // pager swiping is locked so a swipe can never skip to the next item;
+    // pausing re-enables it (user decision: swipe navigates only when paused).
+    var videoPlaying by remember { mutableStateOf(false) }
 
     LaunchedEffect(pagerState.settledPage) {
         onPageChanged(pagerState.settledPage)
@@ -228,17 +235,43 @@ fun FullImageViewer(
     val currentIndex = pagerState.settledPage
     val currentItem = items.getOrNull(currentIndex)
 
+    // Video pages: the viewer's image-only gestures are disabled (user decision).
+    // No swipe-down dismiss, no swipe-up drawer, no pinch/double-tap zoom — the
+    // video page owns its own tap/seek interactions. Only horizontal paging
+    // remains, plus the top-left back button.
+    val currentPageIsVideo = currentItem?.isVideo == true
+
+    // A video page never holds zoom state, and its gestures are off: clear any
+    // leftover image zoom and close a drawer that may be open so it can't linger
+    // over a playing video.
+    LaunchedEffect(currentPageIsVideo, currentIndex) {
+        videoControlsVisible = true
+        if (currentPageIsVideo) {
+            currentPageZoomed = false
+            drawerVisible = false
+        } else {
+            videoPlaying = false
+        }
+    }
+
     // Preload adjacent pages so page swipes never flash black while loading.
+    // Images go through Coil; VIDEO posters go through VideoPosterMemory (the
+    // viewer composes the incoming page at swipe start and needs its poster
+    // synchronously), so video neighbors are warmed into that cache instead.
     val ctx = androidx.compose.ui.platform.LocalContext.current
     LaunchedEffect(currentIndex) {
-        val imageLoader = coil3.SingletonImageLoader.get(ctx)
-        listOf(currentIndex - 1, currentIndex, currentIndex + 1)
+        listOf(currentIndex - 1, currentIndex + 1)
             .filter { it in items.indices }
             .forEach { i ->
-                val req = ImageRequest.Builder(ctx)
-                    .data(items[i].uri)
-                    .build()
-                imageLoader.enqueue(req)
+                val neighbor = items[i]
+                if (neighbor.isVideo) {
+                    preloadVideoPoster(ctx, neighbor)
+                } else {
+                    val req = ImageRequest.Builder(ctx)
+                        .data(neighbor.uri)
+                        .build()
+                    coil3.SingletonImageLoader.get(ctx).enqueue(req)
+                }
             }
     }
 
@@ -265,8 +298,10 @@ fun FullImageViewer(
             // Vertical drags (at 1x): swipe up -> drawer, swipe down -> dismiss.
             // Abandoned the instant a second finger joins, so a pinch can't open the
             // drawer. Re-armed (via key change) once the multi-touch gesture ends.
-            .pointerInput(currentPageZoomed, drawerVisible, leaving, multiTouchActive) {
-                if (!currentPageZoomed && !drawerVisible && !leaving && !multiTouchActive) {
+            // Skipped entirely on video pages (user decision): video pages have no
+            // dismiss/drawer gestures — only the back button and pager swipes.
+            .pointerInput(currentPageZoomed, drawerVisible, leaving, multiTouchActive, currentPageIsVideo) {
+                if (!currentPageIsVideo && !currentPageZoomed && !drawerVisible && !leaving && !multiTouchActive) {
                     detectVerticalSwipe(
                         threshold = swipeThreshold,
                         onSwipeUp = { drawerVisible = true },
@@ -303,13 +338,69 @@ fun FullImageViewer(
                     translationY = lerp(sourceRect.center.y - containerH / 2f, 0f, p)
                     alpha = 1f
                 },
-            userScrollEnabled = !currentPageZoomed && !multiTouchActive,
+            // Video pages lock pager swiping while playing; paused (or image
+            // pages) allow it. Zoom and multi-touch keep their existing gates.
+            userScrollEnabled = (!currentPageIsVideo || !videoPlaying) &&
+                !currentPageZoomed &&
+                !multiTouchActive,
         ) { page ->
-            ZoomableImage(
-                item = items[page],
-                onZoomedChange = { zoomed -> currentPageZoomed = zoomed },
-                onLongPress = { drawerVisible = true },
-                multiTouchActive = multiTouchActive,
+            val item = items[page]
+            if (item.isVideo) {
+                // Video page: real playback via ExoPlayer, no zoom gestures.
+                // Only the settled page is "active" (owns a player/decoder);
+                // adjacent video pages show their cached poster.
+                VideoPlayerPage(
+                    item = item,
+                    active = page == currentIndex,
+                    onControlsVisibilityChanged = { visible ->
+                        if (page == currentIndex) videoControlsVisible = visible
+                    },
+                    onPlayingChanged = { playing ->
+                        if (page == currentIndex) videoPlaying = playing
+                    },
+                    onShare = onShare,
+                    onDelete = onDelete,
+                    onInfo = onInfo,
+                    // Live entry-zoom progress (0 = tile, 1 = fullscreen) so the
+                    // video page can bridge the tile's cropped poster into the
+                    // player's fitted poster without a pop at animation end.
+                    entryProgress = { progress.value },
+                    modifier = Modifier.fillMaxSize(),
+                )
+            } else {
+                ZoomableImage(
+                    item = item,
+                    onZoomedChange = { zoomed -> currentPageZoomed = zoomed },
+                    onLongPress = { drawerVisible = true },
+                    multiTouchActive = multiTouchActive,
+                )
+            }
+        }
+
+        val topChromeAlpha by animateFloatAsState(
+            targetValue = if (currentPageIsVideo && !videoControlsVisible) 0f else 1f,
+            animationSpec = tween(200),
+            label = "video top chrome alpha",
+        )
+
+        // Keep the top chrome readable over bright video, and fade it with the
+        // video HUD rather than leaving a lone back button on screen.
+        Box(
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .fillMaxWidth()
+                .height(112.dp)
+                .graphicsLayer { alpha = if (currentPageIsVideo) topChromeAlpha else 0f },
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(
+                        Brush.verticalGradient(
+                            0f to AmoledBlack.copy(alpha = 0.62f),
+                            1f to Color.Transparent,
+                        ),
+                    ),
             )
         }
 
@@ -321,7 +412,7 @@ fun FullImageViewer(
                 .padding(start = 8.dp, top = 8.dp)
                 .graphicsLayer {
                     // Fade out with the exit animation so it never lingers over the grid.
-                    alpha = if (leaving) p else 1f
+                    alpha = (if (leaving) p else 1f) * topChromeAlpha
                     translationY = if (leaving) -12.dp.toPx() * (1f - p) else 0f
                 },
             verticalAlignment = Alignment.CenterVertically,
@@ -332,7 +423,10 @@ fun FullImageViewer(
                     .size(40.dp)
                     .shadow(8.dp, CircleShape)
                     .clip(CircleShape)
-                    .clickable(onClick = close),
+                    .clickable(
+                        enabled = !currentPageIsVideo || videoControlsVisible,
+                        onClick = close,
+                    ),
                 shape = CircleShape,
                 color = ThemeSurface,
                 shadowElevation = 0.dp,

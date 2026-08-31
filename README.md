@@ -35,6 +35,7 @@ rendering where the app's black extends behind the system status/navigation bars
 | Activity Compose | 1.13.0 |
 | Lifecycle Runtime Compose | 2.11.0 |
 | Coil 3 (`coil-compose`, `coil-video`) | 3.3.0 |
+| Media3 (`media3-exoplayer`, `media3-ui-compose`) | 1.11.0 |
 | Haze (backdrop blur) | 1.7.2 |
 | `minSdk` / `targetSdk` / `compileSdk` | 29 / 37 / 37 |
 | Application ID | `com.phouton.phooto` |
@@ -54,6 +55,7 @@ app/src/main/java/com/phouton/phooto/
 │   ├── PermissionGate.kt      # Runtime permission request screen
 │   ├── GalleryScreen.kt       # Albums grid, folder (album) view, transitions
 │   ├── FullImageViewer.kt     # Pager-based full-screen image viewer
+│   ├── VideoPlayerPage.kt     # ExoPlayer video playback page (shadcn controls)
 │   ├── SettingsScreen.kt      # Settings + Content Discovery
 │   └── theme/Theme.kt         # AMOLED shadcn palette + MaterialTheme
 └── data/
@@ -146,6 +148,46 @@ edge-to-edge rendering.
     `MediaStore.createDeleteRequest` fallback.
   - **Share:** `ACTION_SEND` chooser with URI grant.
   - **Info:** sheet with name, size, and date.
+
+### 5.4.1 Video playback
+- Tapping a **video** tile opens the viewer with **real playback** via
+  **AndroidX Media3 — ExoPlayer** (`media3-exoplayer` + Compose-first
+  `media3-ui-compose`; `PlayerSurface`/`ContentFrame`, TextureView surface so
+  the scale-from-tile transition and overlay controls compose cleanly).
+- Opens **paused** as a preview: the cached poster shows until playback starts
+  (no autoplay — user decision).
+- **Unified frame-0 poster pipeline** (one bitmap per video, used everywhere):
+  - `VideoPosterExtractor` grabs **frame 0** (`MediaMetadataRetriever.
+    getScaledFrameAtTime`, 720 px long edge) — the exact frame ExoPlayer
+    renders paused, so the grid tile, the viewer's poster veil, and the
+    player's first frame are pixel-identical and every transition is a
+    crossfade between matching pixels (no visible "switch").
+  - Persisted to `VideoFrameCache` (`filesDir/frames/<sha1>/poster.jpg`); the
+    AoT warm pass (`ThumbCache.enqueueOne`) extracts posters in the background
+    with the existing progress pill, so tiles and the viewer read a warm disk
+    cache.
+  - Read chain (UI): in-memory LRU (`VideoPosterMemory`, sync hit → zero-delay
+    paint) → `VideoFrameCache` → one-time extraction → MediaStore last resort.
+    Swipe-to-next-video pre-warms neighbors into the LRU.
+- **Gestures**:
+  - **Single tap** toggles play/pause.
+  - **Double-tap left/right** seeks ∓10 s.
+  - **Swipe left/right navigates only while paused** — while playing, pager
+    swiping is locked so a stray swipe can't skip content; pausing re-enables it.
+- **Minimal bottom HUD** (auto-hides after 3 s while playing; paused keeps it
+  visible), matching the app's shadcn/zinc styling:
+  - **Seeker** row flanked by current / total time (tap/drag to scrub; thin
+    white-on-zinc track with buffered segment, thumb appears while scrubbing).
+  - **Volume** mute toggle (left) and a **playback-speed chip** ("1.0x", right)
+    with a 0.5×–2× dropdown.
+- **Top-right 3-dot menu**: Share, Delete (red), Info — reusing the viewer's
+  existing share/delete/info flows. Back button + counter pill remain top-left.
+- Only the settled page owns a player/decoder (adjacent pages show posters);
+  playback pauses when the app backgrounds.
+- **Video pages disable the image-only gestures** (user decision): no
+  swipe-down dismiss, no swipe-up drawer, no pinch/double-tap zoom. Exit via the
+  back button, or swipe to an adjacent page while paused.
+- Unsupported codecs → clean shadcn error state (no crash).
 
 ### 5.5 Settings — Content Discovery
 - **Gear icon** → Settings screen (slide transition).
