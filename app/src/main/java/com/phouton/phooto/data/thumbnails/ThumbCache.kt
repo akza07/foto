@@ -245,13 +245,14 @@ object ThumbCache {
      * Coil does NOT persist content-URI sources to the disk cache, so the
      * decoded thumbnail is stored as a plain file we read back directly.
      * Accounting note: only *real* work is counted — an item already on disk
-     * bumps nothing, so a warm cache never shows the pill.
+     * (or whose recent attempt failed; see [isAlreadyCached]) bumps nothing,
+     * so a warm cache never shows the pill.
      */
     fun enqueueIfMissing(item: MediaItem, loader: ImageLoader? = null): Boolean {
         if (shutdown || !initialized) return false
         val ctx = appContext ?: return false
         val key = keyFor(item)
-        if (thumbFile(key).isFile) {
+        if (isAlreadyCached(ctx, item, key)) {
             return false
         }
         bumpTotal()
@@ -270,7 +271,7 @@ object ThumbCache {
         if (shutdown || !initialized) return false
         val ctx = appContext ?: return false
         val key = keyForUri(uri)
-        if (thumbFile(key).isFile) {
+        if (thumbFile(key).isFile || isFailureFresh(key)) {
             return false
         }
         bumpTotal()
@@ -283,11 +284,18 @@ object ThumbCache {
                     .size(Size(THUMB_LONG_EDGE_PX, THUMB_LONG_EDGE_PX))
                     .build()
                 val result = (loader ?: SingletonImageLoader.get(ctx)).execute(request)
-                if (result is coil3.request.SuccessResult) {
+                val persisted = if (result is coil3.request.SuccessResult) {
                     persistThumbnail(key, result.image)
+                } else {
+                    false
+                }
+                if (!persisted) {
+                    // No thumbnail was written; without a marker this cover
+                    // would count as pending work on every launch.
+                    markFailed(key)
                 }
             } catch (_: Exception) {
-                // Best-effort.
+                markFailed(key)
             } finally {
                 bumpDone()
             }
@@ -305,6 +313,13 @@ object ThumbCache {
      * thrash the disk/CPU. Items already on disk are skipped and don't count
      * toward progress — the pill only reflects real work. Runs on the cache's
      * IO scope (disk checks + enqueues off the main thread).
+     *
+     * Freshness gates:
+     *  - Videos: [VideoFrameCache.hasFreshPoster] (pipeline marker, not size —
+     *    `getScaledFrameAtTime` never upscales, so sub-target videos are still
+     *    fresh). Recently failed videos are skipped too, so an unreadable file
+     *    doesn't count as pending work on every launch.
+     *  - Images: the persisted thumb file, else a fresh failure marker.
      */
     fun enqueueAllIfMissing(
         items: List<MediaItem>,
@@ -321,16 +336,7 @@ object ThumbCache {
             for (chunk in items.chunked(chunkSize)) {
                 for (item in chunk) {
                     if (!seen.add(item.uri)) continue
-                    // Videos are gated on their frame-0 poster (the artifact
-                    // the UI reads), not the legacy Coil thumb file — otherwise
-                    // old thumb entries would block poster extraction forever.
-                    val alreadyCached = if (item.isVideo) {
-                        (VideoFrameCache.posterLongEdge(ctx, item.uri) ?: 0) >=
-                            VideoPosterExtractor.POSTER_LONG_EDGE
-                    } else {
-                        thumbFile(keyFor(item)).isFile
-                    }
-                    if (alreadyCached) continue
+                    if (isAlreadyCached(ctx, item, keyFor(item))) continue
                     bumpTotal()
                     enqueueOne(ctx, item, keyFor(item), null)
                 }
@@ -363,11 +369,19 @@ object ThumbCache {
                 } else {
                     val request = buildRequest(ctx, item, key, animated = false, targetSize = THUMB_LONG_EDGE_PX)
                     val result = (loader ?: SingletonImageLoader.get(ctx)).execute(request)
-                    if (result is coil3.request.SuccessResult) {
+                    val persisted = if (result is coil3.request.SuccessResult) {
                         persistThumbnail(key, result.image)
+                    } else {
+                        false
+                    }
+                    if (!persisted) {
+                        // No thumbnail was written; without a marker this item
+                        // would count as pending work on every launch.
+                        markFailed(key)
                     }
                 }
             } catch (_: Exception) {
+                if (!item.isVideo) markFailed(key)
                 // Best-effort: cache miss is fine, the next render will retry.
             } finally {
                 bumpDone()
@@ -378,14 +392,25 @@ object ThumbCache {
     /**
      * Extracts frame 0 as the video's poster (unless a fresh one is already
      * cached) and persists it to [VideoFrameCache]. One-time ~50-150 ms per
-     * video; every later read is a JPEG decode from disk. Staleness uses a
-     * bounds-only header read — no bitmap decode.
+     * video; every later read is a JPEG decode from disk. Freshness uses the
+     * pipeline marker rather than the poster's pixel size, because the
+     * extractor never upscales (a 640px video stores a 640px poster and is
+     * still fresh). Failures are marked so the warm pass skips — and doesn't
+     * re-count — unreadable videos for a day.
      */
     private suspend fun extractAndSavePoster(ctx: Context, item: MediaItem) {
         val edge = VideoPosterExtractor.POSTER_LONG_EDGE
-        if ((VideoFrameCache.posterLongEdge(ctx, item.uri) ?: 0) >= edge) return
-        val poster = VideoPosterExtractor.extract(ctx, item.uri, edge) ?: return
-        VideoFrameCache.save(ctx, item.uri, poster)
+        if (VideoFrameCache.hasFreshPoster(ctx, item.uri)) return
+        val poster = VideoPosterExtractor.extract(ctx, item.uri, edge)
+        if (poster == null) {
+            VideoFrameCache.markFailed(ctx, item.uri)
+            return
+        }
+        if (!VideoFrameCache.save(ctx, item.uri, poster)) {
+            // Extraction worked but persistence didn't (disk full, I/O error);
+            // same accounting consequence as a failed extraction.
+            VideoFrameCache.markFailed(ctx, item.uri)
+        }
     }
 
     /** Path to a persisted thumbnail's JPEG file (app-private, survives restarts). */
@@ -395,11 +420,53 @@ object ThumbCache {
     }
 
     /**
+     * True when [item] needs no work: a usable artifact already exists on
+     * disk, or a recent attempt failed and is being suppressed. Videos read
+     * the poster marker (not pixel size — the extractor never upscales) plus
+     * the video failure marker; images read the thumb file plus the image
+     * failure marker. Kept in one place so the warm pass, the loose-item
+     * pass, and future callers agree on what "already done" means.
+     */
+    private fun isAlreadyCached(ctx: Context, item: MediaItem, key: String): Boolean =
+        if (item.isVideo) {
+            VideoFrameCache.hasFreshPoster(ctx, item.uri) ||
+                VideoFrameCache.isFailureFresh(ctx, item.uri)
+        } else {
+            thumbFile(key).isFile || isFailureFresh(key)
+        }
+
+    /** Sidecar marking a known-failed image decode; lives with its thumb file. */
+    private fun failureFile(key: String): File {
+        val dir = File(appContext?.filesDir ?: return File(""), THUMB_CACHE_DIR).apply { mkdirs() }
+        return File(dir, "$key.failed")
+    }
+
+    private fun isFailureFresh(key: String): Boolean {
+        val f = failureFile(key)
+        if (!f.isFile) return false
+        val writtenAt = f.lastModified()
+        return writtenAt > 0L &&
+            System.currentTimeMillis() - writtenAt < VideoFrameCache.FAILURE_RETRY_MS
+    }
+
+    private fun markFailed(key: String) {
+        try {
+            failureFile(key).apply {
+                writeText("failed\n")
+                setLastModified(System.currentTimeMillis())
+            }
+        } catch (_: Exception) {
+        }
+    }
+
+    /**
      * Encodes a decoded thumbnail bitmap to JPEG and writes it atomically
      * (tmp + rename) to the thumb cache dir. Coil doesn't persist content-URI
      * sources to disk, so this is what makes thumbnails survive restarts.
+     * Returns true only if a thumbnail is now readable on disk; on success any
+     * stale failure marker for [key] is removed.
      */
-    private fun persistThumbnail(key: String, image: coil3.Image) {
+    private fun persistThumbnail(key: String, image: coil3.Image): Boolean {
         val target = thumbFile(key)
         val tmp = File(target.parentFile, "$key.jpg.tmp")
         try {
@@ -409,12 +476,16 @@ object ThumbCache {
             }
             if (ok) {
                 try { target.delete() } catch (_: Exception) {}
-                if (tmp.renameTo(target)) return
+                if (tmp.renameTo(target)) {
+                    try { failureFile(key).delete() } catch (_: Exception) {}
+                    return true
+                }
             }
             try { tmp.delete() } catch (_: Exception) {}
         } catch (_: Exception) {
             try { tmp.delete() } catch (_: Exception) {}
         }
+        return false
     }
 
     /**

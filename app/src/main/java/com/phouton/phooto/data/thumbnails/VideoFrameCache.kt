@@ -19,11 +19,31 @@ import java.security.MessageDigest
  * A poster is considered present only when the file exists and decodes;
  * otherwise [load] returns null and the caller falls back to MediaStore's
  * system thumbnail / Coil.
+ *
+ * Freshness is marker-based, not size-based: a successful frame-0 save also
+ * writes `poster.meta` recording the pipeline version. This matters for videos
+ * whose native resolution is smaller than the target —
+ * `getScaledFrameAtTime` never upscales, so a 640×480 video legitimately
+ * stores a 640px poster and would fail a `>= 720px` size check forever,
+ * re-extracting (and re-showing the caching pill) on every launch. A failed
+ * extraction writes `failed.meta` instead, so unreadable videos can be skipped
+ * (and not counted) for a while — see [isFailureFresh].
  */
 object VideoFrameCache {
     private const val DIR_NAME = "frames"
     private const val POSTER_NAME = "poster.jpg"
     private const val JPEG_QUALITY = 85
+
+    /**
+     * Version of the frame-0 poster pipeline. Bump when extraction semantics
+     * change (frame position, scaling intent) so existing posters regenerate.
+     */
+    private const val POSTER_FORMAT_VERSION = 1
+    private const val FRESHNESS_MARKER = "poster.meta"
+    private const val FAILURE_MARKER = "failed.meta"
+
+    /** How long a failed extraction suppresses retries in the warm pass. */
+    const val FAILURE_RETRY_MS = 24L * 60 * 60 * 1000
 
     private fun baseDir(context: Context): File =
         File(context.filesDir, DIR_NAME).apply { mkdirs() }
@@ -51,24 +71,45 @@ object VideoFrameCache {
     }
 
     /**
-     * Long edge of the cached poster via a bounds-only decode (cheap: no
-     * pixels are read), or null if missing/corrupt. Lets callers detect stale
-     * posters (e.g. legacy rep-frame thumbnails smaller than today's target)
-     * without decoding the bitmap.
+     * True when a poster written by the current pipeline version already
+     * exists on disk. This is the warm-pass freshness gate: it passes for
+     * videos whose native resolution is below the requested long edge (the
+     * extractor stores what it got), and fails for legacy posters predating
+     * the marker, so they regenerate exactly once.
      */
-    fun posterLongEdge(context: Context, uri: Uri): Int? {
-        val f = posterFile(dirFor(context, uri))
-        if (!f.isFile || f.length() == 0L) return null
-        return try {
-            val opts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-            BitmapFactory.decodeFile(f.absolutePath, opts)
-            if (opts.outWidth > 0 && opts.outHeight > 0) {
-                maxOf(opts.outWidth, opts.outHeight)
-            } else {
-                null
+    fun hasFreshPoster(context: Context, uri: Uri): Boolean {
+        val dir = dirFor(context, uri)
+        val poster = posterFile(dir)
+        val meta = File(dir, FRESHNESS_MARKER)
+        return poster.isFile && poster.length() > 0L &&
+            meta.isFile && readMetaVersion(meta) == POSTER_FORMAT_VERSION
+    }
+
+    /**
+     * True when [markFailed] recorded a failure recently enough that the warm
+     * pass should not retry (24 h). Without this, an unreadable video counts
+     * as pending work — and flashes the caching pill — on every launch.
+     */
+    fun isFailureFresh(context: Context, uri: Uri): Boolean {
+        val f = File(dirFor(context, uri), FAILURE_MARKER)
+        if (!f.isFile) return false
+        val writtenAt = f.lastModified()
+        return writtenAt > 0L &&
+            System.currentTimeMillis() - writtenAt < FAILURE_RETRY_MS
+    }
+
+    /** Records that extraction failed for [uri], suppressing retries for 24 h. */
+    fun markFailed(context: Context, uri: Uri) {
+        try {
+            val dir = dirFor(context, uri)
+            dir.mkdirs()
+            File(dir, FAILURE_MARKER).apply {
+                writeText("failed\n")
+                // lastModified is the freshness signal; pin it explicitly in
+                // case the filesystem rounds or the write is a no-op rewrite.
+                setLastModified(System.currentTimeMillis())
             }
         } catch (_: Exception) {
-            null
         }
     }
 
@@ -83,7 +124,12 @@ object VideoFrameCache {
         }
     }
 
-    /** Persists the poster atomically. Returns true on success. */
+    /**
+     * Persists the poster atomically, followed by the freshness marker. The
+     * marker is written last so a crash mid-save leaves a versionless dir,
+     * which [hasFreshPoster] treats as absent (the safe retry direction).
+     * Returns true on success.
+     */
     fun save(context: Context, uri: Uri, poster: Bitmap): Boolean {
         val dir = dirFor(context, uri)
         val target = posterFile(dir)
@@ -95,6 +141,9 @@ object VideoFrameCache {
                 if (!poster.compress(Bitmap.CompressFormat.JPEG, JPEG_QUALITY, out)) return false
             }
             if (!tmp.renameTo(target)) return false
+            // Written after the poster lands: marker present + poster present
+            // is the "fresh" invariant.
+            File(dir, FRESHNESS_MARKER).writeText("v=$POSTER_FORMAT_VERSION\n")
             true
         } catch (_: Exception) {
             try {
@@ -111,5 +160,13 @@ object VideoFrameCache {
             baseDir(context).deleteRecursively()
         } catch (_: Exception) {
         }
+    }
+
+    /** Parses the pipeline version from the freshness marker, or 0 if absent. */
+    private fun readMetaVersion(meta: File): Int = try {
+        meta.readText().lineSequence().firstOrNull { it.startsWith("v=") }
+            ?.removePrefix("v=")?.trim()?.toIntOrNull() ?: 0
+    } catch (_: Exception) {
+        0
     }
 }
