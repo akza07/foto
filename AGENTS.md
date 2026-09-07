@@ -10,3 +10,9 @@ Rules:
 - If graphify-out/wiki/index.md exists, use it for broad navigation instead of raw source browsing.
 - Read graphify-out/GRAPH_REPORT.md only for broad architecture review or when query/path/explain do not surface enough context.
 - After modifying code, run `graphify update .` to keep the graph current (AST-only, no API cost).
+
+## Workspace Permissions & Capabilities
+
+- **Project Access**: Full read, write, and directory listing permissions are granted for this project directory (`/home/akza/Projects/phooto`) and all its subdirectories.
+- **Tool Execution**: Full permission to use any available tools (including file operations, searches, terminal command execution, and subagent orchestration) within the scope of this project.
+- **Scope Restriction**: All tool invocations, reads, and writes must remain confined to the current project directory.

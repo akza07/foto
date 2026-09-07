@@ -11,6 +11,7 @@ data class AppSettings(
     val requireExplicit: Boolean = false,
     val selectedTreeUris: List<String> = emptyList(),
     val preferHighRefreshRate: Boolean = true,
+    val confirmBeforeDelete: Boolean = true,
 )
 
 object SettingsRepository {
@@ -19,6 +20,7 @@ object SettingsRepository {
     private const val KEY_REQUIRE_EXPLICIT = "require_explicit"
     private const val KEY_TREE_URIS = "tree_uris"
     private const val KEY_PREFER_HIGH_REFRESH_RATE = "prefer_high_refresh_rate"
+    private const val KEY_CONFIRM_BEFORE_DELETE = "confirm_before_delete"
 
     private val _settings = MutableStateFlow(AppSettings())
     val settings: StateFlow<AppSettings> = _settings.asStateFlow()
@@ -34,6 +36,7 @@ object SettingsRepository {
             selectedTreeUris = prefs.getString(KEY_TREE_URIS, "")?.split("\n").orEmpty()
                 .filter { it.isNotBlank() },
             preferHighRefreshRate = prefs.getBoolean(KEY_PREFER_HIGH_REFRESH_RATE, true),
+            confirmBeforeDelete = prefs.getBoolean(KEY_CONFIRM_BEFORE_DELETE, true),
         )
     }
 
@@ -50,6 +53,11 @@ object SettingsRepository {
     fun setPreferHighRefreshRate(value: Boolean) {
         prefs.edit().putBoolean(KEY_PREFER_HIGH_REFRESH_RATE, value).apply()
         _settings.value = _settings.value.copy(preferHighRefreshRate = value)
+    }
+
+    fun setConfirmBeforeDelete(value: Boolean) {
+        prefs.edit().putBoolean(KEY_CONFIRM_BEFORE_DELETE, value).apply()
+        _settings.value = _settings.value.copy(confirmBeforeDelete = value)
     }
 
     fun addTreeUri(uri: String) {

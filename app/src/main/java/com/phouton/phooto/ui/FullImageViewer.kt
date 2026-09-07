@@ -169,13 +169,12 @@ internal suspend fun PointerInputScope.detectVerticalSwipe(
 
 /**
  * Full-image viewer as a horizontal pager.
- * - Swipe left/right: next/previous image (pager slide). On video pages,
+ * - Swipe left/right: next/previous item (pager slide). On video pages,
  *   swiping is locked while the video plays — pause first to navigate.
- * - Double-tap: animated zoom in/out around the tap point.
- * - Pinch: zoom/pan. While two fingers are down, all single-finger gestures
- *   (swipe up/down, pager slide, taps, buttons) are suppressed.
- * - Long-press / swipe up: slides the action drawer up from the bottom.
- * - Swipe down (at 1x): dismisses.
+ * - Images: double-tap zoom, pinch zoom/pan. While two fingers are down,
+ *   single-finger gestures yield to pinch-zoom.
+ * - Long-press / swipe up (images + videos): action sheet from the bottom.
+ * - Swipe down (at 1x / settled video): dismisses.
  * - Counter pill (top-left): current/total.
  * - Back button (top-left): dismisses.
  */
@@ -193,6 +192,7 @@ fun FullImageViewer(
 ) {
     val scope = rememberCoroutineScope()
     val density = LocalDensity.current
+    val haptics = LocalHapticFeedback.current
 
     val pagerState = rememberPagerState(
         initialPage = initialIndex.coerceIn(0, (items.size - 1).coerceAtLeast(0)),
@@ -235,22 +235,24 @@ fun FullImageViewer(
     val currentIndex = pagerState.settledPage
     val currentItem = items.getOrNull(currentIndex)
 
-    // Video pages: the viewer's image-only gestures are disabled (user decision).
-    // No swipe-down dismiss, no swipe-up drawer, no pinch/double-tap zoom — the
-    // video page owns its own tap/seek interactions. Only horizontal paging
-    // remains, plus the top-left back button.
     val currentPageIsVideo = currentItem?.isVideo == true
 
-    // A video page never holds zoom state, and its gestures are off: clear any
-    // leftover image zoom and close a drawer that may be open so it can't linger
-    // over a playing video.
+    // Video pages never hold image zoom; image pages never hold video state.
     LaunchedEffect(currentPageIsVideo, currentIndex) {
         videoControlsVisible = true
         if (currentPageIsVideo) {
             currentPageZoomed = false
-            drawerVisible = false
         } else {
             videoPlaying = false
+        }
+    }
+
+    // Stay on a valid page when the list shrinks (e.g. delete keeps the viewer
+    // open on the next file instead of exiting to the grid).
+    LaunchedEffect(items.size) {
+        val target = pagerState.currentPage.coerceIn(0, (items.size - 1).coerceAtLeast(0))
+        if (target != pagerState.currentPage) {
+            pagerState.scrollToPage(target)
         }
     }
 
@@ -298,13 +300,17 @@ fun FullImageViewer(
             // Vertical drags (at 1x): swipe up -> drawer, swipe down -> dismiss.
             // Abandoned the instant a second finger joins, so a pinch can't open the
             // drawer. Re-armed (via key change) once the multi-touch gesture ends.
-            // Skipped entirely on video pages (user decision): video pages have no
-            // dismiss/drawer gestures — only the back button and pager swipes.
-            .pointerInput(currentPageZoomed, drawerVisible, leaving, multiTouchActive, currentPageIsVideo) {
-                if (!currentPageIsVideo && !currentPageZoomed && !drawerVisible && !leaving && !multiTouchActive) {
+            // Applies to images and videos alike: the video pill only covers the
+            // bottom, so a swipe starting on the video surface reaches this
+            // detector cleanly.
+            .pointerInput(currentPageZoomed, drawerVisible, leaving, multiTouchActive) {
+                if (!currentPageZoomed && !drawerVisible && !leaving && !multiTouchActive) {
                     detectVerticalSwipe(
                         threshold = swipeThreshold,
-                        onSwipeUp = { drawerVisible = true },
+                        onSwipeUp = {
+                            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                            drawerVisible = true
+                        },
                         onSwipeDown = { close() },
                     )
                 }
@@ -358,9 +364,7 @@ fun FullImageViewer(
                     onPlayingChanged = { playing ->
                         if (page == currentIndex) videoPlaying = playing
                     },
-                    onShare = onShare,
-                    onDelete = onDelete,
-                    onInfo = onInfo,
+                    onLongPress = { drawerVisible = true },
                     // Live entry-zoom progress (0 = tile, 1 = fullscreen) so the
                     // video page can bridge the tile's cropped poster into the
                     // player's fitted poster without a pop at animation end.
@@ -668,7 +672,10 @@ private fun ActionSheet(
                     ActionItem(Icons.Outlined.Delete, "Delete", DeleteRed, onDelete)
                     ActionItem(Icons.Outlined.Share, "Share", TextPrimary, onShare)
                     ActionItem(Icons.Outlined.Info, "Info", TextPrimary, onInfo)
-                    ActionItem(Icons.Outlined.Crop, "Crop", TextPrimary, onCrop)
+                    // Videos have no crop action.
+                    if (!item.isVideo) {
+                        ActionItem(Icons.Outlined.Crop, "Crop", TextPrimary, onCrop)
+                    }
                 }
             }
         }

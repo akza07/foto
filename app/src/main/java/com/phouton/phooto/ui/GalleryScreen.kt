@@ -407,6 +407,7 @@ fun GalleryScreen(
 ) {
     val context = LocalContext.current
     SettingsRepository.init(context)
+    val appSettings by SettingsRepository.settings.collectAsState()
     var content by remember { mutableStateOf<GalleryContent?>(null) }
     var openFolder by remember { mutableStateOf<MediaFolder?>(null) }
     var openSourceRect by remember { mutableStateOf(Rect.Zero) }
@@ -547,7 +548,8 @@ fun GalleryScreen(
         },
     )
 
-    // Single-item delete (from the full-image viewer).
+    // Single-item delete (from the full-image viewer). Stays in the viewer on
+    // the next file instead of exiting to the grid; only closes when empty.
     val removeDeleted = { deletedUri: android.net.Uri ->
         val current = content
         if (current != null) {
@@ -555,14 +557,22 @@ fun GalleryScreen(
                 looseItems = current.looseItems.filterNot { it.uri == deletedUri },
             )
         }
-        viewerItems = viewerItems?.filterNot { it.uri == deletedUri }
+        val remaining = viewerItems?.filterNot { it.uri == deletedUri }
+        if (remaining.isNullOrEmpty()) {
+            closeViewer()
+        } else {
+            viewerItems = remaining
+            viewerIndex = viewerIndex.coerceIn(0, remaining.lastIndex)
+            toastKey += 1
+            toastMessage = "Deleted"
+        }
         albumReloadKey += 1
-        closeViewer()
         // Refresh the root grid so folder counts/previews update after a delete.
         reload()
     }
 
     // Batch variant: removes a set of URIs in one pass and reloads once.
+    // Same stay-in-viewer contract as the single delete.
     val removeDeletedBatch = { deletedUris: Set<android.net.Uri> ->
         val current = content
         if (current != null) {
@@ -570,9 +580,16 @@ fun GalleryScreen(
                 looseItems = current.looseItems.filterNot { it.uri in deletedUris },
             )
         }
-        viewerItems = viewerItems?.filterNot { it.uri in deletedUris }
+        val remaining = viewerItems?.filterNot { it.uri in deletedUris }
+        if (remaining.isNullOrEmpty()) {
+            closeViewer()
+        } else {
+            viewerItems = remaining
+            viewerIndex = viewerIndex.coerceIn(0, remaining.lastIndex)
+            toastKey += 1
+            toastMessage = if (deletedUris.size == 1) "Deleted" else "Deleted ${deletedUris.size} items"
+        }
         albumReloadKey += 1
-        closeViewer()
         reload()
     }
 
@@ -900,7 +917,13 @@ fun GalleryScreen(
                 sourceRect = viewerSourceRect,
                 onDismiss = closeViewer,
                 onPageChanged = { viewerIndex = it },
-                onDelete = { pendingDeleteItem = it },
+                onDelete = {
+                    if (appSettings.confirmBeforeDelete) {
+                        pendingDeleteItem = it
+                    } else {
+                        requestDelete(it)
+                    }
+                },
                 onShare = { shareItem(it) },
                 onInfo = { infoItem = it },
                 onCrop = { showComingSoonToast() },
@@ -927,7 +950,14 @@ fun GalleryScreen(
                     if (selectedCount > 0) {
                         batchDeleteScope.launch {
                             val items = resolveSelectionItems()
-                            if (items.isNotEmpty()) pendingBatchDelete = items
+                            if (items.isNotEmpty()) {
+                                if (appSettings.confirmBeforeDelete) {
+                                    pendingBatchDelete = items
+                                } else {
+                                    requestBatchDelete(items)
+                                    clearSelection()
+                                }
+                            }
                         }
                     }
                 },

@@ -150,6 +150,21 @@ fun SettingsScreen(onBack: () -> Unit, onSettingsChanged: () -> Unit) {
                 )
             }
 
+            // ── Behavior ─────────────────────────────────────────────
+            item { SettingsSectionHeader(title = "Behavior", topPadding = 16.dp) }
+
+            item {
+                SettingsToggleRow(
+                    title = "Confirm before deleting",
+                    subtitle = "Show a confirmation dialog before deleting photos and videos.",
+                    checked = settings.confirmBeforeDelete,
+                    onCheckedChange = {
+                        SettingsRepository.setConfirmBeforeDelete(it)
+                        onSettingsChanged()
+                    },
+                )
+            }
+
             // ── Storage ──────────────────────────────────────────────
             item { SettingsSectionHeader(title = "Storage", topPadding = 16.dp) }
 

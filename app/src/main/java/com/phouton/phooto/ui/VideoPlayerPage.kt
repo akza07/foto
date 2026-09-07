@@ -3,10 +3,8 @@ package com.phouton.phooto.ui
 import androidx.annotation.OptIn
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.animateDpAsState
-import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -23,18 +21,13 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.VolumeOff
 import androidx.compose.material.icons.automirrored.rounded.VolumeUp
-import androidx.compose.material.icons.outlined.Delete
-import androidx.compose.material.icons.outlined.Info
-import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material.icons.rounded.Check
-import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material3.DropdownMenu
@@ -55,8 +48,6 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.shadow
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
@@ -64,6 +55,8 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -85,18 +78,16 @@ import androidx.media3.ui.compose.state.rememberSeekForwardButtonState
 import androidx.media3.common.MediaItem as Media3MediaItem
 import com.phouton.phooto.data.MediaItem
 import com.phouton.phooto.ui.theme.AmoledBlack
-import com.phouton.phooto.ui.theme.Surface as ThemeSurface
 import com.phouton.phooto.ui.theme.TextMuted
 import com.phouton.phooto.ui.theme.TextPrimary
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
-// HUD colors tuned for contrast on the dark scrim (zinc-700/500 tracks vs white fill).
+// HUD colors tuned for contrast on the floating pill (zinc-700/500 tracks vs white fill).
 private val SeekTrackColor = Color(0xFF3F3F46)   // zinc-700 — visible but subtle track
 private val SeekBufferedColor = Color(0xFF71717A) // zinc-500 — buffered segment
 private val SeekFillColor = Color(0xFFFAFAFA)     // white — played segment
-private val DeleteRed = Color(0xFFEF4444)        // matches the image drawer's Delete
 
 /** Playback speeds offered by the speed chip, in menu order. */
 private val PlaybackSpeeds = listOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 2f)
@@ -104,28 +95,13 @@ private val PlaybackSpeeds = listOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 2f)
 /**
  * Full-screen video playback page used inside [FullImageViewer].
  *
- * Layout mirrors a minimal mobile player HUD:
- *
- * ```
- *  ┌──────────────────────────────┐
- *  │ [back] 3/12           [⋮]    │  ← back + counter live in [FullImageViewer]
- *  │                              │
- *  │        (video surface)       │
- *  │   [tap = play/pause]         │
- *  │   [double-tap L/R = ∓10 s]   │
- *  │                              │
- *  ├──────────────────────────────┤  ← gradient scrim
- *  │  0:12 ●━━━━━━━━━━━━━━ 0:42   │
- *  │  [🔊]                 [1.0x] │
- *  └──────────────────────────────┘
- * ```
- *
- * - Owns an [ExoPlayer] for the current [MediaItem]; released when the page
- *   stops being active (one decoder at a time).
- * - Opens **paused** as a preview (poster until the first frame renders);
- *   single tap toggles play/pause, double-tap left/right seeks ±10 s.
- * - Bottom HUD: seeker flanked by timestamps, mute toggle, playback-speed chip
- *   (0.5×–2×). Top-right 3-dot menu: Share / Delete / Info.
+ * Minimal modern HUD:
+ * - Single tap toggles play/pause, double-tap left/right seeks ±10 s,
+ *   long-press opens the action sheet (same as images).
+ * - Swipe up/down gestures are handled by the host viewer (sheet / dismiss),
+ *   so this page owns no vertical-drag detector and the bottom pill never
+ *   triggers navigation.
+ * - Bottom: floating pill with play, times, seeker, mute, speed (0.5×–2×).
  * - Controls auto-hide after 3 s while playing; paused keeps them visible.
  * - [onPlayingChanged] hoists play state so the host pager can lock swiping
  *   while the video plays (swiping navigates only while paused).
@@ -137,17 +113,14 @@ fun VideoPlayerPage(
     active: Boolean,
     onControlsVisibilityChanged: (Boolean) -> Unit = {},
     onPlayingChanged: (Boolean) -> Unit = {},
-    onShare: (MediaItem) -> Unit = {},
-    onDelete: (MediaItem) -> Unit = {},
-    onInfo: (MediaItem) -> Unit = {},
+    onLongPress: () -> Unit = {},
     entryProgress: () -> Float = { 1f },
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val density = LocalDensity.current
 
-    val player = remember(active) {
+    val player = remember(active, item.uri) {
         if (active) {
             ExoPlayer.Builder(context.applicationContext).build().apply {
                 setAudioAttributes(
@@ -180,8 +153,9 @@ fun VideoPlayerPage(
     }
 
     // Load PAUSED: the poster/first frame acts as a preview until the user
-    // taps play (user decision — no autoplay).
-    LaunchedEffect(player) {
+    // taps play (user decision — no autoplay). Keyed on uri so a reused
+    // page slot (after a delete shifts items) loads the new file.
+    LaunchedEffect(player, item.uri) {
         if (player != null) {
             player.setMediaItem(Media3MediaItem.fromUri(item.uri))
             player.prepare()
@@ -234,7 +208,6 @@ fun VideoPlayerPage(
     var controlsVisible by remember { mutableStateOf(true) }
     val hideJob = remember { mutableStateOf<Job?>(null) }
     val controlsAlpha = remember { Animatable(1f) }
-    var menuExpanded by remember { mutableStateOf(false) }
     var speedMenuExpanded by remember { mutableStateOf(false) }
     var playbackSpeed by remember { mutableFloatStateOf(1f) }
 
@@ -244,8 +217,8 @@ fun VideoPlayerPage(
         hideJob.value?.cancel()
         hideJob.value = scope.launch {
             delay(ControlsHideDelayMs)
-            // An open menu pins the HUD; paused keeps it visible.
-            if (!player.isPlaying || menuExpanded || speedMenuExpanded) return@launch
+            // An open speed menu pins the HUD; paused keeps it visible.
+            if (!player.isPlaying || speedMenuExpanded) return@launch
             controlsVisible = false
             controlsAlpha.animateTo(0f, tween(200))
         }
@@ -257,7 +230,7 @@ fun VideoPlayerPage(
         if (player.isPlaying) {
             hideJob.value = scope.launch {
                 delay(ControlsHideDelayMs)
-                if (!player.isPlaying || menuExpanded || speedMenuExpanded) return@launch
+                if (!player.isPlaying || speedMenuExpanded) return@launch
                 controlsVisible = false
                 controlsAlpha.animateTo(0f, tween(200))
             }
@@ -282,7 +255,6 @@ fun VideoPlayerPage(
         onControlsVisibilityChanged(controlsVisible)
         // Never leave a stale popup behind a hidden HUD.
         if (!controlsVisible) {
-            menuExpanded = false
             speedMenuExpanded = false
         }
         if (controlsVisible) controlsAlpha.snapTo(1f) else controlsAlpha.animateTo(0f, tween(200))
@@ -347,18 +319,25 @@ fun VideoPlayerPage(
             }
         }
 
-        // ---- Overlay column: gesture area (above) + HUD (below) ----
-        // The gesture layer lives in a weight(1f) box above the HUD so taps on
-        // HUD buttons can never also trigger the full-screen single-tap. The
-        // video surface remains full-bleed underneath.
+        // ---- Overlay column: gesture area (above) + floating pill (below) ----
+        // The gesture layer lives in a weight(1f) box above the pill so taps on
+        // pill buttons can never also trigger the full-screen single-tap. The
+        // video surface remains full-bleed underneath. Vertical swipes are
+        // handled by the host viewer (up = actions sheet, down = dismiss).
         Column(modifier = Modifier.fillMaxSize()) {
-            // Gesture area: single-tap play/pause, double-tap seek ±10 s.
+            // Gesture area: tap play/pause, double-tap seek ±10 s, long-press sheet.
+            val haptics = LocalHapticFeedback.current
             Box(
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxWidth()
                     .pointerInput(Unit) {
                         detectTapGestures(
+                            onLongPress = {
+                                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                showControls()
+                                onLongPress()
+                            },
                             onDoubleTap = { offset ->
                                 showControls()
                                 if (offset.x < size.width / 2f) {
@@ -374,10 +353,7 @@ fun VideoPlayerPage(
                         )
                     },
             ) {
-                // Center play/pause circle: part of the fading overlay (like the
-                // mockup). While paused the HUD never hides, so the circle shows
-                // the play glyph; while playing it flashes the pause glyph with
-                // the controls, then fades to a clean frame.
+                // Minimal center button, fades with the HUD.
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
@@ -386,12 +362,10 @@ fun VideoPlayerPage(
                 ) {
                     Surface(
                         modifier = Modifier
-                            .size(80.dp)
-                            .shadow(12.dp, CircleShape)
-                            .border(1.dp, Color.White.copy(alpha = 0.12f), CircleShape)
+                            .size(56.dp)
                             .clip(CircleShape),
                         shape = CircleShape,
-                        color = Color.Black.copy(alpha = 0.4f),
+                        color = Color.Black.copy(alpha = 0.6f),
                         shadowElevation = 0.dp,
                     ) {
                         Box(contentAlignment = Alignment.Center) {
@@ -399,74 +373,81 @@ fun VideoPlayerPage(
                                 imageVector = if (playPauseState.showPlay) Icons.Rounded.PlayArrow else Icons.Rounded.Pause,
                                 contentDescription = if (playPauseState.showPlay) "Play" else "Pause",
                                 tint = Color.White,
-                                modifier = Modifier.size(44.dp),
+                                modifier = Modifier.size(30.dp),
                             )
                         }
                     }
                 }
             }
 
-            // Bottom HUD: gradient scrim + time/seeker row + volume/speed row.
-            Column(
+            // Bottom floating pill: single-row minimal controls.
+            Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .graphicsLayer { alpha = controlsAlpha.value },
+                    .graphicsLayer { alpha = controlsAlpha.value }
+                    .navigationBarsPadding()
+                    .padding(horizontal = 12.dp, vertical = 12.dp),
             ) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .background(
-                            Brush.verticalGradient(
-                                0f to Color.Black.copy(alpha = 0.45f),
-                                1f to Color.Black.copy(alpha = 0.8f),
-                            ),
-                        ),
+                Surface(
+                    shape = RoundedCornerShape(20.dp),
+                    color = Color.Black.copy(alpha = 0.68f),
+                    shadowElevation = 0.dp,
                 ) {
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .navigationBarsPadding()
-                            .padding(horizontal = 16.dp),
+                            .padding(horizontal = 8.dp, vertical = 6.dp),
                     ) {
-                        // Seeker flanked by current / total time.
                         Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(top = 10.dp),
+                            modifier = Modifier.fillMaxWidth(),
                             verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
                         ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(44.dp)
+                                    .clip(CircleShape)
+                                    .clickable(
+                                        interactionSource = remember { MutableInteractionSource() },
+                                        indication = null,
+                                    ) {
+                                        showControls()
+                                        playPauseState.onClick()
+                                    },
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Icon(
+                                    imageVector = if (playPauseState.showPlay) Icons.Rounded.PlayArrow else Icons.Rounded.Pause,
+                                    contentDescription = if (playPauseState.showPlay) "Play" else "Pause",
+                                    tint = TextPrimary,
+                                    modifier = Modifier.size(26.dp),
+                                )
+                            }
                             Text(
                                 text = formatMs((progressState.currentPositionProgress * progressState.durationMs).toLong()),
                                 color = TextPrimary,
-                                fontSize = 13.sp,
+                                fontSize = 12.sp,
                                 fontWeight = FontWeight.Medium,
                             )
                             VideoSeeker(
                                 progress = progressState.currentPositionProgress,
                                 buffered = progressState.bufferedPositionProgress,
                                 seekEnabled = progressState.changingProgressEnabled,
-                                onSeek = { progressState.updateCurrentPositionProgress(it) },
+                                onSeek = {
+                                    showControls()
+                                    progressState.updateCurrentPositionProgress(it)
+                                },
                                 modifier = Modifier.weight(1f),
                             )
                             Text(
                                 text = formatMs(progressState.durationMs),
                                 color = TextMuted,
-                                fontSize = 13.sp,
+                                fontSize = 12.sp,
                                 fontWeight = FontWeight.Medium,
                             )
-                        }
-
-                        // Volume (left) + playback-speed chip (right).
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(top = 6.dp, bottom = 10.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
                             Box(
                                 modifier = Modifier
-                                    .size(40.dp)
+                                    .size(44.dp)
                                     .clip(CircleShape)
                                     .clickable(
                                         interactionSource = remember { MutableInteractionSource() },
@@ -481,20 +462,17 @@ fun VideoPlayerPage(
                                     imageVector = if (muteState.showMuted) Icons.AutoMirrored.Rounded.VolumeOff else Icons.AutoMirrored.Rounded.VolumeUp,
                                     contentDescription = if (muteState.showMuted) "Unmute" else "Mute",
                                     tint = TextPrimary,
-                                    modifier = Modifier.size(24.dp),
+                                    modifier = Modifier.size(22.dp),
                                 )
                             }
-                            Spacer(Modifier.weight(1f))
                             Box {
-                                // "1.0x" chip — bordered pill like the mockup.
                                 Text(
                                     text = formatSpeed(playbackSpeed),
-                                    color = TextPrimary,
+                                    color = TextMuted,
                                     fontSize = 12.sp,
                                     fontWeight = FontWeight.SemiBold,
                                     modifier = Modifier
-                                        .background(Color.White.copy(alpha = 0.1f), RoundedCornerShape(8.dp))
-                                        .border(1.dp, Color.White.copy(alpha = 0.08f), RoundedCornerShape(8.dp))
+                                        .clip(RoundedCornerShape(10.dp))
                                         .clickable(
                                             interactionSource = remember { MutableInteractionSource() },
                                             indication = null,
@@ -502,7 +480,7 @@ fun VideoPlayerPage(
                                             showControls()
                                             speedMenuExpanded = true
                                         }
-                                        .padding(horizontal = 12.dp, vertical = 7.dp),
+                                        .padding(horizontal = 10.dp, vertical = 10.dp),
                                 )
                                 DropdownMenu(
                                     expanded = speedMenuExpanded,
@@ -543,95 +521,6 @@ fun VideoPlayerPage(
             }
         }
 
-        // ---- Top-right 3-dot menu: Share / Delete / Info (fades with the HUD) ----
-        Box(
-            modifier = Modifier
-                .align(Alignment.TopEnd)
-                .statusBarsPadding()
-                .padding(end = 8.dp, top = 8.dp)
-                .graphicsLayer { alpha = controlsAlpha.value },
-        ) {
-            Surface(
-                modifier = Modifier
-                    .size(40.dp)
-                    .shadow(8.dp, CircleShape)
-                    .clip(CircleShape)
-                    .clickable(
-                        enabled = controlsVisible,
-                        interactionSource = remember { MutableInteractionSource() },
-                        indication = null,
-                    ) {
-                        showControls()
-                        menuExpanded = true
-                    },
-                shape = CircleShape,
-                color = ThemeSurface,
-                shadowElevation = 0.dp,
-            ) {
-                Box(contentAlignment = Alignment.Center) {
-                    Icon(
-                        imageVector = Icons.Rounded.MoreVert,
-                        contentDescription = "More options",
-                        tint = TextPrimary,
-                        modifier = Modifier.size(22.dp),
-                    )
-                }
-            }
-            DropdownMenu(
-                expanded = menuExpanded,
-                onDismissRequest = { menuExpanded = false },
-            ) {
-                DropdownMenuItem(
-                    text = { Text("Share", color = TextPrimary) },
-                    leadingIcon = {
-                        Icon(
-                            imageVector = Icons.Outlined.Share,
-                            contentDescription = null,
-                            tint = TextPrimary,
-                            modifier = Modifier.size(20.dp),
-                        )
-                    },
-                    onClick = {
-                        menuExpanded = false
-                        hideControlsSoon()
-                        onShare(item)
-                    },
-                )
-                DropdownMenuItem(
-                    text = { Text("Delete", color = DeleteRed) },
-                    leadingIcon = {
-                        Icon(
-                            imageVector = Icons.Outlined.Delete,
-                            contentDescription = null,
-                            tint = DeleteRed,
-                            modifier = Modifier.size(20.dp),
-                        )
-                    },
-                    onClick = {
-                        menuExpanded = false
-                        hideControlsSoon()
-                        onDelete(item)
-                    },
-                )
-                DropdownMenuItem(
-                    text = { Text("Info", color = TextPrimary) },
-                    leadingIcon = {
-                        Icon(
-                            imageVector = Icons.Outlined.Info,
-                            contentDescription = null,
-                            tint = TextPrimary,
-                            modifier = Modifier.size(20.dp),
-                        )
-                    },
-                    onClick = {
-                        menuExpanded = false
-                        hideControlsSoon()
-                        onInfo(item)
-                    },
-                )
-            }
-        }
-
         // ---- Error state ----
         if (player.playbackState == Player.STATE_IDLE && player.playerError != null) {
             Box(
@@ -668,7 +557,7 @@ fun VideoPlayerPage(
     }
 }
 
-/** Mockup-style scrubber: thin track, white fill, mid-tone buffered, thumb on scrub. */
+/** Minimal scrubber: thin track, white fill, mid-tone buffered, always-visible thumb. */
 @Composable
 private fun VideoSeeker(
     progress: Float,
@@ -679,7 +568,7 @@ private fun VideoSeeker(
 ) {
     val trackHeight = 3.dp
     val activeTrackHeight = 5.dp
-    val thumbSize = 12.dp
+    val thumbSize = 8.dp
     val density = LocalDensity.current
     var seekerWidthPx by remember { mutableFloatStateOf(0f) }
     var scrubbing by remember { mutableStateOf(false) }
@@ -688,11 +577,6 @@ private fun VideoSeeker(
         targetValue = if (scrubbing) activeTrackHeight else trackHeight,
         animationSpec = tween(150),
         label = "seeker track height",
-    )
-    val thumbAlpha by animateFloatAsState(
-        targetValue = if (scrubbing) 1f else 0f,
-        animationSpec = tween(150),
-        label = "seeker thumb alpha",
     )
 
     Box(
@@ -756,7 +640,7 @@ private fun VideoSeeker(
                 .clip(RoundedCornerShape(8.dp))
                 .background(SeekFillColor),
         )
-        // Thumb (visible only while scrubbing, like the mockup's hover handle).
+        // Thumb (always visible, minimal).
         val thumbTravelPx = with(density) { (seekerWidthPx - thumbSize.toPx()).coerceAtLeast(0f) }
         val thumbOffset = with(density) { (progress.coerceIn(0f, 1f) * thumbTravelPx).toDp() }
         Box(
@@ -764,17 +648,15 @@ private fun VideoSeeker(
                 .offset(x = thumbOffset)
                 .align(Alignment.CenterStart)
                 .size(thumbSize)
-                .graphicsLayer { alpha = thumbAlpha }
-                .shadow(4.dp, CircleShape)
                 .clip(CircleShape)
                 .background(SeekFillColor),
         )
     }
 }
 
-/** "1.0x" style label: whole numbers get a trailing ".0", others stay as-is. */
+/** "1x" style label: whole numbers have no decimal, others stay as-is. */
 private fun formatSpeed(speed: Float): String =
-    if (speed % 1f == 0f) "${speed.toInt()}.0x" else "${speed}x"
+    if (speed % 1f == 0f) "${speed.toInt()}x" else "${speed}x"
 
 private fun formatMs(ms: Long): String {
     val total = if (ms > 0L) ms else 0L
