@@ -49,6 +49,7 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
@@ -60,8 +61,10 @@ import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.util.lerp
 import androidx.lifecycle.compose.LifecycleStartEffect
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
@@ -118,6 +121,8 @@ fun VideoPlayerPage(
     onLongPress: () -> Unit = {},
     onDelete: () -> Unit = {},
     entryProgress: () -> Float = { 1f },
+    sourceRect: Rect = Rect.Zero,
+    containerSize: IntSize = IntSize.Zero,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
@@ -270,60 +275,107 @@ fun VideoPlayerPage(
     }
     LaunchedEffect(Unit) { showControls() }
 
+    // ---- Entry morph (tile crop -> fitted surface) ----
+    // The grid tile shows the poster CROPPED to a square, while the player
+    // letterboxes it (Fit) and the host pager also squishes the page
+    // non-uniformly into the tile rect. Those two poses differ, so a plain
+    // crossfade between the cropped bridge and the fitted surface flickers.
+    // Applying one centered correction to the whole visual stack morphs the
+    // fitted content into the tile's square crop at progress 0 and back to
+    // neutral at 1, so the bridge and surface stay pixel-identical.
+    val ep = entryProgress()
+    // Intrinsic size of the video frame (via its frame-0 poster, same aspect).
+    // Posters are pre-warmed by the grid/AoT pass, so this is normally a sync hit.
+    val posterSize = remember(item.uri) {
+        VideoPosterMemory.get(item.uri)?.let { IntSize(it.width, it.height) }
+    }
+    val iw = posterSize?.width?.toFloat()
+    val ih = posterSize?.height?.toFloat()
+    val canCorrect = containerSize != IntSize.Zero &&
+        iw != null && ih != null && iw > 0f && ih > 0f && sourceRect.width > 0f
+    val correctionX: Float
+    val correctionY: Float
+    if (canCorrect) {
+        val w = containerSize.width.toFloat()
+        val h = containerSize.height.toFloat()
+        val s = sourceRect.width.toFloat()
+        val fit = minOf(w / iw!!, h / ih!!)
+        val crop = maxOf(s / iw, s / ih)
+        val target = lerp(crop, fit, ep)
+        val pagerX = lerp(s / w, 1f, ep)
+        val pagerY = lerp(s / h, 1f, ep)
+        correctionX = if (fit > 0f && pagerX > 0f) target / (pagerX * fit) else 1f
+        correctionY = if (fit > 0f && pagerY > 0f) target / (pagerY * fit) else 1f
+    } else {
+        correctionX = 1f
+        correctionY = 1f
+    }
+
     Box(
         modifier = modifier
             .fillMaxSize(),
     ) {
-        // ---- Video surface (full-bleed) ----
-        // The shutter is a plain black box: the real "poster → frame" veil is
-        // the sibling layer above, which crossfades instead of hard-cutting.
-        ContentFrame(
-            player = player,
-            modifier = Modifier.fillMaxSize(),
-            surfaceType = SURFACE_TYPE_TEXTURE_VIEW,
-            contentScale = ContentScale.Fit,
-            keepContentOnReset = true,
-            shutter = {
-                Box(Modifier.fillMaxSize().background(AmoledBlack))
-            },
-        )
-
-        // ---- Poster veil (above the surface, below the HUD) ----
-        // Identical poster, letterboxed exactly like the surface (Fit). Fades
-        // out only once the first frame is actually rendered, so the static
-        // image visually sharpens into the video instead of popping.
+        // ---- Corrected visual stack (surface + veil + entry bridge) ----
+        // One shared transform so the poster bridge and the live surface are
+        // geometrically identical throughout the entry zoom; the HUD below is
+        // deliberately outside it so controls never distort.
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .graphicsLayer { alpha = posterVeilAlpha.value },
+                .graphicsLayer {
+                    scaleX = correctionX
+                    scaleY = correctionY
+                },
         ) {
-            VideoPosterThumb(
-                item = item,
+            // ---- Video surface (full-bleed) ----
+            // The shutter is a plain black box: the real "poster → frame" veil is
+            // the sibling layer above, which crossfades instead of hard-cutting.
+            ContentFrame(
+                player = player,
                 modifier = Modifier.fillMaxSize(),
+                surfaceType = SURFACE_TYPE_TEXTURE_VIEW,
                 contentScale = ContentScale.Fit,
+                keepContentOnReset = true,
+                shutter = {
+                    Box(Modifier.fillMaxSize().background(AmoledBlack))
+                },
             )
-        }
 
-        // ---- Entry-bridge crop (above the veil, below the HUD) ----
-        // The grid tile shows this same poster CROPPED to fill its square,
-        // while the player letterboxes it (Fit). Crossfade the cropped layer
-        // out as the entry zoom completes so the tile's pixels carry seamlessly
-        // into the player view — no pop at either end of the animation. It
-        // deliberately lives OUTSIDE the shutter: the surface may render its
-        // first frame mid-animation, and this bridge must keep fading on its
-        // own schedule. Synchronous memory cache ⇒ no placeholder on re-open.
-        val ep = entryProgress()
-        if (ep < 1f) {
+            // ---- Poster veil (above the surface, below the HUD) ----
+            // Identical poster, letterboxed exactly like the surface (Fit). Fades
+            // out only once the first frame is actually rendered, so the static
+            // image visually sharpens into the video instead of popping.
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .graphicsLayer { alpha = 1f - ep },
+                    .graphicsLayer { alpha = posterVeilAlpha.value },
             ) {
                 VideoPosterThumb(
                     item = item,
                     modifier = Modifier.fillMaxSize(),
-                    contentScale = ContentScale.Crop,
+                    contentScale = ContentScale.Fit,
                 )
+            }
+
+            // ---- Entry bridge (above the veil, below the HUD) ----
+            // Same poster, Fit like the surface; the shared correction layer
+            // performs the tile's square crop, so this layer crossfades out
+            // invisibly as the entry zoom completes. It deliberately lives
+            // OUTSIDE the shutter: the surface may render its first frame
+            // mid-animation, and this bridge must keep fading on its own
+            // schedule. Synchronous memory cache ⇒ no placeholder on re-open.
+            if (ep < 1f) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .graphicsLayer { alpha = 1f - ep },
+                ) {
+                    VideoPosterThumb(
+                        item = item,
+                        modifier = Modifier.fillMaxSize(),
+                        contentScale = ContentScale.Fit,
+                    )
+                }
             }
         }
 

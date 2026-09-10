@@ -12,6 +12,7 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -61,6 +62,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
@@ -206,7 +208,16 @@ fun FullImageViewer(
     // Entry/exit progress: 0 = scaled to source tile, 1 = full screen.
     val progress = remember { Animatable(0f) }
     var leaving by remember { mutableStateOf(false) }
-    LaunchedEffect(Unit) { progress.animateTo(1f, tween(280, easing = FastOutSlowInEasing)) }
+
+    // Measured size of the viewer. The entry zoom can't be computed until we know
+    // the container, so the animation is started once (and the pager only composed
+    // after) the first layout pass reports a non-zero size.
+    var containerSize by remember { mutableStateOf(IntSize.Zero) }
+    LaunchedEffect(containerSize) {
+        if (containerSize != IntSize.Zero && !leaving) {
+            progress.animateTo(1f, tween(280, easing = FastOutSlowInEasing))
+        }
+    }
 
     var drawerVisible by remember { mutableStateOf(false) }
     var currentPageZoomed by remember { mutableStateOf(false) }
@@ -309,7 +320,6 @@ fun FullImageViewer(
             }
     }
 
-    var containerSize by remember { mutableStateOf(IntSize.Zero) }
     // True while two or more fingers are down. While true, single-finger gestures
     // (swipe up/down, pager slide, taps) are suppressed and only pinch-zoom applies.
     var multiTouchActive by remember { mutableStateOf(false) }
@@ -324,10 +334,10 @@ fun FullImageViewer(
             .fillMaxSize()
             .onSizeChanged { containerSize = it }
             // Single fading backdrop for the whole viewer. Pages are transparent,
-            // so this is the only black layer. It stays opaque through the entry
-            // zoom and fades with the exit progress, exposing the grid in lockstep
-            // with the scale-out rather than popping in after it finishes.
-            .background(AmoledBlack.copy(alpha = if (leaving) p else 1f))
+            // so this is the only black layer. It fades with the shared progress:
+            // 0 at the tile (grid visible through the growing image) and 1 when
+            // settled. Entry and exit are therefore the same continuous motion.
+            .background(AmoledBlack.copy(alpha = p))
             // Multi-touch watch: as soon as a second finger lands, every single-finger
             // gesture yields to the pinch-zoom on the image below.
             .pointerInput(Unit) {
@@ -367,57 +377,73 @@ fun FullImageViewer(
         val cornerRadius = tileCorner * (1f - p)
         val pagerShape = RoundedCornerShape(cornerRadius)
 
-        HorizontalPager(
-            state = pagerState,
-            modifier = Modifier
-                .fillMaxSize()
-                // No backdrop of its own: the host's fading black layer is the
-                // single source of black, so page gaps and letterboxes stay
-                // covered while settled and fade away cleanly on exit.
-                .clip(pagerShape)
-                .graphicsLayer {
-                    scaleX = lerp(fromScaleX, 1f, p)
-                    scaleY = lerp(fromScaleY, 1f, p)
-                    translationX = lerp(sourceRect.center.x - containerW / 2f, 0f, p)
-                    translationY = lerp(sourceRect.center.y - containerH / 2f, 0f, p)
-                    alpha = 1f
-                },
-            // Video pages lock pager swiping while playing; paused (or image
-            // pages) allow it. Zoom and multi-touch keep their existing gates.
-            userScrollEnabled = (!currentPageIsVideo || !videoPlaying) &&
-                !currentPageZoomed &&
-                !multiTouchActive,
-        ) { page ->
-            val item = items[page]
-            if (item.isVideo) {
-                // Video page: real playback via ExoPlayer, no zoom gestures.
-                // Only the settled page is "active" (owns a player/decoder);
-                // adjacent video pages show their cached poster.
-                VideoPlayerPage(
-                    item = item,
-                    active = page == currentIndex,
-                    onControlsVisibilityChanged = { visible ->
-                        if (page == currentIndex) videoControlsVisible = visible
+        // Only compose the pager once the container has been measured: before that
+        // there is no valid target scale, and showing it would flash a mis-scaled
+        // frame. The pre-measure frame renders just the grid through the
+        // transparent backdrop, matching the tile exactly.
+        if (containerSize != IntSize.Zero) {
+            HorizontalPager(
+                state = pagerState,
+                modifier = Modifier
+                    .fillMaxSize()
+                    // No backdrop of its own: the host's fading black layer is the
+                    // single source of black, so page gaps and letterboxes stay
+                    // covered while settled and fade away cleanly on exit.
+                    .clip(pagerShape)
+                    .graphicsLayer {
+                        scaleX = lerp(fromScaleX, 1f, p)
+                        scaleY = lerp(fromScaleY, 1f, p)
+                        translationX = lerp(sourceRect.center.x - containerW / 2f, 0f, p)
+                        translationY = lerp(sourceRect.center.y - containerH / 2f, 0f, p)
+                        alpha = 1f
                     },
-                    onPlayingChanged = { playing ->
-                        if (page == currentIndex) videoPlaying = playing
-                    },
-                    onLongPress = { drawerVisible = true },
-                    onDelete = { onDelete(item) },
-                    // Live entry-zoom progress (0 = tile, 1 = fullscreen) so the
-                    // video page can bridge the tile's cropped poster into the
-                    // player's fitted poster without a pop at animation end.
-                    entryProgress = { progress.value },
-                    modifier = Modifier.fillMaxSize(),
-                )
-            } else {
-                ZoomableImage(
-                    item = item,
-                    onZoomedChange = { zoomed -> currentPageZoomed = zoomed },
-                    onTap = { toggleImageControls() },
-                    onLongPress = { drawerVisible = true },
-                    multiTouchActive = multiTouchActive,
-                )
+                // Video pages lock pager swiping while playing; paused (or image
+                // pages) allow it. Zoom and multi-touch keep their existing gates.
+                userScrollEnabled = (!currentPageIsVideo || !videoPlaying) &&
+                    !currentPageZoomed &&
+                    !multiTouchActive,
+            ) { page ->
+                val item = items[page]
+                if (item.isVideo) {
+                    // Video page: real playback via ExoPlayer, no zoom gestures.
+                    // Only the settled page is "active" (owns a player/decoder);
+                    // adjacent video pages show their cached poster.
+                    VideoPlayerPage(
+                        item = item,
+                        active = page == currentIndex,
+                        onControlsVisibilityChanged = { visible ->
+                            if (page == currentIndex) videoControlsVisible = visible
+                        },
+                        onPlayingChanged = { playing ->
+                            if (page == currentIndex) videoPlaying = playing
+                        },
+                        onLongPress = { drawerVisible = true },
+                        onDelete = { onDelete(item) },
+                        // Live entry-zoom progress (0 = tile, 1 = fullscreen) so the
+                        // video page can morph the tile's cropped poster into the
+                        // player's fitted poster without a pop/flicker. Pinned to 1f
+                        // while leaving so the exit geometry matches the image path.
+                        entryProgress = { if (leaving) 1f else progress.value },
+                        sourceRect = sourceRect,
+                        containerSize = containerSize,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                } else {
+                    ZoomableImage(
+                        item = item,
+                        sourceRect = sourceRect,
+                        onZoomedChange = { zoomed -> currentPageZoomed = zoomed },
+                        onTap = { toggleImageControls() },
+                        onLongPress = { drawerVisible = true },
+                        multiTouchActive = multiTouchActive,
+                        // Live entry-zoom progress so the page can bridge the grid
+                        // tile's cropped thumbnail into the full-resolution image
+                        // instead of popping in when the original finishes decoding.
+                        // Pinned to 1f while leaving so the bridge stays hidden on
+                        // the exit (the settled image just shrinks, as before).
+                        entryProgress = { if (leaving) 1f else progress.value },
+                    )
+                }
             }
         }
 
@@ -432,13 +458,14 @@ fun FullImageViewer(
         )
 
         // Keep the top chrome readable over bright backgrounds, and fade it
-        // with the controls / HUD.
+        // with the controls / HUD. Also scaled by the entry/exit progress so the
+        // gradient slides in with the image rather than appearing instantly.
         Box(
             modifier = Modifier
                 .align(Alignment.TopCenter)
                 .fillMaxWidth()
                 .height(112.dp)
-                .graphicsLayer { alpha = topChromeAlpha },
+                .graphicsLayer { alpha = p * topChromeAlpha },
         ) {
             Box(
                 modifier = Modifier
@@ -459,9 +486,11 @@ fun FullImageViewer(
                 .statusBarsPadding()
                 .padding(start = 8.dp, top = 8.dp)
                 .graphicsLayer {
-                    // Fade out with the exit animation so it never lingers over the grid.
-                    alpha = (if (leaving) p else 1f) * topChromeAlpha
-                    translationY = if (leaving) -12.dp.toPx() * (1f - p) else 0f
+                    // Fade/slide in with the entry zoom and out with the exit zoom,
+                    // so the chrome never pops over a half-grown image or lingers
+                    // over the grid.
+                    alpha = p * topChromeAlpha
+                    translationY = -12.dp.toPx() * (1f - p)
                 },
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -511,8 +540,8 @@ fun FullImageViewer(
                     .navigationBarsPadding()
                     .padding(end = 16.dp, bottom = 16.dp)
                     .graphicsLayer {
-                        alpha = (if (leaving) p else 1f) * topChromeAlpha
-                        translationY = if (leaving) 12.dp.toPx() * (1f - p) else 0f
+                        alpha = p * topChromeAlpha
+                        translationY = 12.dp.toPx() * (1f - p)
                     },
             ) {
                 Surface(
@@ -580,10 +609,12 @@ fun FullImageViewer(
 @Composable
 private fun ZoomableImage(
     item: MediaItem,
+    sourceRect: Rect,
     onZoomedChange: (Boolean) -> Unit,
     onTap: () -> Unit,
     onLongPress: () -> Unit,
     multiTouchActive: Boolean,
+    entryProgress: () -> Float,
 ) {
     val ctx = androidx.compose.ui.platform.LocalContext.current
     val scope = rememberCoroutineScope()
@@ -624,6 +655,62 @@ private fun ZoomableImage(
         com.phouton.phooto.data.thumbnails.ThumbCache.buildFullRequest(ctx, item)
     }
 
+    // Entry bridge: the exact grid-tile pixels, read synchronously from our own
+    // thumbnail cache. The tile shows this image CROPPED to a square while the
+    // settled viewer FITS it (letterboxed), and the pager also squishes the page
+    // non-uniformly into the tile rect. Those two poses differ, so a plain
+    // crossfade between them flickers. Instead both layers are drawn with the
+    // same transform and a shared "entry correction" morphs the fitted content
+    // into the tile's square crop (and back to neutral), so the crossfade is
+    // pixel-identical and invisible.
+    val thumbKey = remember(item.uri, item.lastModified, item.sizeBytes, item.mimeType) {
+        com.phouton.phooto.data.thumbnails.ThumbCache.keyFor(item)
+    }
+    val thumb = remember(thumbKey) {
+        com.phouton.phooto.data.thumbnails.ThumbCache.loadThumb(thumbKey)
+    }
+    // Intrinsic size of the image, used to derive the crop/fit scales. Prefer the
+    // decoded original; fall back to the cached thumbnail (same aspect) so the
+    // morph is available before the full-resolution file finishes decoding.
+    var fullImageSize by remember(item.uri) { mutableStateOf<IntSize?>(null) }
+    var fullLoaded by remember(item.uri) { mutableStateOf(false) }
+    val loadFade = remember(item.uri) { Animatable(1f) }
+    LaunchedEffect(fullLoaded) {
+        if (fullLoaded) loadFade.animateTo(0f, tween(220)) else loadFade.snapTo(1f)
+    }
+
+    // Geometry of the entry morph. The pager maps this page (W x H) onto the
+    // source tile (S x S) at progress 0 via scaleX = S/W, scaleY = S/H. The tile
+    // displays the image with Crop (uniform scale c = max(S/Iw, S/Ih)); the
+    // settled viewer displays it with Fit (uniform scale f = min(W/Iw, H/Ih)).
+    // A centered correction layer of (lerp(c,f,p)/(pagerScaleX(p)*f),
+    // lerp(c,f,p)/(pagerScaleY(p)*f)) makes the composed result equal the tile
+    // crop at p=0 and neutral at p=1, so the image grows continuously from the
+    // tile's crop into the fitted full view with no dimension/crop mismatch.
+    val intrinsic = fullImageSize ?: thumb?.let { IntSize(it.width, it.height) }
+    val iw = intrinsic?.width?.toFloat()
+    val ih = intrinsic?.height?.toFloat()
+    val correct = containerSize != IntSize.Zero &&
+        iw != null && ih != null && iw > 0f && ih > 0f && sourceRect.width > 0f
+    val ep = entryProgress()
+    val correctionX: Float
+    val correctionY: Float
+    if (correct) {
+        val w = containerSize.width.toFloat()
+        val h = containerSize.height.toFloat()
+        val s = sourceRect.width.toFloat()
+        val fit = minOf(w / iw!!, h / ih!!)
+        val crop = maxOf(s / iw, s / ih)
+        val target = lerp(crop, fit, ep)
+        val pagerX = lerp(s / w, 1f, ep)
+        val pagerY = lerp(s / h, 1f, ep)
+        correctionX = if (fit > 0f && pagerX > 0f) target / (pagerX * fit) else 1f
+        correctionY = if (fit > 0f && pagerY > 0f) target / (pagerY * fit) else 1f
+    } else {
+        correctionX = 1f
+        correctionY = 1f
+    }
+
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -631,10 +718,9 @@ private fun ZoomableImage(
             // exit scale-out reveals the grid instead of a page-sized black slab.
             .onSizeChanged { containerSize = it },
     ) {
-        AsyncImage(
-            model = model,
-            contentDescription = null,
-            contentScale = ContentScale.Fit,
+        // The fitted original and the cropped entry bridge share one transform so
+        // pinch-zoom/pan and the entry bridge stay perfectly registered.
+        Box(
             modifier = Modifier
                 .fillMaxSize()
                 // Re-keyed on multiTouchActive so taps / long-press are dead while a
@@ -713,7 +799,52 @@ private fun ZoomableImage(
                     translationX = offset.x
                     translationY = offset.y
                 },
-        )
+        ) {
+            // Shared entry correction: morphs the fitted content into the tile's
+            // square crop and back to neutral. Both the original and the bridge
+            // bitmap use ContentScale.Fit inside it, so they are geometrically
+            // identical at every frame and their crossfade cannot flicker.
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .graphicsLayer {
+                        scaleX = correctionX
+                        scaleY = correctionY
+                    },
+            ) {
+                AsyncImage(
+                    model = model,
+                    contentDescription = null,
+                    contentScale = ContentScale.Fit,
+                    onSuccess = { state ->
+                        fullImageSize = IntSize(state.result.image.width, state.result.image.height)
+                        fullLoaded = true
+                    },
+                    onError = { fullLoaded = true },
+                    modifier = Modifier.fillMaxSize(),
+                )
+
+                // Tile-res bridge above the original, fading out once the entry
+                // zoom finishes AND the original has decoded (whichever is later),
+                // so there is never a black frame during the transition.
+                if (thumb != null) {
+                    val entryAlpha = (1f - ep).coerceIn(0f, 1f)
+                    val bridgeAlpha = maxOf(entryAlpha, loadFade.value)
+                    if (bridgeAlpha > 0.001f) {
+                        Image(
+                            bitmap = thumb.asImageBitmap(),
+                            contentDescription = null,
+                            // Fit (not Crop): the shared correction layer performs
+                            // the crop, so bridge and original share one geometry.
+                            contentScale = ContentScale.Fit,
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .graphicsLayer { alpha = bridgeAlpha },
+                        )
+                    }
+                }
+            }
+        }
     }
 }
 
