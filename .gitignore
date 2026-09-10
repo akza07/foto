@@ -22,5 +22,5 @@ keystore.properties
 # Built APK output
 /apk-output/
 
-# Knowledge graph caches
-/graphify-out/cache/
+# Generated knowledge graph output
+/graphify-out/
