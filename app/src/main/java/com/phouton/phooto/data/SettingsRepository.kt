@@ -12,6 +12,7 @@ data class AppSettings(
     val selectedTreeUris: List<String> = emptyList(),
     val preferHighRefreshRate: Boolean = true,
     val confirmBeforeDelete: Boolean = true,
+    val loopVideos: Boolean = false,
 )
 
 object SettingsRepository {
@@ -21,6 +22,7 @@ object SettingsRepository {
     private const val KEY_TREE_URIS = "tree_uris"
     private const val KEY_PREFER_HIGH_REFRESH_RATE = "prefer_high_refresh_rate"
     private const val KEY_CONFIRM_BEFORE_DELETE = "confirm_before_delete"
+    private const val KEY_LOOP_VIDEOS = "loop_videos"
 
     private val _settings = MutableStateFlow(AppSettings())
     val settings: StateFlow<AppSettings> = _settings.asStateFlow()
@@ -37,6 +39,7 @@ object SettingsRepository {
                 .filter { it.isNotBlank() },
             preferHighRefreshRate = prefs.getBoolean(KEY_PREFER_HIGH_REFRESH_RATE, true),
             confirmBeforeDelete = prefs.getBoolean(KEY_CONFIRM_BEFORE_DELETE, true),
+            loopVideos = prefs.getBoolean(KEY_LOOP_VIDEOS, false),
         )
     }
 
@@ -58,6 +61,11 @@ object SettingsRepository {
     fun setConfirmBeforeDelete(value: Boolean) {
         prefs.edit().putBoolean(KEY_CONFIRM_BEFORE_DELETE, value).apply()
         _settings.value = _settings.value.copy(confirmBeforeDelete = value)
+    }
+
+    fun setLoopVideos(value: Boolean) {
+        prefs.edit().putBoolean(KEY_LOOP_VIDEOS, value).apply()
+        _settings.value = _settings.value.copy(loopVideos = value)
     }
 
     fun addTreeUri(uri: String) {

@@ -8,6 +8,9 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.tooling.preview.Preview
 import com.phouton.phooto.data.SettingsRepository
 import com.phouton.phooto.data.thumbnails.ExternalReloadSink
@@ -26,28 +29,35 @@ class MainActivity : ComponentActivity() {
         // and the navigation bar/pill, with content inset via Compose insets.
         enableEdgeToEdge()
 
-        // Initialize settings so the persisted "prefer 120Hz" flag is loaded before
-        // we read it below (GalleryScreen also calls init — it's idempotent).
+        // Initialize settings so the persisted "prefer 120Hz" flag is available to
+        // the composition below (GalleryScreen also calls init — it's idempotent).
         SettingsRepository.init(this)
 
         // Set up the Coil image-loader-backed thumbnail cache before any Compose
         // code runs so the first gallery frame can already hit it.
         ThumbCache.init(this)
 
-        // Read settings once here so the window-level hint is in place before the
-        // first frame is composed. The Compose tree still receives the flag via a
-        // parameter so per-composable hints stay in sync if the user toggles the
-        // setting later.
-        val settings = SettingsRepository.settings.value
-        if (settings.preferHighRefreshRate && this.displaySupportsHighRefreshRate()) {
-            window.attributes = window.attributes.apply {
-                preferredRefreshRate = 120f
-            }
-        }
+        // Whether the hardware can do better than 60Hz doesn't change at
+        // runtime, so probe it once. The preference itself is observed below so
+        // toggling it takes effect without restarting the app.
+        val supportsHighRefreshRate = displaySupportsHighRefreshRate()
 
         setContent {
+            val settings by SettingsRepository.settings.collectAsState()
+            val preferHighRefreshRate =
+                settings.preferHighRefreshRate && supportsHighRefreshRate
+
+            // Window-level refresh hint, kept in sync with the setting. 0f means
+            // "no preference". PermissionGate additionally votes at the Compose
+            // level for surfaces inside the window.
+            LaunchedEffect(preferHighRefreshRate) {
+                window.attributes = window.attributes.apply {
+                    preferredRefreshRate = if (preferHighRefreshRate) 120f else 0f
+                }
+            }
+
             PhootoTheme {
-                PermissionGate(preferHighRefreshRate = settings.preferHighRefreshRate)
+                PermissionGate(preferHighRefreshRate = preferHighRefreshRate)
             }
         }
 

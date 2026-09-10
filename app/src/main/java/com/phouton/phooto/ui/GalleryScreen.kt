@@ -960,6 +960,7 @@ fun GalleryScreen(
                 onShare = { shareItem(it) },
                 onInfo = { infoItem = it },
                 onCrop = { showComingSoonToast() },
+                loopVideos = appSettings.loopVideos,
             )
         }
 

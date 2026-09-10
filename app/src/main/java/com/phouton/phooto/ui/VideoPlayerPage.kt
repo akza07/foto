@@ -37,7 +37,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -55,7 +54,6 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
@@ -65,28 +63,25 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.util.lerp
-import androidx.lifecycle.compose.LifecycleStartEffect
-import androidx.media3.common.AudioAttributes
-import androidx.media3.common.C
+import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
-import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.compose.ContentFrame
 import androidx.media3.ui.compose.SURFACE_TYPE_TEXTURE_VIEW
 import androidx.media3.ui.compose.state.rememberMuteButtonState
 import androidx.media3.ui.compose.state.rememberPlayPauseButtonState
-import androidx.media3.ui.compose.state.rememberPresentationState
 import androidx.media3.ui.compose.state.rememberProgressStateWithTickCount
 import androidx.media3.ui.compose.state.rememberSeekBackButtonState
 import androidx.media3.ui.compose.state.rememberSeekForwardButtonState
-import androidx.media3.common.MediaItem as Media3MediaItem
 import com.phouton.phooto.data.MediaItem
 import com.phouton.phooto.ui.theme.AmoledBlack
 import com.phouton.phooto.ui.theme.TextMuted
 import com.phouton.phooto.ui.theme.TextPrimary
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 
 // HUD colors tuned for contrast on the floating pill (zinc-700/500 tracks vs white fill).
 private val SeekTrackColor = Color(0xFF3F3F46)   // zinc-700 — visible but subtle track
@@ -99,6 +94,11 @@ private val PlaybackSpeeds = listOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 2f)
 
 /**
  * Full-screen video playback page used inside [FullImageViewer].
+ *
+ * The [player] is owned by the viewer (a single instance for the whole session)
+ * and preloaded by [VideoPlaybackController]; this page only attaches it to a
+ * surface and renders the HUD. Only the settled page is [active]; adjacent
+ * pages show their cached poster so two decoders are never live at once.
  *
  * Minimal modern HUD:
  * - Single tap toggles play/pause, double-tap left/right seeks ±10 s,
@@ -114,8 +114,10 @@ private val PlaybackSpeeds = listOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 2f)
 @OptIn(UnstableApi::class)
 @Composable
 fun VideoPlayerPage(
+    player: Player,
     item: MediaItem,
     active: Boolean,
+    contentReady: () -> Boolean,
     onControlsVisibilityChanged: (Boolean) -> Unit = {},
     onPlayingChanged: (Boolean) -> Unit = {},
     onLongPress: () -> Unit = {},
@@ -125,54 +127,11 @@ fun VideoPlayerPage(
     containerSize: IntSize = IntSize.Zero,
     modifier: Modifier = Modifier,
 ) {
-    val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
-    val player = remember(active, item.uri) {
-        if (active) {
-            ExoPlayer.Builder(context.applicationContext).build().apply {
-                setAudioAttributes(
-                    AudioAttributes.Builder()
-                        .setUsage(C.USAGE_MEDIA)
-                        .setContentType(C.AUDIO_CONTENT_TYPE_MOVIE)
-                        .build(),
-                    /* handleAudioFocus= */ true,
-                )
-                setSeekBackIncrementMs(10_000L)
-                setSeekForwardIncrementMs(10_000L)
-            }
-        } else {
-            null
-        }
-    }
-
-    DisposableEffect(player) {
-        onDispose { player?.release() }
-    }
-
-    // Pause on background; no auto-resume (gallery convention).
-    LifecycleStartEffect(player) {
-        onStopOrDispose {
-            if (player != null) {
-                player.playWhenReady = false
-                player.pause()
-            }
-        }
-    }
-
-    // Load PAUSED: the poster/first frame acts as a preview until the user
-    // taps play (user decision — no autoplay). Keyed on uri so a reused
-    // page slot (after a delete shifts items) loads the new file.
-    LaunchedEffect(player, item.uri) {
-        if (player != null) {
-            player.setMediaItem(Media3MediaItem.fromUri(item.uri))
-            player.prepare()
-            player.playWhenReady = false
-        }
-    }
-
-    // Inactive (adjacent) page: poster only.
-    if (player == null) {
+    // Inactive (adjacent) page: poster only. The shared player is attached to a
+    // surface by the settled page alone, so paging never has two decoders live.
+    if (!active) {
         Box(modifier = modifier.fillMaxSize()) {
             VideoPosterThumb(
                 item = item,
@@ -189,22 +148,23 @@ fun VideoPlayerPage(
     // The poster IS a real frame of this video, so instead of letting the
     // surface pop in (a hard swap the moment the first frame renders), an
     // identical poster overlay is drawn above the surface and crossfaded out
-    // once the first frame is visible. The decoder's prepare() latency can't
-    // be avoided, but the swap itself becomes invisible — both on open and
-    // when swiping to the next video. coverSurface is media3's own
-    // shutter-visibility flag: true until the first frame renders.
-    val presentationState = rememberPresentationState(player, keepContentOnReset = true)
-    // Keyed on the player too: re-activating a page builds a fresh player and a
-    // fresh veil, so returning to a previously-viewed video never shows a stale
-    // transparent veil over a not-yet-rendered surface.
-    val posterVeilAlpha = remember(item.uri, player) { Animatable(1f) }
+    // once the first frame is visible. The shared player's prepare() latency
+    // can't be avoided, but the swap itself becomes invisible — both on open
+    // and when swiping to the next video. [contentReady] is fed by the
+    // playback controller's rendered-first-frame listener.
+    //
+    // The veil is keyed on the uri, so swiping to a new video starts covered
+    // even though the player instance is unchanged.
+    val posterVeilAlpha = remember(item.uri) { Animatable(1f) }
 
-    LaunchedEffect(presentationState) {
-        snapshotFlow { presentationState.coverSurface }.collect { covered ->
-            if (!covered && posterVeilAlpha.value > 0f) {
-                posterVeilAlpha.animateTo(0f, tween(FirstFrameFadeMs))
-            }
+    LaunchedEffect(item.uri) {
+        // Fade as soon as this item's first frame renders. The timeout keeps an
+        // unplayable video from leaving the poster stuck forever; the error
+        // overlay draws above it either way.
+        withTimeoutOrNull(FirstFrameTimeoutMs) {
+            snapshotFlow { contentReady() }.first { it }
         }
+        posterVeilAlpha.animateTo(0f, tween(FirstFrameFadeMs))
     }
 
     val playPauseState = rememberPlayPauseButtonState(player)
@@ -218,6 +178,14 @@ fun VideoPlayerPage(
     val controlsAlpha = remember { Animatable(1f) }
     var speedMenuExpanded by remember { mutableStateOf(false) }
     var playbackSpeed by remember { mutableFloatStateOf(1f) }
+
+    // Player errors are not Compose state, so observe them through a snapshot
+    // flow; reading player.playerError directly in composition misses errors
+    // that arrive without an unrelated recomposition.
+    var playbackError by remember(player) { mutableStateOf<PlaybackException?>(null) }
+    LaunchedEffect(player) {
+        snapshotFlow { player.playerError }.collect { playbackError = it }
+    }
 
     fun showControls() {
         controlsVisible = true
@@ -335,7 +303,9 @@ fun VideoPlayerPage(
                 modifier = Modifier.fillMaxSize(),
                 surfaceType = SURFACE_TYPE_TEXTURE_VIEW,
                 contentScale = ContentScale.Fit,
-                keepContentOnReset = true,
+                // Clear the surface when the shared player resets for the next
+                // item; the poster veil above covers the gap.
+                keepContentOnReset = false,
                 shutter = {
                     Box(Modifier.fillMaxSize().background(AmoledBlack))
                 },
@@ -613,7 +583,7 @@ fun VideoPlayerPage(
         }
 
         // ---- Error state ----
-        if (player.playbackState == Player.STATE_IDLE && player.playerError != null) {
+        if (playbackError != null) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -767,3 +737,6 @@ private const val ControlsHideDelayMs = 3000L
 // Crossfade for the poster→first-frame veil swap (subtle: the two are
 // pixel-aligned, so this reads as sharpening rather than a transition).
 private const val FirstFrameFadeMs = 150
+// Upper bound on how long the poster veil waits for a first frame before
+// fading anyway (guards against an unplayable video leaving it stuck).
+private const val FirstFrameTimeoutMs = 2500L

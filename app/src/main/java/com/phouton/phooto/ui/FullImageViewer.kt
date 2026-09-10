@@ -47,6 +47,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -70,6 +71,7 @@ import androidx.compose.ui.input.pointer.PointerInputScope
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
@@ -77,6 +79,7 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.util.lerp
+import androidx.lifecycle.compose.LifecycleStartEffect
 import coil3.compose.AsyncImage
 import coil3.request.ImageRequest
 import com.phouton.phooto.data.MediaItem
@@ -198,17 +201,48 @@ fun FullImageViewer(
     onShare: (MediaItem) -> Unit,
     onInfo: (MediaItem) -> Unit,
     onCrop: () -> Unit,
+    loopVideos: Boolean = false,
     pendingRemoval: MediaItem? = null,
     onRemovalAnimationEnd: () -> Unit = {},
 ) {
     val scope = rememberCoroutineScope()
     val density = LocalDensity.current
     val haptics = LocalHapticFeedback.current
+    val context = LocalContext.current
 
     val pagerState = rememberPagerState(
         initialPage = initialIndex.coerceIn(0, (items.size - 1).coerceAtLeast(0)),
         pageCount = { items.size },
     )
+
+    // One ExoPlayer + preload manager for the whole viewer session. Built only
+    // when the list actually contains a video; image-only viewers stay free of
+    // a decoder and its background thread. The controller preloads videos near
+    // the settled page so the first frame is warm before a swipe finishes.
+    val playback = remember {
+        if (items.any { it.isVideo }) {
+            VideoPlaybackController(context.applicationContext, loopVideos)
+        } else {
+            null
+        }
+    }
+    DisposableEffect(playback) {
+        onDispose { playback?.release() }
+    }
+    // Pause on background; no auto-resume (gallery convention).
+    LifecycleStartEffect(playback?.player) {
+        onStopOrDispose { playback?.player?.pause() }
+    }
+    LaunchedEffect(playback, items) {
+        playback?.updateItems(items)
+    }
+    LaunchedEffect(playback, pagerState.settledPage, items) {
+        playback?.onSettled(pagerState.settledPage)
+    }
+    // Keep the player in sync if the preference changes while the viewer is open.
+    LaunchedEffect(playback, loopVideos) {
+        playback?.setLoop(loopVideos)
+    }
 
     // Entry/exit progress: 0 = scaled to source tile, 1 = full screen.
     val progress = remember { Animatable(0f) }
@@ -342,7 +376,7 @@ fun FullImageViewer(
     // Images go through Coil; VIDEO posters go through VideoPosterMemory (the
     // viewer composes the incoming page at swipe start and needs its poster
     // synchronously), so video neighbors are warmed into that cache instead.
-    val ctx = androidx.compose.ui.platform.LocalContext.current
+    val ctx = context
     LaunchedEffect(currentIndex) {
         listOf(currentIndex - 1, currentIndex + 1)
             .filter { it in items.indices }
@@ -450,30 +484,52 @@ fun FullImageViewer(
             ) { page ->
                 val item = items[page]
                 if (item.isVideo) {
-                    // Video page: real playback via ExoPlayer, no zoom gestures.
-                    // Only the settled page is "active" (owns a player/decoder);
-                    // adjacent video pages show their cached poster.
-                    VideoPlayerPage(
-                        item = item,
-                        active = page == currentIndex,
-                        onControlsVisibilityChanged = { visible ->
-                            if (page == currentIndex) videoControlsVisible = visible
-                        },
-                        onPlayingChanged = { playing ->
-                            if (page == currentIndex) videoPlaying = playing
-                        },
-                        onLongPress = { drawerVisible = true },
-                        onDelete = { onDelete(item) },
-                        // Live entry/exit progress (0 = tile, 1 = fullscreen) so the
-                        // video page morphs the tile's cropped poster into the fitted
-                        // player and back on close. Must stay live on exit too: pinning
-                        // it to 1f left the pager's non-uniform scale as the only
-                        // transform, so the tile's square crop did not line up.
-                        entryProgress = { progress.value },
-                        sourceRect = sourceRect,
-                        containerSize = containerSize,
-                        modifier = Modifier.fillMaxSize(),
-                    )
+                    // Video page: real playback via the viewer-owned ExoPlayer,
+                    // no zoom gestures. Only the settled page is "active" (it
+                    // attaches the shared player to its surface); adjacent video
+                    // pages show their cached poster.
+                    val controller = playback
+                    if (controller != null) {
+                        VideoPlayerPage(
+                            player = controller.player,
+                            item = item,
+                            active = page == currentIndex,
+                            // The veil covers the surface until this item's first
+                            // frame has rendered on the shared player.
+                            contentReady = {
+                                controller.renderedMediaId == item.uri.toString()
+                            },
+                            onControlsVisibilityChanged = { visible ->
+                                if (page == currentIndex) videoControlsVisible = visible
+                            },
+                            onPlayingChanged = { playing ->
+                                if (page == currentIndex) videoPlaying = playing
+                            },
+                            onLongPress = { drawerVisible = true },
+                            onDelete = { onDelete(item) },
+                            // Live entry/exit progress (0 = tile, 1 = fullscreen) so
+                            // the video page morphs the tile's cropped poster into the
+                            // fitted player and back on close. Must stay live on exit
+                            // too: pinning it to 1f left the pager's non-uniform scale
+                            // as the only transform, so the tile's square crop did not
+                            // line up.
+                            entryProgress = { progress.value },
+                            sourceRect = sourceRect,
+                            containerSize = containerSize,
+                            modifier = Modifier.fillMaxSize(),
+                        )
+                    } else {
+                        // Defensive: no controller means the viewer opened with no
+                        // video at all, which cannot happen for a video page. Fall
+                        // back to the poster rather than crash.
+                        Box(modifier = Modifier.fillMaxSize()) {
+                            VideoPosterThumb(
+                                item = item,
+                                modifier = Modifier.fillMaxSize(),
+                                contentScale = ContentScale.Fit,
+                            )
+                        }
+                    }
                 } else {
                     ZoomableImage(
                         item = item,

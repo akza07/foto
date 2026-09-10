@@ -56,7 +56,9 @@ app/src/main/java/com/phouton/phooto/
 │   ├── GalleryScreen.kt       # Albums grid, folder (album) view, transitions
 │   ├── FullImageViewer.kt     # Pager-based full-screen image viewer
 │   ├── VideoPlayerPage.kt     # ExoPlayer video playback page (shadcn controls)
+│   ├── VideoPlaybackController.kt # Viewer-owned ExoPlayer + preload manager
 │   ├── SettingsScreen.kt      # Settings + Content Discovery
+│   ├── SettingsComponents.kt  # Shared settings rows / group card
 │   └── theme/Theme.kt         # AMOLED shadcn palette + MaterialTheme
 └── data/
     ├── MediaItem.kt           # MediaItem / MediaFolder models
@@ -152,10 +154,18 @@ edge-to-edge rendering.
 ### 5.4.1 Video playback
 - Tapping a **video** tile opens the viewer with **real playback** via
   **AndroidX Media3 — ExoPlayer** (`media3-exoplayer` + Compose-first
-  `media3-ui-compose`; `PlayerSurface`/`ContentFrame`, TextureView surface so
-  the scale-from-tile transition and overlay controls compose cleanly).
+  `media3-ui-compose`; `ContentFrame`, TextureView surface so the
+  scale-from-tile transition and overlay controls compose cleanly).
+- **One player for the whole viewer session.** `VideoPlaybackController` builds
+  a single ExoPlayer when the viewer opens and releases it on close, instead of
+  building one per settled page. A shared **`DefaultPreloadManager`** preloads
+  videos within ±4 of the settled page (3 s for the current item, 1.5 s for the
+  immediate neighbors, tracks/prepare for the rest), so a swipe usually lands on
+  an already-buffered first frame.
 - Opens **paused** as a preview: the cached poster shows until playback starts
-  (no autoplay — user decision).
+  (no autoplay — user decision). Only the settled page attaches the player to a
+  surface; adjacent video pages show their cached poster, and settling on an
+  image stops the video decoders.
 - **Unified frame-0 poster pipeline** (one bitmap per video, used everywhere):
   - `VideoPosterExtractor` grabs **frame 0** (`MediaMetadataRetriever.
     getScaledFrameAtTime`, 720 px long edge) — the exact frame ExoPlayer
@@ -182,19 +192,33 @@ edge-to-edge rendering.
     with a 0.5×–2× dropdown.
 - **Top-right 3-dot menu**: Share, Delete (red), Info — reusing the viewer's
   existing share/delete/info flows. Back button + counter pill remain top-left.
-- Only the settled page owns a player/decoder (adjacent pages show posters);
-  playback pauses when the app backgrounds.
+- Only the settled page attaches the shared player to a surface (adjacent pages
+  show posters); playback pauses when the app backgrounds.
+- **Loop videos** (Settings → Behavior): when on, playback repeats the current
+  video from the start instead of stopping at the end (`Player.REPEAT_MODE_ONE`).
+  Off by default.
 - **Video pages disable the image-only gestures** (user decision): no
   swipe-down dismiss, no swipe-up drawer, no pinch/double-tap zoom. Exit via the
   back button, or swipe to an adjacent page while paused.
 - Unsupported codecs → clean shadcn error state (no crash).
 
-### 5.5 Settings — Content Discovery
-- **Gear icon** → Settings screen (slide transition).
-- **Respect .nomedia** (toggle): hides MediaStore-indexed media whose directory (or
-  ancestor) has a `.nomedia` marker. Folders you explicitly add are always shown.
-- **Require explicit permission** (toggle): switches between allow-list and deny-list.
-- **Directory list** (always available; behavior depends on the flag):
+### 5.5 Settings
+- **Gear icon** → Settings screen (slide transition). Grouped into four cards:
+  - **Display** — *Prefer 120Hz refresh rate*: asks the system to run up to 120Hz
+    on supported devices. Applied live (window attribute + Compose frame-rate vote),
+    no restart needed.
+  - **Playback** — *Loop videos*: restart a video when it ends (`Player.REPEAT_MODE_ONE`).
+  - **Library**:
+    - **Respect .nomedia** (toggle): hides MediaStore-indexed media whose directory
+      (or ancestor) has a `.nomedia` marker. Folders you explicitly add are always shown.
+    - **Only show selected folders** (toggle): switches between allow-list and deny-list.
+    - **Manage folders** → a **Folders** sub-screen (slide transition, its own back
+      handling) with the directory list and **Add directory**.
+  - **Storage** — *Clear thumbnail cache* (shows the current size, confirms before clearing).
+- **Toggle rows** are tappable across their whole width, not just on the switch.
+- Only **Library** changes reload the media list; Display/Playback toggles apply
+  through `SettingsRepository`'s `StateFlow` without re-querying MediaStore.
+- **Directory list behavior** (behavior depends on the allow/deny flag):
   - **ON (allow-list):** only media inside selected directories is shown; each selected
     directory (and subdirectory with media) appears as an album. Empty list → nothing shown.
   - **OFF (deny-list):** all media is shown except the selected directories.
@@ -260,7 +284,7 @@ The optimized release APK is copied to:
 apk-output/phooto-arm64-android16-release.apk
 ```
 
-- **Size:** ~2.4 MB (R8-optimized from a ~70 MB debug build).
+- **Size:** ~3.4 MB (R8-optimized from a ~70 MB debug build).
 - **Targets Android 16** (targetSdk 37), minSdk 29.
 - **ABIs:** arm64-v8a (plus armeabi-v7a / x86 / x86_64).
 - **Signed:** V2-signed with `keystore/phooto-release.jks` (CN=Phooto).

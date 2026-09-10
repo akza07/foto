@@ -401,6 +401,9 @@ object ThumbCache {
     private suspend fun extractAndSavePoster(ctx: Context, item: MediaItem) {
         val edge = VideoPosterExtractor.POSTER_LONG_EDGE
         if (VideoFrameCache.hasFreshPoster(ctx, item.uri)) return
+        // Skip while a video is playing: the retriever seek can contend with
+        // the decoder. Not marked failed, so the next pass retries.
+        if (PlaybackThrottle.isPlaying) return
         val poster = VideoPosterExtractor.extract(ctx, item.uri, edge)
         if (poster == null) {
             VideoFrameCache.markFailed(ctx, item.uri)
