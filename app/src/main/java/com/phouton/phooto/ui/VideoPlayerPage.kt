@@ -27,6 +27,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.VolumeOff
 import androidx.compose.material.icons.automirrored.rounded.VolumeUp
+import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PlayArrow
@@ -88,6 +89,7 @@ import kotlinx.coroutines.launch
 private val SeekTrackColor = Color(0xFF3F3F46)   // zinc-700 — visible but subtle track
 private val SeekBufferedColor = Color(0xFF71717A) // zinc-500 — buffered segment
 private val SeekFillColor = Color(0xFFFAFAFA)     // white — played segment
+private val DeleteRed = Color(0xFFEF4444)
 
 /** Playback speeds offered by the speed chip, in menu order. */
 private val PlaybackSpeeds = listOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 2f)
@@ -101,7 +103,7 @@ private val PlaybackSpeeds = listOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 2f)
  * - Swipe up/down gestures are handled by the host viewer (sheet / dismiss),
  *   so this page owns no vertical-drag detector and the bottom pill never
  *   triggers navigation.
- * - Bottom: floating pill with play, times, seeker, mute, speed (0.5×–2×).
+ * - Bottom: floating pill with play, times, seeker, mute, speed (0.5×–2×), and delete.
  * - Controls auto-hide after 3 s while playing; paused keeps them visible.
  * - [onPlayingChanged] hoists play state so the host pager can lock swiping
  *   while the video plays (swiping navigates only while paused).
@@ -114,6 +116,7 @@ fun VideoPlayerPage(
     onControlsVisibilityChanged: (Boolean) -> Unit = {},
     onPlayingChanged: (Boolean) -> Unit = {},
     onLongPress: () -> Unit = {},
+    onDelete: () -> Unit = {},
     entryProgress: () -> Float = { 1f },
     modifier: Modifier = Modifier,
 ) {
@@ -222,6 +225,12 @@ fun VideoPlayerPage(
             controlsVisible = false
             controlsAlpha.animateTo(0f, tween(200))
         }
+    }
+
+    fun hideControlsNow() {
+        hideJob.value?.cancel()
+        controlsVisible = false
+        scope.launch { controlsAlpha.animateTo(0f, tween(200)) }
     }
 
     /** Hide the HUD now (after a menu action closes it mid-playback). */
@@ -347,8 +356,11 @@ fun VideoPlayerPage(
                                 }
                             },
                             onTap = {
-                                showControls()
-                                playPauseState.onClick()
+                                if (controlsVisible) {
+                                    hideControlsNow()
+                                } else {
+                                    showControls()
+                                }
                             },
                         )
                     },
@@ -363,7 +375,15 @@ fun VideoPlayerPage(
                     Surface(
                         modifier = Modifier
                             .size(56.dp)
-                            .clip(CircleShape),
+                            .clip(CircleShape)
+                            .clickable(
+                                enabled = controlsVisible,
+                                interactionSource = remember { MutableInteractionSource() },
+                                indication = null,
+                            ) {
+                                showControls()
+                                playPauseState.onClick()
+                            },
                         shape = CircleShape,
                         color = Color.Black.copy(alpha = 0.6f),
                         shadowElevation = 0.dp,
@@ -514,6 +534,26 @@ fun VideoPlayerPage(
                                         )
                                     }
                                 }
+                            }
+                            Box(
+                                modifier = Modifier
+                                    .size(40.dp)
+                                    .clip(CircleShape)
+                                    .clickable(
+                                        interactionSource = remember { MutableInteractionSource() },
+                                        indication = null,
+                                    ) {
+                                        showControls()
+                                        onDelete()
+                                    },
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Outlined.Delete,
+                                    contentDescription = "Delete",
+                                    tint = DeleteRed,
+                                    modifier = Modifier.size(20.dp),
+                                )
                             }
                         }
                     }

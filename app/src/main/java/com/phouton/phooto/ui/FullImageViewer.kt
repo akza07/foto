@@ -13,6 +13,7 @@ import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -80,6 +81,8 @@ import com.phouton.phooto.ui.theme.AmoledBlack
 import com.phouton.phooto.ui.theme.Surface as ThemeSurface
 import com.phouton.phooto.ui.theme.TextMuted
 import com.phouton.phooto.ui.theme.TextPrimary
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 private val SheetRadius = RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp)
@@ -207,6 +210,33 @@ fun FullImageViewer(
     var drawerVisible by remember { mutableStateOf(false) }
     var currentPageZoomed by remember { mutableStateOf(false) }
     var videoControlsVisible by remember { mutableStateOf(true) }
+    var imageControlsVisible by remember { mutableStateOf(true) }
+    val imageHideJob = remember { mutableStateOf<Job?>(null) }
+
+    fun showImageControls() {
+        imageControlsVisible = true
+        imageHideJob.value?.cancel()
+        imageHideJob.value = scope.launch {
+            delay(3000L)
+            if (!drawerVisible) {
+                imageControlsVisible = false
+            }
+        }
+    }
+
+    fun hideImageControls() {
+        imageHideJob.value?.cancel()
+        imageControlsVisible = false
+    }
+
+    fun toggleImageControls() {
+        if (imageControlsVisible) {
+            hideImageControls()
+        } else {
+            showImageControls()
+        }
+    }
+
     // True while the current video page is actively playing. While playing,
     // pager swiping is locked so a swipe can never skip to the next item;
     // pausing re-enables it (user decision: swipe navigates only when paused).
@@ -239,11 +269,12 @@ fun FullImageViewer(
 
     // Video pages never hold image zoom; image pages never hold video state.
     LaunchedEffect(currentPageIsVideo, currentIndex) {
-        videoControlsVisible = true
         if (currentPageIsVideo) {
+            videoControlsVisible = true
             currentPageZoomed = false
         } else {
             videoPlaying = false
+            showImageControls()
         }
     }
 
@@ -365,6 +396,7 @@ fun FullImageViewer(
                         if (page == currentIndex) videoPlaying = playing
                     },
                     onLongPress = { drawerVisible = true },
+                    onDelete = { onDelete(item) },
                     // Live entry-zoom progress (0 = tile, 1 = fullscreen) so the
                     // video page can bridge the tile's cropped poster into the
                     // player's fitted poster without a pop at animation end.
@@ -375,6 +407,7 @@ fun FullImageViewer(
                 ZoomableImage(
                     item = item,
                     onZoomedChange = { zoomed -> currentPageZoomed = zoomed },
+                    onTap = { toggleImageControls() },
                     onLongPress = { drawerVisible = true },
                     multiTouchActive = multiTouchActive,
                 )
@@ -382,19 +415,23 @@ fun FullImageViewer(
         }
 
         val topChromeAlpha by animateFloatAsState(
-            targetValue = if (currentPageIsVideo && !videoControlsVisible) 0f else 1f,
+            targetValue = if (currentPageIsVideo) {
+                if (videoControlsVisible) 1f else 0f
+            } else {
+                if (imageControlsVisible) 1f else 0f
+            },
             animationSpec = tween(200),
-            label = "video top chrome alpha",
+            label = "top chrome alpha",
         )
 
-        // Keep the top chrome readable over bright video, and fade it with the
-        // video HUD rather than leaving a lone back button on screen.
+        // Keep the top chrome readable over bright backgrounds, and fade it
+        // with the controls / HUD.
         Box(
             modifier = Modifier
                 .align(Alignment.TopCenter)
                 .fillMaxWidth()
                 .height(112.dp)
-                .graphicsLayer { alpha = if (currentPageIsVideo) topChromeAlpha else 0f },
+                .graphicsLayer { alpha = topChromeAlpha },
         ) {
             Box(
                 modifier = Modifier
@@ -428,7 +465,7 @@ fun FullImageViewer(
                     .shadow(8.dp, CircleShape)
                     .clip(CircleShape)
                     .clickable(
-                        enabled = !currentPageIsVideo || videoControlsVisible,
+                        enabled = if (currentPageIsVideo) videoControlsVisible else imageControlsVisible,
                         onClick = close,
                     ),
                 shape = CircleShape,
@@ -456,6 +493,48 @@ fun FullImageViewer(
                     fontWeight = FontWeight.Medium,
                     modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
                 )
+            }
+        }
+
+        // Bottom-right: Delete button for image viewer within thumb reach (fades on tap/auto-hide).
+        if (!currentPageIsVideo) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .navigationBarsPadding()
+                    .padding(end = 16.dp, bottom = 16.dp)
+                    .graphicsLayer {
+                        alpha = (if (leaving) p else 1f) * topChromeAlpha
+                        translationY = if (leaving) 12.dp.toPx() * (1f - p) else 0f
+                    },
+            ) {
+                Surface(
+                    modifier = Modifier
+                        .size(48.dp)
+                        .shadow(8.dp, CircleShape)
+                        .clip(CircleShape)
+                        .clickable(
+                            enabled = imageControlsVisible,
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null,
+                        ) {
+                            if (currentItem != null) {
+                                onDelete(currentItem)
+                            }
+                        },
+                    shape = CircleShape,
+                    color = Color.Black.copy(alpha = 0.68f),
+                    shadowElevation = 0.dp,
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            imageVector = Icons.Outlined.Delete,
+                            contentDescription = "Delete",
+                            tint = DeleteRed,
+                            modifier = Modifier.size(24.dp),
+                        )
+                    }
+                }
             }
         }
 
@@ -495,6 +574,7 @@ fun FullImageViewer(
 private fun ZoomableImage(
     item: MediaItem,
     onZoomedChange: (Boolean) -> Unit,
+    onTap: () -> Unit,
     onLongPress: () -> Unit,
     multiTouchActive: Boolean,
 ) {
@@ -613,6 +693,9 @@ private fun ZoomableImage(
                                 }
                             }
                         },
+                        onTap = {
+                            onTap()
+                        },
                     )
                 }
                 .transformable(state = transformableState, canPan = { scale != 1f })
@@ -669,9 +752,9 @@ private fun ActionSheet(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceEvenly,
                 ) {
-                    ActionItem(Icons.Outlined.Delete, "Delete", DeleteRed, onDelete)
                     ActionItem(Icons.Outlined.Share, "Share", TextPrimary, onShare)
                     ActionItem(Icons.Outlined.Info, "Info", TextPrimary, onInfo)
+                    ActionItem(Icons.Outlined.Delete, "Delete", DeleteRed, onDelete)
                     // Videos have no crop action.
                     if (!item.isVideo) {
                         ActionItem(Icons.Outlined.Crop, "Crop", TextPrimary, onCrop)
