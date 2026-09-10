@@ -168,7 +168,7 @@ fun VideoPlayerPage(
 
     // Inactive (adjacent) page: poster only.
     if (player == null) {
-        Box(modifier = modifier.fillMaxSize().background(AmoledBlack)) {
+        Box(modifier = modifier.fillMaxSize()) {
             VideoPosterThumb(
                 item = item,
                 modifier = Modifier.fillMaxSize(),
@@ -272,8 +272,7 @@ fun VideoPlayerPage(
 
     Box(
         modifier = modifier
-            .fillMaxSize()
-            .background(AmoledBlack),
+            .fillMaxSize(),
     ) {
         // ---- Video surface (full-bleed) ----
         // The shutter is a plain black box: the real "poster → frame" veil is

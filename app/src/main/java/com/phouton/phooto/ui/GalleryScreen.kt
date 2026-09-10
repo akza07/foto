@@ -533,15 +533,16 @@ fun GalleryScreen(
     }
 
     // BackHandler: selection mode owns the back button.
+    // The full-image viewer is intentionally absent here: it registers its own
+    // BackHandler so system back runs the animated scale-out instead of removing
+    // the viewer in a single frame.
     BackHandler(
-        enabled = isSelecting || openFolder != null || viewerItems != null || showSettings,
+        enabled = isSelecting || openFolder != null || showSettings,
         onBack = {
             if (isSelecting) {
                 clearSelection()
             } else if (showSettings) {
                 showSettings = false
-            } else if (viewerItems != null) {
-                closeViewer()
             } else {
                 closeFolder()
             }

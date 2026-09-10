@@ -1,5 +1,6 @@
 package com.phouton.phooto.ui
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
@@ -256,10 +257,10 @@ fun FullImageViewer(
         }
     }
 
-    val backgroundAlpha by animateFloatAsState(
-        targetValue = if (leaving) 0f else 1f,
-        animationSpec = tween(240, easing = FastOutSlowInEasing),
-    )
+    // System back (button / gesture) must run the same animated scale-out as the
+    // on-screen back arrow. Composed after GalleryScreen's BackHandler, so this
+    // one is the most recent and wins while the viewer is open.
+    BackHandler { close() }
 
     val swipeThreshold = with(density) { 56.dp.toPx() }
     val currentIndex = pagerState.settledPage
@@ -313,13 +314,20 @@ fun FullImageViewer(
     // (swipe up/down, pager slide, taps) are suppressed and only pinch-zoom applies.
     var multiTouchActive by remember { mutableStateOf(false) }
 
+    // Entry/exit progress sampled once per frame: 0 = scaled to the source tile,
+    // 1 = settled full screen. Also drives the backdrop alpha so the grid is
+    // revealed in lockstep with the scale-out rather than popping in after it.
+    val p = progress.value
+
     Box(
         modifier = Modifier
             .fillMaxSize()
             .onSizeChanged { containerSize = it }
-            // Opaque pitch black so the grid never shows through; the alpha
-            // variant is only meaningful during the exit fade.
-            .background(if (leaving) AmoledBlack.copy(alpha = backgroundAlpha) else AmoledBlack)
+            // Single fading backdrop for the whole viewer. Pages are transparent,
+            // so this is the only black layer. It stays opaque through the entry
+            // zoom and fades with the exit progress, exposing the grid in lockstep
+            // with the scale-out rather than popping in after it finishes.
+            .background(AmoledBlack.copy(alpha = if (leaving) p else 1f))
             // Multi-touch watch: as soon as a second finger lands, every single-finger
             // gesture yields to the pinch-zoom on the image below.
             .pointerInput(Unit) {
@@ -348,7 +356,6 @@ fun FullImageViewer(
             },
     ) {
         // Scale-in from the tapped tile.
-        val p = progress.value
         val containerW = containerSize.width.toFloat().coerceAtLeast(1f)
         val containerH = containerSize.height.toFloat().coerceAtLeast(1f)
         val fromScaleX = sourceRect.width.toFloat() / containerW
@@ -364,9 +371,9 @@ fun FullImageViewer(
             state = pagerState,
             modifier = Modifier
                 .fillMaxSize()
-                // Explicit opaque black so sliding between pages never reveals
-                // any lighter backdrop (theme surface / grid) through gaps.
-                .background(AmoledBlack)
+                // No backdrop of its own: the host's fading black layer is the
+                // single source of black, so page gaps and letterboxes stay
+                // covered while settled and fade away cleanly on exit.
                 .clip(pagerShape)
                 .graphicsLayer {
                     scaleX = lerp(fromScaleX, 1f, p)
@@ -620,7 +627,8 @@ private fun ZoomableImage(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(AmoledBlack)
+            // Transparent page: the viewer host owns the (fading) backdrop so the
+            // exit scale-out reveals the grid instead of a page-sized black slab.
             .onSizeChanged { containerSize = it },
     ) {
         AsyncImage(
