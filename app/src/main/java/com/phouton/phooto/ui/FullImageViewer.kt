@@ -91,6 +91,9 @@ import kotlinx.coroutines.launch
 private val SheetRadius = RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp)
 private val DeleteRed = Color(0xFFEF4444)
 
+/** Slide duration when a delete moves the viewer to the adjacent item. */
+private const val DeleteSlideDurationMs = 280
+
 /**
  * Watches pointer count and reports when the gesture becomes multi-touch
  * ([onMultiTouchStart], as soon as a second finger lands) and when every pointer
@@ -195,6 +198,8 @@ fun FullImageViewer(
     onShare: (MediaItem) -> Unit,
     onInfo: (MediaItem) -> Unit,
     onCrop: () -> Unit,
+    pendingRemoval: MediaItem? = null,
+    onRemovalAnimationEnd: () -> Unit = {},
 ) {
     val scope = rememberCoroutineScope()
     val density = LocalDensity.current
@@ -208,6 +213,9 @@ fun FullImageViewer(
     // Entry/exit progress: 0 = scaled to source tile, 1 = full screen.
     val progress = remember { Animatable(0f) }
     var leaving by remember { mutableStateOf(false) }
+    // True while a deferred delete is sliding the pager to the neighbour. Gates
+    // user input so a manual swipe can't fight the programmatic scroll.
+    var removing by remember { mutableStateOf(false) }
 
     // Measured size of the viewer. The entry zoom can't be computed until we know
     // the container, so the animation is started once (and the pager only composed
@@ -299,6 +307,37 @@ fun FullImageViewer(
         }
     }
 
+    // Deferred delete: slide to a neighbour BEFORE the list shrinks, so the
+    // transition reads as the item leaving and the adjacent image taking its
+    // place. Direction follows availability: next (slide left) when there is a
+    // successor, else the previous item (slide right). The actual list mutation
+    // happens in onRemovalAnimationEnd, and page keys let the pager remap the
+    // now-visible neighbour from its old index to the removed one.
+    LaunchedEffect(pendingRemoval) {
+        val removed = pendingRemoval ?: return@LaunchedEffect
+        if (leaving) return@LaunchedEffect
+        val index = items.indexOfFirst { it.uri == removed.uri }
+        val target = when {
+            index < 0 -> -1
+            index < items.lastIndex -> index + 1
+            else -> index - 1
+        }
+        if (target < 0 || target > items.lastIndex || target == index) {
+            onRemovalAnimationEnd()
+            return@LaunchedEffect
+        }
+        removing = true
+        try {
+            pagerState.animateScrollToPage(
+                target,
+                animationSpec = tween(DeleteSlideDurationMs, easing = FastOutSlowInEasing),
+            )
+        } finally {
+            removing = false
+        }
+        onRemovalAnimationEnd()
+    }
+
     // Preload adjacent pages so page swipes never flash black while loading.
     // Images go through Coil; VIDEO posters go through VideoPosterMemory (the
     // viewer composes the incoming page at swipe start and needs its poster
@@ -352,8 +391,8 @@ fun FullImageViewer(
             // Applies to images and videos alike: the video pill only covers the
             // bottom, so a swipe starting on the video surface reaches this
             // detector cleanly.
-            .pointerInput(currentPageZoomed, drawerVisible, leaving, multiTouchActive) {
-                if (!currentPageZoomed && !drawerVisible && !leaving && !multiTouchActive) {
+            .pointerInput(currentPageZoomed, drawerVisible, leaving, multiTouchActive, removing) {
+                if (!currentPageZoomed && !drawerVisible && !leaving && !multiTouchActive && !removing) {
                     detectVerticalSwipe(
                         threshold = swipeThreshold,
                         onSwipeUp = {
@@ -398,10 +437,16 @@ fun FullImageViewer(
                         alpha = 1f
                     },
                 // Video pages lock pager swiping while playing; paused (or image
-                // pages) allow it. Zoom and multi-touch keep their existing gates.
+                // pages) allow it. Zoom, multi-touch, and an in-flight delete
+                // slide keep their existing gates.
                 userScrollEnabled = (!currentPageIsVideo || !videoPlaying) &&
                     !currentPageZoomed &&
-                    !multiTouchActive,
+                    !multiTouchActive &&
+                    !removing,
+                // Stable page identity: lets the pager remap a page to its new
+                // index when a delete shrinks the list, instead of flashing the
+                // wrong item during the commit.
+                key = { items[it].uri },
             ) { page ->
                 val item = items[page]
                 if (item.isVideo) {
@@ -419,11 +464,12 @@ fun FullImageViewer(
                         },
                         onLongPress = { drawerVisible = true },
                         onDelete = { onDelete(item) },
-                        // Live entry-zoom progress (0 = tile, 1 = fullscreen) so the
-                        // video page can morph the tile's cropped poster into the
-                        // player's fitted poster without a pop/flicker. Pinned to 1f
-                        // while leaving so the exit geometry matches the image path.
-                        entryProgress = { if (leaving) 1f else progress.value },
+                        // Live entry/exit progress (0 = tile, 1 = fullscreen) so the
+                        // video page morphs the tile's cropped poster into the fitted
+                        // player and back on close. Must stay live on exit too: pinning
+                        // it to 1f left the pager's non-uniform scale as the only
+                        // transform, so the tile's square crop did not line up.
+                        entryProgress = { progress.value },
                         sourceRect = sourceRect,
                         containerSize = containerSize,
                         modifier = Modifier.fillMaxSize(),
@@ -436,12 +482,12 @@ fun FullImageViewer(
                         onTap = { toggleImageControls() },
                         onLongPress = { drawerVisible = true },
                         multiTouchActive = multiTouchActive,
-                        // Live entry-zoom progress so the page can bridge the grid
-                        // tile's cropped thumbnail into the full-resolution image
-                        // instead of popping in when the original finishes decoding.
-                        // Pinned to 1f while leaving so the bridge stays hidden on
-                        // the exit (the settled image just shrinks, as before).
-                        entryProgress = { if (leaving) 1f else progress.value },
+                        // Live entry/exit progress so the page morphs the grid tile's
+                        // square crop into the full-resolution image and back on
+                        // close, instead of popping when the original decodes. Must
+                        // stay live on exit: pinning it to 1f disabled the correction
+                        // and left the pager's non-uniform scale to squash the image.
+                        entryProgress = { progress.value },
                     )
                 }
             }

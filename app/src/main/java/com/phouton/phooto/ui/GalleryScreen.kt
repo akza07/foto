@@ -415,6 +415,10 @@ fun GalleryScreen(
     var viewerItems by remember { mutableStateOf<List<MediaItem>?>(null) }
     var viewerIndex by remember { mutableStateOf(0) }
     var viewerSourceRect by remember { mutableStateOf(Rect.Zero) }
+    // Item awaiting the viewer's delete slide-out. While set, viewerItems still
+    // contains it so the pager can animate to the neighbor; the actual list
+    // mutation happens in commitViewerRemoval once the slide ends.
+    var pendingViewerRemoval by remember { mutableStateOf<MediaItem?>(null) }
     var infoItem by remember { mutableStateOf<MediaItem?>(null) }
     var albumReloadKey by remember { mutableStateOf(0) }
     var toastMessage by remember { mutableStateOf<String?>(null) }
@@ -484,12 +488,14 @@ fun GalleryScreen(
     val closeViewer = {
         viewerItems = null
         viewerSourceRect = Rect.Zero
+        pendingViewerRemoval = null
     }
 
     val openViewer = { list: List<MediaItem>, index: Int, rect: Rect ->
         viewerItems = list
         viewerIndex = index
         viewerSourceRect = rect
+        pendingViewerRemoval = null
     }
 
     // Selection helpers ------------------------------------------------------
@@ -549,8 +555,26 @@ fun GalleryScreen(
         },
     )
 
-    // Single-item delete (from the full-image viewer). Stays in the viewer on
-    // the next file instead of exiting to the grid; only closes when empty.
+    // Commit a deferred viewer removal once its slide-out finishes. Idempotent:
+    // no-ops if the viewer already closed or the item is gone.
+    val commitViewerRemoval = {
+        val removed = pendingViewerRemoval
+        pendingViewerRemoval = null
+        if (removed != null) {
+            val remaining = viewerItems?.filterNot { it.uri == removed.uri }
+            if (remaining.isNullOrEmpty()) {
+                closeViewer()
+            } else {
+                viewerItems = remaining
+                viewerIndex = viewerIndex.coerceIn(0, remaining.lastIndex)
+            }
+        }
+    }
+
+    // Single-item delete (from the full-image viewer). The viewer stays open and
+    // slides to the neighbour; the list mutation is deferred to
+    // [commitViewerRemoval] so the pager can animate before the item disappears.
+    // Only closes immediately when the deleted item was the last one.
     val removeDeleted = { deletedUri: android.net.Uri ->
         val current = content
         if (current != null) {
@@ -558,14 +582,17 @@ fun GalleryScreen(
                 looseItems = current.looseItems.filterNot { it.uri == deletedUri },
             )
         }
-        val remaining = viewerItems?.filterNot { it.uri == deletedUri }
-        if (remaining.isNullOrEmpty()) {
-            closeViewer()
-        } else {
-            viewerItems = remaining
-            viewerIndex = viewerIndex.coerceIn(0, remaining.lastIndex)
-            toastKey += 1
-            toastMessage = "Deleted"
+        val list = viewerItems
+        val removed = list?.firstOrNull { it.uri == deletedUri }
+        if (removed != null) {
+            if (list.size <= 1) {
+                // Nothing to slide to: use the normal scale-out exit.
+                closeViewer()
+            } else {
+                pendingViewerRemoval = removed
+                toastKey += 1
+                toastMessage = "Deleted"
+            }
         }
         albumReloadKey += 1
         // Refresh the root grid so folder counts/previews update after a delete.
@@ -916,13 +943,18 @@ fun GalleryScreen(
                 items = viewing,
                 initialIndex = viewerIndex.coerceIn(0, viewing.lastIndex),
                 sourceRect = viewerSourceRect,
+                pendingRemoval = pendingViewerRemoval,
+                onRemovalAnimationEnd = commitViewerRemoval,
                 onDismiss = closeViewer,
                 onPageChanged = { viewerIndex = it },
                 onDelete = {
-                    if (appSettings.confirmBeforeDelete) {
-                        pendingDeleteItem = it
-                    } else {
-                        requestDelete(it)
+                    // Ignore further deletes while a slide-out is already pending.
+                    if (pendingViewerRemoval == null) {
+                        if (appSettings.confirmBeforeDelete) {
+                            pendingDeleteItem = it
+                        } else {
+                            requestDelete(it)
+                        }
                     }
                 },
                 onShare = { shareItem(it) },
