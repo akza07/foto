@@ -57,6 +57,7 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.IntSize
@@ -73,6 +74,7 @@ import androidx.media3.ui.compose.state.rememberPlayPauseButtonState
 import androidx.media3.ui.compose.state.rememberProgressStateWithTickCount
 import androidx.media3.ui.compose.state.rememberSeekBackButtonState
 import androidx.media3.ui.compose.state.rememberSeekForwardButtonState
+import com.phouton.phooto.R
 import com.phouton.phooto.data.MediaItem
 import com.phouton.phooto.ui.theme.AmoledBlack
 import com.phouton.phooto.ui.theme.DeleteRed
@@ -412,7 +414,7 @@ fun VideoPlayerPage(
                         Box(contentAlignment = Alignment.Center) {
                             Icon(
                                 imageVector = if (playPauseState.showPlay) Icons.Rounded.PlayArrow else Icons.Rounded.Pause,
-                                contentDescription = if (playPauseState.showPlay) "Play" else "Pause",
+                                contentDescription = stringResource(if (playPauseState.showPlay) R.string.video_play else R.string.video_pause),
                                 tint = Color.White,
                                 modifier = Modifier.size(30.dp),
                             )
@@ -459,7 +461,7 @@ fun VideoPlayerPage(
                             ) {
                                 Icon(
                                     imageVector = if (playPauseState.showPlay) Icons.Rounded.PlayArrow else Icons.Rounded.Pause,
-                                    contentDescription = if (playPauseState.showPlay) "Play" else "Pause",
+                                    contentDescription = stringResource(if (playPauseState.showPlay) R.string.video_play else R.string.video_pause),
                                     tint = TextPrimary,
                                     modifier = Modifier.size(26.dp),
                                 )
@@ -501,7 +503,7 @@ fun VideoPlayerPage(
                             ) {
                                 Icon(
                                     imageVector = if (muteState.showMuted) Icons.AutoMirrored.Rounded.VolumeOff else Icons.AutoMirrored.Rounded.VolumeUp,
-                                    contentDescription = if (muteState.showMuted) "Unmute" else "Mute",
+                                    contentDescription = stringResource(if (muteState.showMuted) R.string.video_unmute else R.string.video_mute),
                                     tint = TextPrimary,
                                     modifier = Modifier.size(22.dp),
                                 )
@@ -571,7 +573,7 @@ fun VideoPlayerPage(
                             ) {
                                 Icon(
                                     imageVector = Icons.Outlined.Delete,
-                                    contentDescription = "Delete",
+                                    contentDescription = stringResource(R.string.action_delete),
                                     tint = DeleteRed,
                                     modifier = Modifier.size(20.dp),
                                 )
@@ -599,14 +601,14 @@ fun VideoPlayerPage(
                     )
                     Spacer(Modifier.height(10.dp))
                     Text(
-                        text = "This video can't be played",
+                        text = stringResource(R.string.video_error_title),
                         color = TextPrimary,
                         fontSize = 14.sp,
                         fontWeight = FontWeight.Medium,
                     )
                     Spacer(Modifier.height(4.dp))
                     Text(
-                        text = "The file format or codec isn't supported on this device.",
+                        text = stringResource(R.string.video_error_message),
                         color = TextMuted,
                         fontSize = 12.sp,
                         textAlign = TextAlign.Center,

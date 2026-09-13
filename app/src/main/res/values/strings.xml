@@ -96,6 +96,14 @@
     <string name="action_share">Share</string>
     <string name="action_crop">Crop</string>
 
+    <!-- Video player -->
+    <string name="video_play">Play</string>
+    <string name="video_pause">Pause</string>
+    <string name="video_mute">Mute</string>
+    <string name="video_unmute">Unmute</string>
+    <string name="video_error_title">This video can\'t be played</string>
+    <string name="video_error_message">The file format or codec isn\'t supported on this device.</string>
+
     <!-- Feedback -->
     <string name="undo_moved_to_trash">Moved to trash</string>
     <string name="action_undo">Undo</string>
