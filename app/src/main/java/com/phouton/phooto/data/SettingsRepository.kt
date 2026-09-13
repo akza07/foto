@@ -2,23 +2,25 @@ package com.phouton.phooto.data
 
 import android.content.Context
 import android.content.SharedPreferences
+import androidx.annotation.StringRes
+import com.phouton.phooto.R
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
 /** How the gallery orders media within folders and folders themselves. */
-enum class MediaSort(val label: String) {
-    DATE_NEWEST("Newest first"),
-    DATE_OLDEST("Oldest first"),
-    NAME_ASC("Name (A–Z)"),
-    NAME_DESC("Name (Z–A)"),
+enum class MediaSort(@StringRes val labelRes: Int) {
+    DATE_NEWEST(R.string.sort_newest),
+    DATE_OLDEST(R.string.sort_oldest),
+    NAME_ASC(R.string.sort_name_asc),
+    NAME_DESC(R.string.sort_name_desc),
 }
 
 /** Thumbnail grid density: the minimum tile width in dp. */
-enum class GridSize(val label: String, val minTileDp: Int) {
-    SMALL("Small", 88),
-    MEDIUM("Medium", 112),
-    LARGE("Large", 144),
+enum class GridSize(@StringRes val labelRes: Int, val minTileDp: Int) {
+    SMALL(R.string.grid_small, 88),
+    MEDIUM(R.string.grid_medium, 112),
+    LARGE(R.string.grid_large, 144),
 }
 
 data class AppSettings(

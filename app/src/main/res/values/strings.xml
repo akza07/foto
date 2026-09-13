@@ -1,3 +1,64 @@
 <resources>
     <string name="app_name">phooto</string>
+
+    <!-- Shared actions -->
+    <string name="action_back">Back</string>
+    <string name="action_cancel">Cancel</string>
+    <string name="action_clear">Clear</string>
+    <string name="action_remove">Remove</string>
+    <string name="selected">Selected</string>
+
+    <!-- Settings -->
+    <string name="settings_title">Settings</string>
+    <string name="section_display">Display</string>
+    <string name="display_refresh_title">Prefer 120Hz refresh rate</string>
+    <string name="display_refresh_subtitle">Run the display at up to 120Hz on supported devices.</string>
+    <string name="display_sort_title">Sort order</string>
+    <string name="display_sort_subtitle">How media and folders are ordered.</string>
+    <string name="display_grid_title">Grid size</string>
+    <string name="display_grid_subtitle">Thumbnail density in the grid.</string>
+    <string name="section_playback">Playback</string>
+    <string name="playback_loop_title">Loop videos</string>
+    <string name="playback_loop_subtitle">Restart a video when it ends.</string>
+    <string name="section_library">Library</string>
+    <string name="library_nomedia_title">Respect .nomedia</string>
+    <string name="library_nomedia_subtitle">Hide media in folders marked .nomedia.</string>
+    <string name="library_require_explicit_title">Only show selected folders</string>
+    <string name="library_require_explicit_on">Show only media inside the folders you add.</string>
+    <string name="library_require_explicit_off">Show all media except the folders you add.</string>
+    <string name="library_manage_folders">Manage folders</string>
+    <string name="section_storage">Storage</string>
+    <string name="storage_clear_cache_title">Clear thumbnail cache</string>
+    <string name="storage_clearing">Clearing…</string>
+    <string name="storage_calculating">Calculating…</string>
+    <string name="storage_nothing_cached">Nothing cached</string>
+    <string name="section_about">About</string>
+    <string name="about_app_name">Phooto</string>
+    <string name="about_version">Version %1$s</string>
+    <string name="clear_cache_confirm_title">Clear thumbnail cache?</string>
+    <string name="clear_cache_confirm_message">Cached previews will be deleted and regenerated the next time you scroll. This may take a moment.</string>
+
+    <!-- Sort order -->
+    <string name="sort_newest">Newest first</string>
+    <string name="sort_oldest">Oldest first</string>
+    <string name="sort_name_asc">Name (A–Z)</string>
+    <string name="sort_name_desc">Name (Z–A)</string>
+
+    <!-- Grid size -->
+    <string name="grid_small">Small</string>
+    <string name="grid_medium">Medium</string>
+    <string name="grid_large">Large</string>
+
+    <!-- Folders sub-screen -->
+    <string name="folders_title">Folders</string>
+    <string name="folders_allow_hint">Only media inside these folders is shown.</string>
+    <string name="folders_deny_hint">Media inside these folders is hidden. Everything else is shown.</string>
+    <string name="folders_empty">No folders added</string>
+    <string name="folders_add_directory">Add directory</string>
+    <string name="folder_name_fallback">Selected directory</string>
+    <plurals name="folder_count">
+        <item quantity="zero">None</item>
+        <item quantity="one">1 folder</item>
+        <item quantity="other">%1$d folders</item>
+    </plurals>
 </resources>

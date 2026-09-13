@@ -47,9 +47,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.phouton.phooto.R
 import com.phouton.phooto.data.AppSettings
 import com.phouton.phooto.data.GalleryEvents
 import com.phouton.phooto.data.GridSize
@@ -135,7 +138,7 @@ private fun SettingsRoot(
             .fillMaxSize()
             .background(AmoledBlack),
     ) {
-        SettingsHeader(title = "Settings", onBack = onBack)
+        SettingsHeader(title = stringResource(R.string.settings_title), onBack = onBack)
 
         LazyColumn(
             modifier = Modifier
@@ -145,39 +148,39 @@ private fun SettingsRoot(
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             // ── Display ──────────────────────────────────────────────
-            item { SettingsSectionHeader(title = "Display") }
+            item { SettingsSectionHeader(title = stringResource(R.string.section_display)) }
             item {
                 SettingsGroup {
                     SettingsToggleRow(
-                        title = "Prefer 120Hz refresh rate",
-                        subtitle = "Run the display at up to 120Hz on supported devices.",
+                        title = stringResource(R.string.display_refresh_title),
+                        subtitle = stringResource(R.string.display_refresh_subtitle),
                         checked = settings.preferHighRefreshRate,
                         onCheckedChange = { SettingsRepository.setPreferHighRefreshRate(it) },
                     )
                     SettingsDivider()
                     SettingsActionRow(
-                        title = "Sort order",
-                        subtitle = "How media and folders are ordered.",
-                        trailingText = settings.sortOrder.label,
+                        title = stringResource(R.string.display_sort_title),
+                        subtitle = stringResource(R.string.display_sort_subtitle),
+                        trailingText = stringResource(settings.sortOrder.labelRes),
                         onClick = { showSortDialog = true },
                     )
                     SettingsDivider()
                     SettingsActionRow(
-                        title = "Grid size",
-                        subtitle = "Thumbnail density in the grid.",
-                        trailingText = settings.gridSize.label,
+                        title = stringResource(R.string.display_grid_title),
+                        subtitle = stringResource(R.string.display_grid_subtitle),
+                        trailingText = stringResource(settings.gridSize.labelRes),
                         onClick = { showGridDialog = true },
                     )
                 }
             }
 
             // ── Playback ─────────────────────────────────────────────
-            item { SettingsSectionHeader(title = "Playback", topPadding = 16.dp) }
+            item { SettingsSectionHeader(title = stringResource(R.string.section_playback), topPadding = 16.dp) }
             item {
                 SettingsGroup {
                     SettingsToggleRow(
-                        title = "Loop videos",
-                        subtitle = "Restart a video when it ends.",
+                        title = stringResource(R.string.playback_loop_title),
+                        subtitle = stringResource(R.string.playback_loop_subtitle),
                         checked = settings.loopVideos,
                         onCheckedChange = { SettingsRepository.setLoopVideos(it) },
                     )
@@ -185,12 +188,12 @@ private fun SettingsRoot(
             }
 
             // ── Library ──────────────────────────────────────────────
-            item { SettingsSectionHeader(title = "Library", topPadding = 16.dp) }
+            item { SettingsSectionHeader(title = stringResource(R.string.section_library), topPadding = 16.dp) }
             item {
                 SettingsGroup {
                     SettingsToggleRow(
-                        title = "Respect .nomedia",
-                        subtitle = "Hide media in folders marked .nomedia.",
+                        title = stringResource(R.string.library_nomedia_title),
+                        subtitle = stringResource(R.string.library_nomedia_subtitle),
                         checked = settings.respectNoMedia,
                         onCheckedChange = {
                             SettingsRepository.setRespectNoMedia(it)
@@ -199,11 +202,11 @@ private fun SettingsRoot(
                     )
                     SettingsDivider()
                     SettingsToggleRow(
-                        title = "Only show selected folders",
+                        title = stringResource(R.string.library_require_explicit_title),
                         subtitle = if (settings.requireExplicit) {
-                            "Show only media inside the folders you add."
+                            stringResource(R.string.library_require_explicit_on)
                         } else {
-                            "Show all media except the folders you add."
+                            stringResource(R.string.library_require_explicit_off)
                         },
                         checked = settings.requireExplicit,
                         onCheckedChange = {
@@ -213,7 +216,7 @@ private fun SettingsRoot(
                     )
                     SettingsDivider()
                     SettingsActionRow(
-                        title = "Manage folders",
+                        title = stringResource(R.string.library_manage_folders),
                         trailingText = folderCountLabel(settings.selectedTreeUris.size),
                         onClick = onManageFolders,
                     )
@@ -221,15 +224,15 @@ private fun SettingsRoot(
             }
 
             // ── Storage ──────────────────────────────────────────────
-            item { SettingsSectionHeader(title = "Storage", topPadding = 16.dp) }
+            item { SettingsSectionHeader(title = stringResource(R.string.section_storage), topPadding = 16.dp) }
             item {
                 SettingsGroup {
                     SettingsActionRow(
-                        title = "Clear thumbnail cache",
+                        title = stringResource(R.string.storage_clear_cache_title),
                         subtitle = when {
-                            clearing -> "Clearing…"
-                            cacheBytes == null -> "Calculating…"
-                            cacheBytes == 0L -> "Nothing cached"
+                            clearing -> stringResource(R.string.storage_clearing)
+                            cacheBytes == null -> stringResource(R.string.storage_calculating)
+                            cacheBytes == 0L -> stringResource(R.string.storage_nothing_cached)
                             else -> formatCacheSize(cacheBytes!!)
                         },
                         enabled = !clearing && (cacheBytes ?: 0L) > 0L,
@@ -240,12 +243,12 @@ private fun SettingsRoot(
                 }
             }
             // ── About ────────────────────────────────────────────────
-            item { SettingsSectionHeader(title = "About", topPadding = 16.dp) }
+            item { SettingsSectionHeader(title = stringResource(R.string.section_about), topPadding = 16.dp) }
             item {
                 SettingsGroup {
                     SettingsActionRow(
-                        title = "Phooto",
-                        subtitle = "Version $appVersion",
+                        title = stringResource(R.string.about_app_name),
+                        subtitle = stringResource(R.string.about_version, appVersion),
                         showChevron = false,
                         onClick = {},
                     )
@@ -256,10 +259,9 @@ private fun SettingsRoot(
 
     if (showClearConfirm) {
         ConfirmDialog(
-            title = "Clear thumbnail cache?",
-            message = "Cached previews will be deleted and regenerated the next time " +
-                "you scroll. This may take a moment.",
-            confirmLabel = "Clear",
+            title = stringResource(R.string.clear_cache_confirm_title),
+            message = stringResource(R.string.clear_cache_confirm_message),
+            confirmLabel = stringResource(R.string.action_clear),
             destructive = false,
             onConfirm = {
                 showClearConfirm = false
@@ -280,10 +282,10 @@ private fun SettingsRoot(
 
     if (showSortDialog) {
         OptionPickerDialog(
-            title = "Sort order",
+            title = stringResource(R.string.display_sort_title),
             options = MediaSort.entries,
             current = settings.sortOrder,
-            label = { it.label },
+            labelRes = { it.labelRes },
             onSelect = { order ->
                 showSortDialog = false
                 SettingsRepository.setSortOrder(order)
@@ -295,10 +297,10 @@ private fun SettingsRoot(
 
     if (showGridDialog) {
         OptionPickerDialog(
-            title = "Grid size",
+            title = stringResource(R.string.display_grid_title),
             options = GridSize.entries,
             current = settings.gridSize,
-            label = { it.label },
+            labelRes = { it.labelRes },
             onSelect = { size ->
                 showGridDialog = false
                 SettingsRepository.setGridSize(size)
@@ -314,7 +316,7 @@ private fun <T> OptionPickerDialog(
     title: String,
     options: List<T>,
     current: T,
-    label: (T) -> String,
+    labelRes: (T) -> Int,
     onSelect: (T) -> Unit,
     onDismiss: () -> Unit,
 ) {
@@ -351,7 +353,7 @@ private fun <T> OptionPickerDialog(
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Text(
-                            text = label(option),
+                            text = stringResource(labelRes(option)),
                             color = if (option == current) TextPrimary else TextMuted,
                             fontSize = 15.sp,
                             fontWeight = if (option == current) FontWeight.SemiBold else FontWeight.Normal,
@@ -360,7 +362,7 @@ private fun <T> OptionPickerDialog(
                         if (option == current) {
                             Icon(
                                 imageVector = Icons.Rounded.Check,
-                                contentDescription = "Selected",
+                                contentDescription = stringResource(R.string.selected),
                                 tint = TextPrimary,
                                 modifier = Modifier.size(18.dp),
                             )
@@ -404,7 +406,7 @@ private fun FoldersScreen(
             .fillMaxSize()
             .background(AmoledBlack),
     ) {
-        SettingsHeader(title = "Folders", onBack = onBack)
+        SettingsHeader(title = stringResource(R.string.folders_title), onBack = onBack)
 
         LazyColumn(
             modifier = Modifier
@@ -416,9 +418,9 @@ private fun FoldersScreen(
             item {
                 Text(
                     text = if (settings.requireExplicit) {
-                        "Only media inside these folders is shown."
+                        stringResource(R.string.folders_allow_hint)
                     } else {
-                        "Media inside these folders is hidden. Everything else is shown."
+                        stringResource(R.string.folders_deny_hint)
                     },
                     color = TextMuted,
                     fontSize = 13.sp,
@@ -431,7 +433,7 @@ private fun FoldersScreen(
                 item {
                     SettingsGroup {
                         Text(
-                            text = "No folders added",
+                            text = stringResource(R.string.folders_empty),
                             color = TextMuted,
                             fontSize = 14.sp,
                             modifier = Modifier.padding(16.dp),
@@ -458,7 +460,7 @@ private fun FoldersScreen(
             item {
                 SettingsGroup {
                     SettingsActionRow(
-                        title = "Add directory",
+                        title = stringResource(R.string.folders_add_directory),
                         showChevron = false,
                         trailingIcon = Icons.Outlined.Add,
                         onClick = { treePicker.launch(null) },
@@ -469,11 +471,9 @@ private fun FoldersScreen(
     }
 }
 
-private fun folderCountLabel(count: Int): String = when (count) {
-    0 -> "None"
-    1 -> "1 folder"
-    else -> "$count folders"
-}
+@Composable
+private fun folderCountLabel(count: Int): String =
+    pluralStringResource(R.plurals.folder_count, count, count)
 
 private fun formatCacheSize(bytes: Long): String {
     val kb = bytes / 1024.0
@@ -495,7 +495,7 @@ private fun DirectoryRow(treeUri: String, onRemove: () -> Unit) {
     ) {
         Column(modifier = Modifier.weight(1f)) {
             Text(
-                text = directoryName(treeUri),
+                text = directoryName(treeUri) ?: stringResource(R.string.folder_name_fallback),
                 color = TextPrimary,
                 fontSize = 15.sp,
                 fontWeight = FontWeight.Medium,
@@ -511,7 +511,7 @@ private fun DirectoryRow(treeUri: String, onRemove: () -> Unit) {
         IconButton(onClick = onRemove) {
             Icon(
                 imageVector = Icons.Outlined.Close,
-                contentDescription = "Remove",
+                contentDescription = stringResource(R.string.action_remove),
                 tint = TextMuted,
                 modifier = Modifier.size(20.dp),
             )
@@ -519,12 +519,12 @@ private fun DirectoryRow(treeUri: String, onRemove: () -> Unit) {
     }
 }
 
-private fun directoryName(treeUri: String): String {
+private fun directoryName(treeUri: String): String? {
     return try {
         val docId = Uri.parse(treeUri).lastPathSegment?.substringAfter(":")
         val raw = docId?.substringAfterLast("/", "")?.replace("_", " ")
-        raw?.takeIf { it.isNotBlank() } ?: "Selected directory"
+        raw?.takeIf { it.isNotBlank() }
     } catch (_: Exception) {
-        "Selected directory"
+        null
     }
 }
