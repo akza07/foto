@@ -480,7 +480,7 @@ fun GalleryScreen(
     }
 
     // API 30+ consent path: a single system dialog that moves the item(s) to the
-    // system trash, so the action is non-destructive and (API 31+) undoable.
+    // system trash, so the action is non-destructive and undoable.
     val requestConsent: (List<MediaItem>) -> Unit = { items ->
         val sender = com.phouton.phooto.data.trashConsentSender(context, items)
         if (sender != null) {
@@ -498,23 +498,26 @@ fun GalleryScreen(
 
     val requestDelete = { item: MediaItem ->
         scope.launch {
-            when (val result = MediaRepository.delete(context, item)) {
-                DeleteResult.Deleted -> removeDeleted(item.uri)
-                is DeleteResult.Consent -> {
-                    // API 29: the provider returned the consent intent directly.
-                    pendingConsent = listOf(item)
-                    consentCoversAll = false
-                    consentLauncher.launch(
-                        androidx.activity.result.IntentSenderRequest.Builder(result.intentSender).build(),
-                    )
-                }
-                DeleteResult.Failed -> {
-                    val isSafItem = android.provider.DocumentsContract.isDocumentUri(context, item.uri)
-                    if (isSafItem) {
+            val isSafItem = android.provider.DocumentsContract.isDocumentUri(context, item.uri)
+            if (!isSafItem && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                // API 30+: every MediaStore delete goes to the system trash so it
+                // is always undoable, even for files this app owns.
+                requestConsent(listOf(item))
+            } else {
+                // SAF items have no system trash; API 29 has no trash API. Delete
+                // directly, using the RecoverableSecurityException consent on 29.
+                when (val result = MediaRepository.delete(context, item)) {
+                    DeleteResult.Deleted -> removeDeleted(item.uri)
+                    is DeleteResult.Consent -> {
+                        pendingConsent = listOf(item)
+                        consentCoversAll = false
+                        consentLauncher.launch(
+                            androidx.activity.result.IntentSenderRequest.Builder(result.intentSender).build(),
+                        )
+                    }
+                    DeleteResult.Failed -> {
                         toastKey += 1
                         toastMessage = UiText.Res(R.string.error_delete)
-                    } else {
-                        requestConsent(listOf(item))
                     }
                 }
             }
@@ -535,55 +538,62 @@ fun GalleryScreen(
     }
 
     // ── Multi-delete ────────────────────────────────────────────────────────
-    // When multiple items are deleted, the system consent dialog (API 30+)
-    // covers the whole batch; API 29 processes consent one item at a time.
+    // SAF items are deleted directly (no system trash). MediaStore items go to
+    // the system trash on API 30+ (one dialog for the whole batch); API 29
+    // deletes directly and processes RecoverableSecurityException consent one
+    // item at a time.
     var pendingBatchDelete by remember { mutableStateOf<List<MediaItem>?>(null) }
     val batchDeleteScope = rememberCoroutineScope()
 
     val requestBatchDelete = { items: List<MediaItem> ->
         batchDeleteScope.launch {
-            // Separate SAF items (deleted directly) from MediaStore items.
+            // SAF items are deleted directly; they have no trash.
             val saf = items.filter {
                 android.provider.DocumentsContract.isDocumentUri(context, it.uri)
             }
             val media = items.filterNot { it in saf }
 
-            val deletedUris = mutableSetOf<android.net.Uri>()
-            val needsConsent = mutableListOf<MediaItem>()
-
-            // Direct deletes first (works for app-owned files / SAF grants).
+            val safDeleted = mutableSetOf<android.net.Uri>()
             saf.forEach { item ->
                 if (MediaRepository.delete(context, item) == DeleteResult.Deleted) {
-                    deletedUris += item.uri
+                    safDeleted += item.uri
                 }
             }
-            media.forEach { item ->
-                when (MediaRepository.delete(context, item)) {
-                    DeleteResult.Deleted -> deletedUris += item.uri
-                    is DeleteResult.Consent, DeleteResult.Failed -> needsConsent += item
-                }
-            }
+            if (safDeleted.isNotEmpty()) removeDeletedBatch(safDeleted)
 
-            if (deletedUris.isNotEmpty()) removeDeletedBatch(deletedUris)
-
-            if (needsConsent.isEmpty()) {
+            if (media.isEmpty()) {
                 clearSelection()
             } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                requestConsent(needsConsent)
+                // API 30+: the whole batch goes to the trash in one dialog.
+                requestConsent(media)
             } else {
-                // API 29: one consent dialog per item, processed in order. The
-                // first item was already attempted; recover its sender.
-                pendingConsent = needsConsent
-                consentCoversAll = false
-                val sender = (MediaRepository.delete(context, needsConsent.first()) as? DeleteResult.Consent)
-                    ?.intentSender
-                if (sender != null) {
-                    consentLauncher.launch(
-                        androidx.activity.result.IntentSenderRequest.Builder(sender).build(),
-                    )
-                } else {
-                    pendingConsent = emptyList()
+                // API 29: direct delete first, then per-item consent for failures.
+                val deletedUris = mutableSetOf<android.net.Uri>()
+                val needsConsent = mutableListOf<MediaItem>()
+                media.forEach { item ->
+                    when (MediaRepository.delete(context, item)) {
+                        DeleteResult.Deleted -> deletedUris += item.uri
+                        is DeleteResult.Consent, DeleteResult.Failed -> needsConsent += item
+                    }
+                }
+                if (deletedUris.isNotEmpty()) removeDeletedBatch(deletedUris)
+
+                if (needsConsent.isEmpty()) {
                     clearSelection()
+                } else {
+                    pendingConsent = needsConsent
+                    consentCoversAll = false
+                    val sender =
+                        (MediaRepository.delete(context, needsConsent.first()) as? DeleteResult.Consent)
+                            ?.intentSender
+                    if (sender != null) {
+                        consentLauncher.launch(
+                            androidx.activity.result.IntentSenderRequest.Builder(sender).build(),
+                        )
+                    } else {
+                        pendingConsent = emptyList()
+                        clearSelection()
+                    }
                 }
             }
         }
