@@ -339,6 +339,11 @@ apk-output/phooto-arm64-android16-release.apk
 
 ## 8. Known Notes / Out of Scope
 
+- **App backup is disabled** (`android:allowBackup="false"`), so an uninstall removes
+  every trace of the app (thumbnails, video posters, trash, settings) and a
+  reinstall starts clean. Internal caches already live in `filesDir`, which the
+  system deletes on uninstall; disabling backup is what prevents Android from
+  restoring them on the next install.
 - UI strings live in `res/values/strings.xml` (with `plurals` for counts); only the
   default locale is shipped so far.
 - Crop is a placeholder ("Coming soon" toast).
