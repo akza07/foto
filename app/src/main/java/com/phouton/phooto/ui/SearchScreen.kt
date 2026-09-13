@@ -42,6 +42,7 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -49,6 +50,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.phouton.phooto.R
 import com.phouton.phooto.data.MediaItem
 import com.phouton.phooto.ui.theme.AmoledBlack
 import com.phouton.phooto.ui.theme.TextMuted
@@ -57,8 +59,8 @@ import com.phouton.phooto.ui.theme.TextPrimary
 private val SearchGridSpacing = 8.dp
 
 /** Month/year bucket label for a `dateAdded` (epoch seconds). */
-private fun monthLabel(epochSeconds: Long): String {
-    if (epochSeconds <= 0L) return "Unknown date"
+private fun monthLabel(epochSeconds: Long, unknown: String): String {
+    if (epochSeconds <= 0L) return unknown
     val fmt = java.text.SimpleDateFormat("MMMM yyyy", java.util.Locale.getDefault())
     return fmt.format(java.util.Date(epochSeconds * 1000L))
 }
@@ -93,6 +95,7 @@ fun SearchScreen(
             items.filter { it.displayName?.contains(q, ignoreCase = true) == true }
         }
     }
+    val unknownDateLabel = stringResource(R.string.search_unknown_date)
 
     Column(
         modifier = Modifier
@@ -111,7 +114,7 @@ fun SearchScreen(
             IconButton(onClick = onBack) {
                 Icon(
                     imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
-                    contentDescription = "Back",
+                    contentDescription = stringResource(R.string.action_back),
                     tint = TextPrimary,
                 )
             }
@@ -128,7 +131,7 @@ fun SearchScreen(
             ) {
                 if (query.isEmpty()) {
                     Text(
-                        text = "Search photos and videos",
+                        text = stringResource(R.string.search_placeholder),
                         color = TextMuted,
                         fontSize = 16.sp,
                         maxLines = 1,
@@ -151,7 +154,7 @@ fun SearchScreen(
                 IconButton(onClick = { query = "" }) {
                     Icon(
                         imageVector = Icons.Outlined.Close,
-                        contentDescription = "Clear",
+                        contentDescription = stringResource(R.string.search_clear),
                         tint = TextMuted,
                     )
                 }
@@ -162,12 +165,12 @@ fun SearchScreen(
         when {
             query.isBlank() -> {
                 Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Text("Search by file name", color = TextMuted, fontSize = 14.sp)
+                    Text(stringResource(R.string.search_hint), color = TextMuted, fontSize = 14.sp)
                 }
             }
             results.isEmpty() -> {
                 Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Text("No results", color = TextMuted, fontSize = 14.sp)
+                    Text(stringResource(R.string.search_no_results), color = TextMuted, fontSize = 14.sp)
                 }
             }
             else -> {
@@ -187,7 +190,7 @@ fun SearchScreen(
                 ) {
                     // Group hits by month so long result sets stay navigable.
                     results
-                        .groupBy { monthLabel(it.dateAdded) }
+                        .groupBy { monthLabel(it.dateAdded, unknownDateLabel) }
                         .forEach { (label, group) ->
                             item(
                                 key = "header:$label",
