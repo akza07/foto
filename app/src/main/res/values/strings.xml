@@ -140,6 +140,7 @@
     <string name="error_move">Couldn\'t move</string>
     <string name="moved_partial">Moved %1$d, copied %2$d (couldn\'t remove original)</string>
     <string name="delete_confirm_message">This action can\'t be undone.</string>
+    <string name="delete_confirm_message_trash">It will be moved to the trash, where you can undo right away.</string>
     <string name="delete_confirm_photo">Delete this photo?</string>
     <string name="delete_confirm_video">Delete this video?</string>
     <plurals name="item_count">

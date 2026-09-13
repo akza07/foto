@@ -853,12 +853,17 @@ fun GalleryScreen(
 
         val deleteTarget = pendingDeleteItem
         if (deleteTarget != null) {
+            val canUndoDelete = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R &&
+                !android.provider.DocumentsContract.isDocumentUri(context, deleteTarget.uri)
             ConfirmDialog(
                 title = stringResource(
                     if (deleteTarget.isVideo) R.string.delete_confirm_video
                     else R.string.delete_confirm_photo,
                 ),
-                message = stringResource(R.string.delete_confirm_message),
+                message = stringResource(
+                    if (canUndoDelete) R.string.delete_confirm_message_trash
+                    else R.string.delete_confirm_message,
+                ),
                 confirmLabel = stringResource(R.string.action_delete),
                 destructive = true,
                 onConfirm = {
@@ -899,13 +904,18 @@ fun GalleryScreen(
         // Batch-delete confirmation dialog.
         val batch = pendingBatchDelete
         if (batch != null && batch.isNotEmpty()) {
+            val canUndoDelete = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R &&
+                batch.any { !android.provider.DocumentsContract.isDocumentUri(context, it.uri) }
             ConfirmDialog(
                 title = pluralStringResource(
                     R.plurals.delete_confirm_count,
                     batch.size,
                     batch.size,
                 ),
-                message = stringResource(R.string.delete_confirm_message),
+                message = stringResource(
+                    if (canUndoDelete) R.string.delete_confirm_message_trash
+                    else R.string.delete_confirm_message,
+                ),
                 confirmLabel = stringResource(R.string.action_delete),
                 destructive = true,
                 onConfirm = {

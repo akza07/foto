@@ -94,7 +94,7 @@ internal fun UndoBar(key: Int, onUndo: () -> Unit, onDismiss: () -> Unit) {
 
     LaunchedEffect(key) {
         visible = true
-        delay(4000)
+        delay(6000)
         onDismiss()
     }
 
