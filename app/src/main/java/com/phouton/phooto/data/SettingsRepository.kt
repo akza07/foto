@@ -6,6 +6,14 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
+/** How the gallery orders media within folders and folders themselves. */
+enum class MediaSort(val label: String) {
+    DATE_NEWEST("Newest first"),
+    DATE_OLDEST("Oldest first"),
+    NAME_ASC("Name (A–Z)"),
+    NAME_DESC("Name (Z–A)"),
+}
+
 data class AppSettings(
     val respectNoMedia: Boolean = true,
     val requireExplicit: Boolean = false,
@@ -13,6 +21,7 @@ data class AppSettings(
     val preferHighRefreshRate: Boolean = true,
     val confirmBeforeDelete: Boolean = true,
     val loopVideos: Boolean = false,
+    val sortOrder: MediaSort = MediaSort.DATE_NEWEST,
 )
 
 object SettingsRepository {
@@ -23,6 +32,7 @@ object SettingsRepository {
     private const val KEY_PREFER_HIGH_REFRESH_RATE = "prefer_high_refresh_rate"
     private const val KEY_CONFIRM_BEFORE_DELETE = "confirm_before_delete"
     private const val KEY_LOOP_VIDEOS = "loop_videos"
+    private const val KEY_SORT_ORDER = "sort_order"
 
     private val _settings = MutableStateFlow(AppSettings())
     val settings: StateFlow<AppSettings> = _settings.asStateFlow()
@@ -40,6 +50,9 @@ object SettingsRepository {
             preferHighRefreshRate = prefs.getBoolean(KEY_PREFER_HIGH_REFRESH_RATE, true),
             confirmBeforeDelete = prefs.getBoolean(KEY_CONFIRM_BEFORE_DELETE, true),
             loopVideos = prefs.getBoolean(KEY_LOOP_VIDEOS, false),
+            sortOrder = runCatching {
+                MediaSort.valueOf(prefs.getString(KEY_SORT_ORDER, null) ?: MediaSort.DATE_NEWEST.name)
+            }.getOrDefault(MediaSort.DATE_NEWEST),
         )
     }
 
@@ -66,6 +79,11 @@ object SettingsRepository {
     fun setLoopVideos(value: Boolean) {
         prefs.edit().putBoolean(KEY_LOOP_VIDEOS, value).apply()
         _settings.value = _settings.value.copy(loopVideos = value)
+    }
+
+    fun setSortOrder(value: MediaSort) {
+        prefs.edit().putString(KEY_SORT_ORDER, value.name).apply()
+        _settings.value = _settings.value.copy(sortOrder = value)
     }
 
     fun addTreeUri(uri: String) {

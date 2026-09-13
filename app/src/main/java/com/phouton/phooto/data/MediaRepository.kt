@@ -168,7 +168,7 @@ object MediaRepository {
             }
 
             val items = safItems + mediaItems
-            buildFolders(items)
+            buildFolders(items, settings.sortOrder)
         } else {
             // Deny-list: pure MediaStore path + existing filters (unchanged).
             val selectedPrefixes = settings.selectedTreeUris.mapNotNull { uri ->
@@ -183,7 +183,7 @@ object MediaRepository {
 
             val items = queryMedia(context)
                 .filter { item -> passesFilters(item, settings, selectedPrefixes, noMediaDirs) }
-            buildFolders(items)
+            buildFolders(items, settings.sortOrder)
         }
     }
 
@@ -191,7 +191,7 @@ object MediaRepository {
      * Groups items into folders by canonical directory path so that SAF-browsed and
      * MediaStore-sourced items for the same physical directory land in one album.
      */
-    private fun buildFolders(items: List<MediaItem>): GalleryContent {
+    private fun buildFolders(items: List<MediaItem>, sort: MediaSort): GalleryContent {
         val loose = mutableListOf<MediaItem>()
         val grouped = LinkedHashMap<String, MutableList<MediaItem>>()
         val dirNames = HashMap<String, String>()      // key -> display dir path
@@ -219,7 +219,7 @@ object MediaRepository {
 
         val folders = grouped.entries
             .map { (key, bucket) ->
-                val sorted = bucket.sortedByDescending { it.dateAdded }
+                val sorted = bucket.sortedWith(itemComparator(sort))
                 val dir = dirNames[key] ?: "Unknown"
                 MediaFolder(
                     bucketId = dir,
@@ -232,9 +232,25 @@ object MediaRepository {
                     mediaStoreBucketId = mediaStoreBucketIds[key],
                 )
             }
-            .sortedByDescending { it.dateAdded }
+            .sortedWith(folderComparator(sort))
 
-        return GalleryContent(folders = folders, looseItems = loose)
+        return GalleryContent(folders = folders, looseItems = loose.sortedWith(itemComparator(sort)))
+    }
+
+    /** Ordering for media within a folder. */
+    private fun itemComparator(sort: MediaSort): Comparator<MediaItem> = when (sort) {
+        MediaSort.DATE_NEWEST -> Comparator { a, b -> b.dateAdded.compareTo(a.dateAdded) }
+        MediaSort.DATE_OLDEST -> Comparator { a, b -> a.dateAdded.compareTo(b.dateAdded) }
+        MediaSort.NAME_ASC -> compareBy(String.CASE_INSENSITIVE_ORDER) { it.displayName.orEmpty() }
+        MediaSort.NAME_DESC -> compareByDescending(String.CASE_INSENSITIVE_ORDER) { it.displayName.orEmpty() }
+    }
+
+    /** Ordering for the folder/album list. */
+    private fun folderComparator(sort: MediaSort): Comparator<MediaFolder> = when (sort) {
+        MediaSort.DATE_NEWEST -> Comparator { a, b -> b.dateAdded.compareTo(a.dateAdded) }
+        MediaSort.DATE_OLDEST -> Comparator { a, b -> a.dateAdded.compareTo(b.dateAdded) }
+        MediaSort.NAME_ASC -> compareBy(String.CASE_INSENSITIVE_ORDER) { it.name }
+        MediaSort.NAME_DESC -> compareByDescending(String.CASE_INSENSITIVE_ORDER) { it.name }
     }
 
     private fun MediaItem.mediaStoreBucketId(): String? =
@@ -457,29 +473,29 @@ object MediaRepository {
 
     suspend fun loadBucket(context: Context, folder: MediaFolder): List<MediaItem> =
         withContext(Dispatchers.IO) {
+            val sort = SettingsRepository.settings.value.sortOrder
             val safTree = folder.safTreeUri
             val safDoc = folder.safDocId
-            if (safTree != null && safDoc != null) {
+            val items = if (safTree != null && safDoc != null) {
                 // SAF folder (allow-list): browse the exact directory and merge any
                 // MediaStore items under the same path (deduped).
                 try {
                     val saf = browseDirectory(context, safTree, safDoc)
                     val media = queryMediaByPath(context, folder.bucketId)
                     val safPaths = saf.mapNotNull { it.canonicalPath() }.toHashSet()
-                    (saf + media.filterNot { it.canonicalPath() in safPaths })
-                        .sortedByDescending { it.dateAdded }
+                    saf + media.filterNot { it.canonicalPath() in safPaths }
                 } catch (e: Exception) {
-                    queryMediaByPath(context, folder.bucketId).sortedByDescending { it.dateAdded }
+                    queryMediaByPath(context, folder.bucketId)
                 }
             } else if (folder.mediaStoreBucketId != null) {
                 // Deny-list MediaStore folder.
                 queryMedia(context, folder.mediaStoreBucketId)
-                    .sortedByDescending { it.dateAdded }
             } else {
                 // Allow-list folder whose SAF browse failed (grant expired): fall back
                 // to MediaStore items under the directory path.
-                queryMediaByPath(context, folder.bucketId).sortedByDescending { it.dateAdded }
+                queryMediaByPath(context, folder.bucketId)
             }
+            items.sortedWith(itemComparator(sort))
         }
 
     /**

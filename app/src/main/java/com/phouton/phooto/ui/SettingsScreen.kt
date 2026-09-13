@@ -29,6 +29,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Surface
@@ -50,6 +51,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.phouton.phooto.data.AppSettings
+import com.phouton.phooto.data.MediaSort
 import com.phouton.phooto.data.SettingsRepository
 import com.phouton.phooto.data.thumbnails.ExternalReloadSink
 import com.phouton.phooto.data.thumbnails.ThumbCache
@@ -115,6 +117,7 @@ private fun SettingsRoot(
     var cacheBytes by remember { mutableStateOf<Long?>(null) }
     var clearing by remember { mutableStateOf(false) }
     var showClearConfirm by remember { mutableStateOf(false) }
+    var showSortDialog by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
         cacheBytes = with(Dispatchers.IO) { ThumbCache.totalCacheBytes() }
@@ -143,6 +146,13 @@ private fun SettingsRoot(
                         subtitle = "Run the display at up to 120Hz on supported devices.",
                         checked = settings.preferHighRefreshRate,
                         onCheckedChange = { SettingsRepository.setPreferHighRefreshRate(it) },
+                    )
+                    SettingsDivider()
+                    SettingsActionRow(
+                        title = "Sort order",
+                        subtitle = "How media and folders are ordered.",
+                        trailingText = settings.sortOrder.label,
+                        onClick = { showSortDialog = true },
                     )
                 }
             }
@@ -235,6 +245,78 @@ private fun SettingsRoot(
             },
             onDismiss = { showClearConfirm = false },
         )
+    }
+
+    if (showSortDialog) {
+        SortOrderDialog(
+            current = settings.sortOrder,
+            onSelect = { order ->
+                showSortDialog = false
+                SettingsRepository.setSortOrder(order)
+                onSettingsChanged()
+            },
+            onDismiss = { showSortDialog = false },
+        )
+    }
+}
+
+@Composable
+private fun SortOrderDialog(
+    current: MediaSort,
+    onSelect: (MediaSort) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(AmoledBlack.copy(alpha = 0.7f))
+            .clickable(onClick = onDismiss, indication = null, interactionSource = null),
+        contentAlignment = Alignment.Center,
+    ) {
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 32.dp),
+            shape = RoundedCornerShape(16.dp),
+            color = ThemeSurface,
+            shadowElevation = 0.dp,
+        ) {
+            Column(modifier = Modifier.padding(20.dp)) {
+                Text(
+                    text = "Sort order",
+                    color = TextPrimary,
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Spacer(Modifier.height(8.dp))
+                MediaSort.entries.forEach { option ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable { onSelect(option) }
+                            .padding(horizontal = 8.dp, vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            text = option.label,
+                            color = if (option == current) TextPrimary else TextMuted,
+                            fontSize = 15.sp,
+                            fontWeight = if (option == current) FontWeight.SemiBold else FontWeight.Normal,
+                            modifier = Modifier.weight(1f),
+                        )
+                        if (option == current) {
+                            Icon(
+                                imageVector = Icons.Rounded.Check,
+                                contentDescription = "Selected",
+                                tint = TextPrimary,
+                                modifier = Modifier.size(18.dp),
+                            )
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 
