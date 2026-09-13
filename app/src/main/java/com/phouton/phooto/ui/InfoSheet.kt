@@ -23,9 +23,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.phouton.phooto.R
 import com.phouton.phooto.data.MediaInfo
 import com.phouton.phooto.data.MediaItem
 import com.phouton.phooto.data.MediaRepository
@@ -59,28 +61,31 @@ internal fun InfoSheet(item: MediaItem, onClose: () -> Unit) {
             color = SurfaceColor,
         ) {
             Column(modifier = Modifier.padding(20.dp)) {
-                Text("Info", color = TextPrimary, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
+                Text(stringResource(R.string.info_title), color = TextPrimary, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
                 Spacer(Modifier.height(12.dp))
                 val d = info
-                InfoRow("Name", d?.name ?: "…")
-                InfoRow("Type", typeLabel(item, d))
-                InfoRow("Size", d?.let { formatSize(it.sizeBytes) } ?: "…")
+                InfoRow(stringResource(R.string.info_name), d?.name ?: "…")
+                InfoRow(stringResource(R.string.info_type), typeLabel(item, d))
+                InfoRow(stringResource(R.string.info_size), d?.let { formatSize(it.sizeBytes) } ?: "…")
                 val w = d?.width ?: 0
                 val h = d?.height ?: 0
-                if (w > 0 && h > 0) InfoRow("Dimensions", "$w × $h")
-                if (item.bucketName.isNotBlank()) InfoRow("Album", item.bucketName)
-                InfoRow("Date added", d?.let { formatDate(it.dateAdded) } ?: "…")
+                if (w > 0 && h > 0) InfoRow(stringResource(R.string.info_dimensions), "$w × $h")
+                if (item.bucketName.isNotBlank()) InfoRow(stringResource(R.string.info_album), item.bucketName)
+                InfoRow(stringResource(R.string.info_date_added), d?.let { formatDate(it.dateAdded) } ?: "…")
                 val modified = d?.dateModified ?: 0L
-                if (modified > 0L) InfoRow("Date modified", formatDate(modified))
+                if (modified > 0L) InfoRow(stringResource(R.string.info_date_modified), formatDate(modified))
             }
         }
     }
 }
 
 /** Human-readable kind: the MIME type when known, else Image/Video. */
+@Composable
 private fun typeLabel(item: MediaItem, info: MediaInfo?): String {
     val mime = info?.mimeType ?: item.mimeType
-    return mime ?: if (item.isVideo) "Video" else "Image"
+    return mime ?: stringResource(
+        if (item.isVideo) R.string.info_kind_video else R.string.info_kind_image,
+    )
 }
 
 @Composable
