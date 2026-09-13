@@ -105,6 +105,7 @@
     <string name="action_move">Move</string>
     <string name="action_share">Share</string>
     <string name="action_crop">Crop</string>
+    <string name="release_to">Release to %1$s</string>
 
     <!-- Video player -->
     <string name="video_play">Play</string>

@@ -60,6 +60,8 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.BlurredEdgeTreatment
+import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
@@ -287,12 +289,14 @@ fun FullImageViewer(
 
     var drawerVisible by remember { mutableStateOf(false) }
     // Long-press radial menu: summoned at the finger and resolved in one motion.
-    var radialVisible by remember { mutableStateOf(false) }
+    var radialPresent by remember { mutableStateOf(false) }
     var radialCenter by remember { mutableStateOf(Offset.Zero) }
     var radialHovered by remember { mutableStateOf<ViewerAction?>(null) }
     // True from the moment the radial opens until its gesture ends, so the page's
     // tap handler can ignore the release that ran an action.
     var radialActive by remember { mutableStateOf(false) }
+    // 0..1 spring driver for the wheel's bloom; also fades the background blur.
+    val radialProgress = remember { Animatable(0f) }
     var currentPageZoomed by remember { mutableStateOf(false) }
     var videoControlsVisible by remember { mutableStateOf(true) }
     var imageControlsVisible by remember { mutableStateOf(true) }
@@ -491,8 +495,8 @@ fun FullImageViewer(
             // Applies to images and videos alike: the video pill only covers the
             // bottom, so a swipe starting on the video surface reaches this
             // detector cleanly.
-            .pointerInput(currentPageZoomed, drawerVisible, radialVisible, leaving, multiTouchActive, removing) {
-                if (!currentPageZoomed && !drawerVisible && !radialVisible && !leaving &&
+            .pointerInput(currentPageZoomed, drawerVisible, radialPresent, leaving, multiTouchActive, removing) {
+                if (!currentPageZoomed && !drawerVisible && !radialPresent && !leaving &&
                     !multiTouchActive && !removing
                 ) {
                     detectVerticalSwipe(
@@ -519,8 +523,17 @@ fun FullImageViewer(
                     radialCenter = clampRadialCenter(longPress.position, containerSize, density)
                     radialHovered = null
                     radialActive = true
-                    radialVisible = true
+                    radialPresent = true
                     longPress.consume()
+                    scope.launch {
+                        radialProgress.animateTo(
+                            1f,
+                            spring(
+                                dampingRatio = Spring.DampingRatioMediumBouncy,
+                                stiffness = Spring.StiffnessMediumLow,
+                            ),
+                        )
+                    }
                     var last = longPress.position
                     while (true) {
                         val event = awaitPointerEvent()
@@ -537,9 +550,18 @@ fun FullImageViewer(
                         change.consume()
                     }
                     val action = radialHovered
-                    radialVisible = false
                     radialHovered = null
                     radialActive = false
+                    scope.launch {
+                        radialProgress.animateTo(
+                            0f,
+                            spring(
+                                dampingRatio = Spring.DampingRatioNoBouncy,
+                                stiffness = Spring.StiffnessMedium,
+                            ),
+                        )
+                        radialPresent = false
+                    }
                     action?.let { onRadialAction(it) }
                 }
             },
@@ -565,6 +587,11 @@ fun FullImageViewer(
                 state = pagerState,
                 modifier = Modifier
                     .fillMaxSize()
+                    // Blur the photo behind the radial menu, driven by its spring.
+                    .blur(
+                        radius = (RADIAL_BLUR_DP * radialProgress.value).dp,
+                        edgeTreatment = BlurredEdgeTreatment.Unbounded,
+                    )
                     // No backdrop of its own: the host's fading black layer is the
                     // single source of black, so page gaps and letterboxes stay
                     // covered while settled and fade away cleanly on exit.
@@ -582,7 +609,7 @@ fun FullImageViewer(
                 userScrollEnabled = (!currentPageIsVideo || !videoPlaying) &&
                     !currentPageZoomed &&
                     !multiTouchActive &&
-                    !radialVisible &&
+                    !radialPresent &&
                     !removing,
                 // Stable page identity: lets the pager remap a page to its new
                 // index when a delete shrinks the list, instead of flashing the
@@ -743,12 +770,13 @@ fun FullImageViewer(
         }
 
         // Long-press radial menu (images only).
-        if (!currentPageIsVideo && radialVisible) {
+        if (!currentPageIsVideo && radialPresent) {
             ViewerActionWheel(
                 center = radialCenter,
                 hovered = radialHovered,
                 containerSize = containerSize,
                 density = density,
+                progress = radialProgress.value,
             )
         }
 
