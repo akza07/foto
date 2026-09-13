@@ -61,4 +61,10 @@
         <item quantity="one">1 folder</item>
         <item quantity="other">%1$d folders</item>
     </plurals>
+
+    <!-- Permission gate -->
+    <string name="permission_title">Allow access to your photos</string>
+    <string name="permission_message">Phooto needs access to your gallery to show and organize your photos and videos.</string>
+    <string name="permission_grant">Grant access</string>
+    <string name="permission_open_settings">Open settings</string>
 </resources>

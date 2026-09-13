@@ -36,6 +36,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.preferredFrameRate
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -44,6 +45,7 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import com.phouton.phooto.R
 import com.phouton.phooto.ui.theme.AmoledBlack
 import com.phouton.phooto.ui.theme.Border
 import com.phouton.phooto.ui.theme.Surface
@@ -156,7 +158,7 @@ private fun PermissionCard(
             }
 
             Text(
-                text = "Allow access to your photos",
+                text = stringResource(R.string.permission_title),
                 color = TextPrimary,
                 fontSize = 18.sp,
                 fontWeight = FontWeight.SemiBold,
@@ -164,7 +166,7 @@ private fun PermissionCard(
             )
 
             Text(
-                text = "Phooto needs access to your gallery to show and organize your photos and videos.",
+                text = stringResource(R.string.permission_message),
                 color = TextMuted,
                 fontSize = 14.sp,
                 lineHeight = 20.sp,
@@ -192,7 +194,7 @@ private fun PermissionCard(
                 ),
             ) {
                 Text(
-                    text = "Grant access",
+                    text = stringResource(R.string.permission_grant),
                     fontWeight = FontWeight.SemiBold,
                 )
             }
@@ -210,7 +212,7 @@ private fun PermissionCard(
                     border = androidx.compose.foundation.BorderStroke(1.dp, Border),
                 ) {
                     Text(
-                        text = "Open settings",
+                        text = stringResource(R.string.permission_open_settings),
                         fontWeight = FontWeight.SemiBold,
                     )
                 }
