@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.text.BasicTextField
@@ -54,6 +55,13 @@ import com.phouton.phooto.ui.theme.TextMuted
 import com.phouton.phooto.ui.theme.TextPrimary
 
 private val SearchGridSpacing = 8.dp
+
+/** Month/year bucket label for a `dateAdded` (epoch seconds). */
+private fun monthLabel(epochSeconds: Long): String {
+    if (epochSeconds <= 0L) return "Unknown date"
+    val fmt = java.text.SimpleDateFormat("MMMM yyyy", java.util.Locale.getDefault())
+    return fmt.format(java.util.Date(epochSeconds * 1000L))
+}
 
 /**
  * Flat, name-filtered search over the whole library. [items] is the full set of
@@ -177,15 +185,36 @@ fun SearchScreen(
                     horizontalArrangement = Arrangement.spacedBy(SearchGridSpacing),
                     verticalArrangement = Arrangement.spacedBy(SearchGridSpacing),
                 ) {
-                    items(results, key = { "search:${it.uri}" }) { item ->
-                        ImageTile(
-                            item = item,
-                            onClick = { rect ->
-                                keyboard?.hide()
-                                onItemClick(results, results.indexOf(item), rect)
-                            },
-                        )
-                    }
+                    // Group hits by month so long result sets stay navigable.
+                    results
+                        .groupBy { monthLabel(it.dateAdded) }
+                        .forEach { (label, group) ->
+                            item(
+                                key = "header:$label",
+                                span = { GridItemSpan(maxLineSpan) },
+                            ) {
+                                Text(
+                                    text = label,
+                                    color = TextMuted,
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    modifier = Modifier.padding(
+                                        start = 4.dp,
+                                        top = 8.dp,
+                                        bottom = 2.dp,
+                                    ),
+                                )
+                            }
+                            items(group, key = { "search:${it.uri}" }) { item ->
+                                ImageTile(
+                                    item = item,
+                                    onClick = { rect ->
+                                        keyboard?.hide()
+                                        onItemClick(results, results.indexOf(item), rect)
+                                    },
+                                )
+                            }
+                        }
                 }
             }
         }
