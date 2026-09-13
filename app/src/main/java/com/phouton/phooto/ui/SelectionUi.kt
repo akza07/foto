@@ -30,10 +30,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.phouton.phooto.R
 import com.phouton.phooto.data.MediaFolder
 import com.phouton.phooto.data.MediaItem
 import com.phouton.phooto.ui.theme.AmoledBlack
@@ -80,12 +82,12 @@ internal fun SelectionActionBar(
                 IconButton(onClick = onClose) {
                     Icon(
                         imageVector = Icons.Outlined.Close,
-                        contentDescription = "Exit selection",
+                        contentDescription = stringResource(R.string.selection_exit),
                         tint = TextPrimary,
                     )
                 }
                 Text(
-                    text = "$count selected",
+                    text = stringResource(R.string.selection_count, count),
                     color = TextPrimary,
                     fontSize = 16.sp,
                     fontWeight = FontWeight.SemiBold,
@@ -99,10 +101,10 @@ internal fun SelectionActionBar(
                 horizontalArrangement = Arrangement.SpaceEvenly,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                SelectionAction(Icons.Outlined.Delete, "Delete", onDelete)
-                SelectionAction(Icons.Outlined.ContentCopy, "Copy", onCopy)
-                SelectionAction(Icons.Outlined.DriveFileMove, "Move", onMove)
-                SelectionAction(Icons.Outlined.Share, "Share", onShare)
+                SelectionAction(Icons.Outlined.Delete, stringResource(R.string.action_delete), onDelete)
+                SelectionAction(Icons.Outlined.ContentCopy, stringResource(R.string.action_copy), onCopy)
+                SelectionAction(Icons.Outlined.DriveFileMove, stringResource(R.string.action_move), onMove)
+                SelectionAction(Icons.Outlined.Share, stringResource(R.string.action_share), onShare)
             }
         }
     }
@@ -155,7 +157,7 @@ internal fun SelectionBadge(selected: Boolean, modifier: Modifier = Modifier) {
         if (selected) {
             Icon(
                 imageVector = Icons.Outlined.Check,
-                contentDescription = "Selected",
+                contentDescription = stringResource(R.string.selected),
                 tint = SurfaceColor,
                 modifier = Modifier.size(14.dp),
             )

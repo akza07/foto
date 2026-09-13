@@ -86,4 +86,12 @@
     <string name="info_date_modified">Date modified</string>
     <string name="info_kind_video">Video</string>
     <string name="info_kind_image">Image</string>
+
+    <!-- Selection -->
+    <string name="selection_exit">Exit selection</string>
+    <string name="selection_count">%1$d selected</string>
+    <string name="action_delete">Delete</string>
+    <string name="action_copy">Copy</string>
+    <string name="action_move">Move</string>
+    <string name="action_share">Share</string>
 </resources>
