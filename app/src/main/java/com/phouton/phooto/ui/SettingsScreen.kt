@@ -362,7 +362,7 @@ private fun <T> OptionPickerDialog(
                         if (option == current) {
                             Icon(
                                 imageVector = Icons.Rounded.Check,
-                                contentDescription = stringResource(R.string.selected),
+                                contentDescription = stringResource(R.string.selection_selected),
                                 tint = TextPrimary,
                                 modifier = Modifier.size(18.dp),
                             )

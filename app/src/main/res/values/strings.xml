@@ -6,7 +6,7 @@
     <string name="action_cancel">Cancel</string>
     <string name="action_clear">Clear</string>
     <string name="action_remove">Remove</string>
-    <string name="selected">Selected</string>
+    <string name="selection_selected">Selected</string>
 
     <!-- Settings -->
     <string name="settings_title">Settings</string>
@@ -89,7 +89,10 @@
 
     <!-- Selection -->
     <string name="selection_exit">Exit selection</string>
-    <string name="selection_count">%1$d selected</string>
+    <plurals name="selection_count">
+        <item quantity="one">%1$d selected</item>
+        <item quantity="other">%1$d selected</item>
+    </plurals>
     <string name="action_delete">Delete</string>
     <string name="action_copy">Copy</string>
     <string name="action_move">Move</string>

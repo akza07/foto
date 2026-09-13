@@ -15,11 +15,11 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.DriveFileMove
 import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.Delete
-import androidx.compose.material.icons.outlined.DriveFileMove
 import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -30,6 +30,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
@@ -87,7 +88,7 @@ internal fun SelectionActionBar(
                     )
                 }
                 Text(
-                    text = stringResource(R.string.selection_count, count),
+                    text = pluralStringResource(R.plurals.selection_count, count, count),
                     color = TextPrimary,
                     fontSize = 16.sp,
                     fontWeight = FontWeight.SemiBold,
@@ -103,7 +104,7 @@ internal fun SelectionActionBar(
             ) {
                 SelectionAction(Icons.Outlined.Delete, stringResource(R.string.action_delete), onDelete)
                 SelectionAction(Icons.Outlined.ContentCopy, stringResource(R.string.action_copy), onCopy)
-                SelectionAction(Icons.Outlined.DriveFileMove, stringResource(R.string.action_move), onMove)
+                SelectionAction(Icons.AutoMirrored.Outlined.DriveFileMove, stringResource(R.string.action_move), onMove)
                 SelectionAction(Icons.Outlined.Share, stringResource(R.string.action_share), onShare)
             }
         }
@@ -157,7 +158,7 @@ internal fun SelectionBadge(selected: Boolean, modifier: Modifier = Modifier) {
         if (selected) {
             Icon(
                 imageVector = Icons.Outlined.Check,
-                contentDescription = stringResource(R.string.selected),
+                contentDescription = stringResource(R.string.selection_selected),
                 tint = SurfaceColor,
                 modifier = Modifier.size(14.dp),
             )

@@ -159,7 +159,7 @@ fun GalleryScreen(
     var pendingViewerRemoval by remember { mutableStateOf<MediaItem?>(null) }
     var infoItem by remember { mutableStateOf<MediaItem?>(null) }
     var albumReloadKey by remember { mutableStateOf(0) }
-    var toastMessage by remember { mutableStateOf<String?>(null) }
+    var toastMessage by remember { mutableStateOf<UiText?>(null) }
     var toastKey by remember { mutableStateOf(0) }
     var pendingDeleteItem by remember { mutableStateOf<MediaItem?>(null) }
     var showSettings by remember { mutableStateOf(false) }
@@ -246,7 +246,7 @@ fun GalleryScreen(
             openViewer(listOf(item), 0, Rect.Zero)
         } else {
             toastKey += 1
-            toastMessage = context.getString(R.string.error_open_file)
+            toastMessage = UiText.Res(R.string.error_open_file)
         }
     }
 
@@ -345,7 +345,7 @@ fun GalleryScreen(
             } else {
                 pendingViewerRemoval = removed
                 toastKey += 1
-                toastMessage = context.getString(R.string.deleted)
+                toastMessage = UiText.Res(R.string.deleted)
             }
         }
         albumReloadKey += 1
@@ -370,13 +370,9 @@ fun GalleryScreen(
             viewerIndex = viewerIndex.coerceIn(0, remaining.lastIndex)
             toastKey += 1
             toastMessage = if (deletedUris.size == 1) {
-                context.getString(R.string.deleted)
+                UiText.Res(R.string.deleted)
             } else {
-                context.resources.getQuantityString(
-                    R.plurals.deleted_items,
-                    deletedUris.size,
-                    deletedUris.size,
-                )
+                UiText.Qty(R.plurals.deleted_items, deletedUris.size)
             }
         }
         albumReloadKey += 1
@@ -464,7 +460,7 @@ fun GalleryScreen(
             undoItems = null
             reload()
             toastKey += 1
-            toastMessage = context.getString(R.string.restored)
+            toastMessage = UiText.Res(R.string.restored)
         }
     }
 
@@ -496,7 +492,7 @@ fun GalleryScreen(
             )
         } else {
             toastKey += 1
-            toastMessage = context.getString(R.string.error_delete)
+            toastMessage = UiText.Res(R.string.error_delete)
         }
     }
 
@@ -516,7 +512,7 @@ fun GalleryScreen(
                     val isSafItem = android.provider.DocumentsContract.isDocumentUri(context, item.uri)
                     if (isSafItem) {
                         toastKey += 1
-                        toastMessage = context.getString(R.string.error_delete)
+                        toastMessage = UiText.Res(R.string.error_delete)
                     } else {
                         requestConsent(listOf(item))
                     }
@@ -596,7 +592,7 @@ fun GalleryScreen(
     // ── Copy / Move ────────────────────────────────────────────────────────
     var pendingCopy by remember { mutableStateOf<List<MediaItem>?>(null) }
     var pendingMove by remember { mutableStateOf<List<MediaItem>?>(null) }
-    var busyMessage by remember { mutableStateOf<String?>(null) }
+    var busyMessage by remember { mutableStateOf<UiText?>(null) }
     val transferScope = rememberCoroutineScope()
 
     // Shared: pick a destination tree, then run the transfer in the background.
@@ -618,36 +614,24 @@ fun GalleryScreen(
         if (toCopy != null && toCopy.isNotEmpty()) {
             val items = toCopy
             val count = items.size
-            busyMessage = context.resources.getQuantityString(
-                R.plurals.copying_items,
-                count,
-                count,
-            )
+            busyMessage = UiText.Qty(R.plurals.copying_items, count)
             transferScope.launch {
                 val done = MediaRepository.copyTo(context, items, uri)
                 busyMessage = null
                 clearSelection()
                 if (done > 0) {
                     toastKey += 1
-                    toastMessage = context.resources.getQuantityString(
-                        R.plurals.copied_items,
-                        done,
-                        done,
-                    )
+                    toastMessage = UiText.Qty(R.plurals.copied_items, done)
                     reload()
                 } else {
                     toastKey += 1
-                    toastMessage = context.getString(R.string.error_copy)
+                    toastMessage = UiText.Res(R.string.error_copy)
                 }
             }
         } else if (toMove != null && toMove.isNotEmpty()) {
             val items = toMove
             val count = items.size
-            busyMessage = context.resources.getQuantityString(
-                R.plurals.moving_items,
-                count,
-                count,
-            )
+            busyMessage = UiText.Qty(R.plurals.moving_items, count)
             transferScope.launch {
                 val result = MediaRepository.moveTo(context, items, uri)
                 busyMessage = null
@@ -655,26 +639,21 @@ fun GalleryScreen(
                 when {
                     result.total == 0 -> {
                         toastKey += 1
-                        toastMessage = context.getString(R.string.error_move)
+                        toastMessage = UiText.Res(R.string.error_move)
                     }
                     result.copiedOnly > 0 -> {
                         // Copied, but the source couldn't be removed (system
                         // consent needed), so the user now has a duplicate.
                         toastKey += 1
-                        toastMessage = context.getString(
+                        toastMessage = UiText.Res(
                             R.string.moved_partial,
-                            result.moved,
-                            result.copiedOnly,
+                            listOf(result.moved, result.copiedOnly),
                         )
                         reload()
                     }
                     else -> {
                         toastKey += 1
-                        toastMessage = context.resources.getQuantityString(
-                            R.plurals.moved_items,
-                            result.moved,
-                            result.moved,
-                        )
+                        toastMessage = UiText.Qty(R.plurals.moved_items, result.moved)
                         reload()
                     }
                 }
@@ -747,7 +726,7 @@ fun GalleryScreen(
 
     val showComingSoonToast = {
         toastKey += 1
-        toastMessage = context.getString(R.string.coming_soon)
+        toastMessage = UiText.Res(R.string.coming_soon)
     }
 
     // The root Albums grid stays composed underneath the album, so when the album
@@ -933,7 +912,7 @@ fun GalleryScreen(
         }
 
         toastMessage?.let { message ->
-            Toast(message = message, key = toastKey, onDismiss = { toastMessage = null })
+            Toast(message = message.resolve(), key = toastKey, onDismiss = { toastMessage = null })
         }
 
         if (undoItems != null) {
@@ -945,7 +924,7 @@ fun GalleryScreen(
         }
 
         busyMessage?.let { message ->
-            BusyOverlay(message = message)
+            BusyOverlay(message = message.resolve())
         }
 
         // Floating pill overlay, centered below the app bar (in safe area).
@@ -1001,7 +980,7 @@ private fun MainGalleryGrid(
                 }
                 Spacer(Modifier.width(4.dp))
                 Text(
-                    text = stringResource(R.string.selection_count, selection.size),
+                    text = pluralStringResource(R.plurals.selection_count, selection.size, selection.size),
                     color = TextPrimary,
                     fontSize = 16.sp,
                     fontWeight = FontWeight.SemiBold,
@@ -1279,7 +1258,7 @@ private fun AlbumGrid(
                     }
                     Spacer(Modifier.width(4.dp))
                     Text(
-                        text = stringResource(R.string.selection_count, selection.selected.size),
+                        text = pluralStringResource(R.plurals.selection_count, selection.selected.size, selection.selected.size),
                         color = TextPrimary,
                         fontSize = 16.sp,
                         fontWeight = FontWeight.SemiBold,
