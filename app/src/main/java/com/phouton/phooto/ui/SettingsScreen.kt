@@ -115,6 +115,11 @@ private fun SettingsRoot(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val appVersion = remember {
+        runCatching {
+            context.packageManager.getPackageInfo(context.packageName, 0).versionName
+        }.getOrNull() ?: "1.0"
+    }
     var cacheBytes by remember { mutableStateOf<Long?>(null) }
     var clearing by remember { mutableStateOf(false) }
     var showClearConfirm by remember { mutableStateOf(false) }
@@ -231,6 +236,18 @@ private fun SettingsRoot(
                         showChevron = !clearing,
                         loading = clearing,
                         onClick = { showClearConfirm = true },
+                    )
+                }
+            }
+            // ── About ────────────────────────────────────────────────
+            item { SettingsSectionHeader(title = "About", topPadding = 16.dp) }
+            item {
+                SettingsGroup {
+                    SettingsActionRow(
+                        title = "Phooto",
+                        subtitle = "Version $appVersion",
+                        showChevron = false,
+                        onClick = {},
                     )
                 }
             }
