@@ -21,6 +21,16 @@ data class MediaInfo(
     val dateAdded: Long,
 )
 
+/** Outcome of a [MediaRepository.delete] attempt. */
+sealed interface DeleteResult {
+    /** The item was deleted. */
+    data object Deleted : DeleteResult
+    /** The system requires explicit user consent: launch [intentSender]. */
+    data class Consent(val intentSender: android.content.IntentSender) : DeleteResult
+    /** Nothing was deleted and there is no consent path (e.g. SAF read-only). */
+    data object Failed : DeleteResult
+}
+
 /**
  * MediaStore's `createDeleteRequest`/`createTrashRequest` only accept URIs from the
  * item-specific collections (Images/Video/Audio), not the generic `Files` collection.
@@ -517,24 +527,31 @@ object MediaRepository {
         }
 
     /** Removes the media item from the gallery. */
-    suspend fun delete(context: Context, item: MediaItem): Boolean =
+    suspend fun delete(context: Context, item: MediaItem): DeleteResult =
         withContext(Dispatchers.IO) {
             try {
                 if (DocumentsContract.isDocumentUri(context, item.uri)) {
                     // SAF item: delete through the document provider (needs write grant).
-                    DocumentsContract.deleteDocument(
-                        context.contentResolver,
-                        item.uri,
-                    )
+                    if (DocumentsContract.deleteDocument(context.contentResolver, item.uri)) {
+                        DeleteResult.Deleted
+                    } else {
+                        DeleteResult.Failed
+                    }
                 } else {
-                    context.contentResolver.delete(
-                        item.uri,
-                        null,
-                        null,
-                    ) > 0
+                    if (context.contentResolver.delete(item.uri, null, null) > 0) {
+                        DeleteResult.Deleted
+                    } else {
+                        DeleteResult.Failed
+                    }
                 }
+            } catch (e: android.app.RecoverableSecurityException) {
+                // API 29: the provider hands back the exact consent intent to launch.
+                DeleteResult.Consent(e.userAction.actionIntent.intentSender)
+            } catch (e: SecurityException) {
+                // API 30+: consent is obtained via MediaStore.createDeleteRequest.
+                DeleteResult.Failed
             } catch (e: Exception) {
-                false
+                DeleteResult.Failed
             }
         }
 
