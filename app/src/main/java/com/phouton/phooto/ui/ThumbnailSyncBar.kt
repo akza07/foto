@@ -27,9 +27,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.phouton.phooto.R
 import com.phouton.phooto.data.thumbnails.ThumbCache
 import com.phouton.phooto.ui.theme.Border
 import com.phouton.phooto.ui.theme.Surface as ThemeSurface
@@ -85,14 +87,14 @@ fun ThumbnailSyncBar(modifier: Modifier = Modifier) {
                 }
                 Spacer(Modifier.width(10.dp))
                 Text(
-                    text = "Caching previews \u00B7 ${(progress.fraction * 100).toInt()}%",
+                    text = stringResource(R.string.caching_previews, (progress.fraction * 100).toInt()),
                     color = TextPrimary,
                     fontSize = 13.sp,
                     fontWeight = FontWeight.Medium,
                 )
                 Spacer(Modifier.width(8.dp))
                 Text(
-                    text = "${progress.done}/${progress.total}",
+                    text = stringResource(R.string.caching_progress_count, progress.done, progress.total),
                     color = TextMuted,
                     fontSize = 12.sp,
                 )

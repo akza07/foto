@@ -13,7 +13,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import com.phouton.phooto.R
 
 /**
  * Prominent circular ▶ badge for video tiles.
@@ -31,7 +33,7 @@ fun VideoBadge(modifier: Modifier = Modifier) {
     ) {
         Icon(
             imageVector = Icons.Filled.PlayArrow,
-            contentDescription = "Video",
+            contentDescription = stringResource(R.string.video_badge),
             tint = Color.White,
             modifier = Modifier.size(18.dp),
         )

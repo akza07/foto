@@ -27,6 +27,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.liveRegion
@@ -34,6 +35,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.phouton.phooto.R
 import com.phouton.phooto.ui.theme.AmoledBlack
 import com.phouton.phooto.ui.theme.Surface as SurfaceColor
 import com.phouton.phooto.ui.theme.TextPrimary
@@ -121,14 +123,14 @@ internal fun UndoBar(key: Int, onUndo: () -> Unit, onDismiss: () -> Unit) {
                     horizontalArrangement = Arrangement.spacedBy(4.dp),
                 ) {
                     Text(
-                        text = "Moved to trash",
+                        text = stringResource(R.string.undo_moved_to_trash),
                         color = AmoledBlack,
                         fontSize = 14.sp,
                         fontWeight = FontWeight.Medium,
                         modifier = Modifier.padding(start = 20.dp),
                     )
                     Text(
-                        text = "Undo",
+                        text = stringResource(R.string.action_undo),
                         color = AmoledBlack,
                         fontSize = 14.sp,
                         fontWeight = FontWeight.Bold,
