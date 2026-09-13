@@ -15,8 +15,8 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.tooling.preview.Preview
+import com.phouton.phooto.data.GalleryEvents
 import com.phouton.phooto.data.SettingsRepository
-import com.phouton.phooto.data.thumbnails.ExternalReloadSink
 import com.phouton.phooto.data.thumbnails.SyncCoordinator
 import com.phouton.phooto.data.thumbnails.ThumbCache
 import com.phouton.phooto.ui.GalleryScreen
@@ -77,10 +77,10 @@ class MainActivity : ComponentActivity() {
         }
 
         // Observe MediaStore so we can reconcile the thumbnail cache when files
-        // are added or removed. The actual reload is plumbed by GalleryScreen
-        // registering its `reload` lambda on ExternalReloadSink when composed.
+        // are added or removed. The debounced signal is emitted through
+        // GalleryEvents and collected by the composed gallery.
         syncCoordinator = SyncCoordinator(onChange = {
-            ExternalReloadSink.current?.invoke()
+            GalleryEvents.requestReload()
         })
         syncCoordinator.start(this)
     }

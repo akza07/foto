@@ -51,10 +51,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.phouton.phooto.data.AppSettings
+import com.phouton.phooto.data.GalleryEvents
 import com.phouton.phooto.data.GridSize
 import com.phouton.phooto.data.MediaSort
 import com.phouton.phooto.data.SettingsRepository
-import com.phouton.phooto.data.thumbnails.ExternalReloadSink
 import com.phouton.phooto.data.thumbnails.ThumbCache
 import com.phouton.phooto.data.thumbnails.VideoFrameCache
 import com.phouton.phooto.ui.theme.AmoledBlack
@@ -265,7 +265,7 @@ private fun SettingsRoot(
                     clearing = false
                     cacheBytes = 0L
                     // Ask gallery to reload so progress bar reappears and tiles re-decode.
-                    ExternalReloadSink.current?.invoke()
+                    GalleryEvents.requestReload()
                     onSettingsChanged()
                 }
             },

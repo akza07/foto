@@ -101,6 +101,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import com.phouton.phooto.data.GalleryContent
 import com.phouton.phooto.data.DeleteResult
+import com.phouton.phooto.data.GalleryEvents
 import com.phouton.phooto.data.MediaFolder
 import com.phouton.phooto.data.MediaInfo
 import com.phouton.phooto.data.MediaItem
@@ -108,7 +109,6 @@ import com.phouton.phooto.data.MediaRepository
 import com.phouton.phooto.data.isAnimatedImage
 import com.phouton.phooto.data.SettingsRepository
 import com.phouton.phooto.data.mediaCollectionUri
-import com.phouton.phooto.data.thumbnails.ExternalReloadSink
 import com.phouton.phooto.data.thumbnails.ThumbCache
 import com.phouton.phooto.ui.theme.AmoledBlack
 import com.phouton.phooto.ui.theme.Border
@@ -451,15 +451,11 @@ fun GalleryScreen(
 
     val reload = { reloadKey += 1 }
 
-    // Surface the reload callback to MainActivity so its MediaStore observer
-    // (debounced inside SyncCoordinator) can trigger gallery refreshes.
-    DisposableEffect(Unit) {
-        ExternalReloadSink.current = reload
-        onDispose {
-            if (ExternalReloadSink.current === reload) {
-                ExternalReloadSink.current = null
-            }
-        }
+    // Surface MediaStore changes so the gallery reloads when files
+    // appear or disappear. MainActivity's SyncCoordinator (debounced) emits;
+    // the composed gallery collects.
+    LaunchedEffect(Unit) {
+        GalleryEvents.reload.collect { reload() }
     }
 
     // Pre-warm the thumbnail cache for everything currently in the gallery.
