@@ -55,6 +55,7 @@ import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.DriveFileMove
 import androidx.compose.material.icons.outlined.SelectAll
+import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material3.CircularProgressIndicator
@@ -432,6 +433,10 @@ fun GalleryScreen(
     var showSettings by remember { mutableStateOf(false) }
     var reloadKey by remember { mutableStateOf(0) }
     var selection by remember { mutableStateOf<SelectionState>(SelectionState()) }
+    var showSearch by remember { mutableStateOf(false) }
+    // Full library (folders + loose), used for name search. Populated by the
+    // same pass that warms the thumbnail cache.
+    var allItems by remember { mutableStateOf<List<MediaItem>>(emptyList()) }
 
     LaunchedEffect(reloadKey) {
         content = MediaRepository.load(context)
@@ -464,10 +469,9 @@ fun GalleryScreen(
         snapshot.looseItems.forEach { item -> ThumbCache.enqueueIfMissing(item) }
 
         // AoT warm every item in every folder (deduped, chunked, capped).
-        val allItems = MediaRepository.loadAllItems(context, snapshot)
-            .distinctBy { it.uri }
-            .take(CACHE_WARM_CAP)
-        ThumbCache.enqueueAllIfMissing(allItems)
+        val loaded = MediaRepository.loadAllItems(context, snapshot).distinctBy { it.uri }
+        allItems = loaded
+        ThumbCache.enqueueAllIfMissing(loaded.take(CACHE_WARM_CAP))
     }
 
     val doClose = {
@@ -563,9 +567,11 @@ fun GalleryScreen(
     // BackHandler so system back runs the animated scale-out instead of removing
     // the viewer in a single frame.
     BackHandler(
-        enabled = isSelecting || openFolder != null || showSettings,
+        enabled = isSelecting || openFolder != null || showSettings || showSearch,
         onBack = {
-            if (isSelecting) {
+            if (showSearch) {
+                showSearch = false
+            } else if (isSelecting) {
                 clearSelection()
             } else if (showSettings) {
                 showSettings = false
@@ -998,6 +1004,7 @@ fun GalleryScreen(
             },
             onItemClick = { list, index, rect -> openViewer(list, index, rect) },
             onSettingsClick = { showSettings = true },
+            onSearchClick = { showSearch = true },
             selection = selection,
             onToggleSelect = toggleSelect,
             onLongSelect = toggleSelect,
@@ -1026,6 +1033,18 @@ fun GalleryScreen(
             SettingsScreen(
                 onBack = { showSettings = false },
                 onSettingsChanged = reload,
+            )
+        }
+
+        AnimatedVisibility(
+            visible = showSearch,
+            enter = slideInHorizontally(initialOffsetX = { it }) + fadeIn(),
+            exit = slideOutHorizontally(targetOffsetX = { it }) + fadeOut(),
+        ) {
+            SearchScreen(
+                items = allItems,
+                onBack = { showSearch = false },
+                onItemClick = { list, index, rect -> openViewer(list, index, rect) },
             )
         }
 
@@ -1173,6 +1192,7 @@ private fun MainGalleryGrid(
     onFolderClick: (MediaFolder, Rect) -> Unit,
     onItemClick: (List<MediaItem>, Int, Rect) -> Unit,
     onSettingsClick: () -> Unit,
+    onSearchClick: () -> Unit,
     selection: SelectionState,
     onToggleSelect: (MediaItem) -> Unit,
     onLongSelect: (MediaItem) -> Unit,
@@ -1228,6 +1248,14 @@ private fun MainGalleryGrid(
                     letterSpacing = (-0.5).sp,
                     modifier = Modifier.weight(1f),
                 )
+                IconButton(onClick = onSearchClick) {
+                    Icon(
+                        imageVector = Icons.Outlined.Search,
+                        contentDescription = "Search",
+                        tint = TextPrimary,
+                        modifier = Modifier.width(24.dp),
+                    )
+                }
                 IconButton(onClick = onSettingsClick) {
                     Icon(
                         imageVector = Icons.Outlined.Settings,
@@ -1636,7 +1664,7 @@ private fun FolderStack(previews: List<Uri>, modifier: Modifier = Modifier) {
 }
 
 @Composable
-private fun ImageTile(
+internal fun ImageTile(
     item: MediaItem,
     onClick: (Rect) -> Unit,
     selection: SelectionState = SelectionState(),
