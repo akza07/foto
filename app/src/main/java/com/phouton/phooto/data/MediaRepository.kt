@@ -3,6 +3,7 @@ package com.phouton.phooto.data
 import android.content.ContentUris
 import android.content.Context
 import android.net.Uri
+import android.os.Build
 import android.provider.DocumentsContract
 import android.provider.MediaStore
 import kotlinx.coroutines.Dispatchers
@@ -55,6 +56,33 @@ fun mediaCollectionUri(isVideo: Boolean, id: Long): Uri {
         MediaStore.Images.Media.EXTERNAL_CONTENT_URI
     }
     return ContentUris.withAppendedId(collection, id)
+}
+
+/**
+ * Consent sender that moves [items] to the system trash (API 30+). Trashed items
+ * can be restored by the user (or in-app via [restoreConsentSender] on API 31+).
+ * Returns null on older API levels or if the request can't be built.
+ */
+fun trashConsentSender(context: Context, items: List<MediaItem>): android.content.IntentSender? {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return null
+    return runCatching {
+        MediaStore.createTrashRequest(
+            context.contentResolver,
+            items.filter { it.id != 0L }.map { mediaCollectionUri(it.isVideo, it.id) },
+            true,
+        ).intentSender
+    }.getOrNull()
+}
+
+/** Consent sender that restores [items] from the trash (API 30+), or null. */
+fun restoreConsentSender(context: Context, items: List<MediaItem>): android.content.IntentSender? {
+    val uris = items.filter { it.id != 0L }.map { mediaCollectionUri(it.isVideo, it.id) }
+    if (uris.isEmpty()) return null
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return null
+    return runCatching {
+        // createTrashRequest with isTrash = false is the restore operation.
+        MediaStore.createTrashRequest(context.contentResolver, uris, false).intentSender
+    }.getOrNull()
 }
 
 /**
@@ -758,12 +786,19 @@ object MediaRepository {
     ): List<MediaItem> {
         val collection = MediaStore.Files.getContentUri("external")
         val sortOrder = "${MediaStore.Files.FileColumns.DATE_ADDED} DESC"
+        // Trashed items (API 30+) must not reappear in the gallery after a
+        // "move to trash"; they are still MediaStore rows until purged.
+        val effectiveSelection = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            "($selection) AND (${MediaStore.MediaColumns.IS_TRASHED} = 0)"
+        } else {
+            selection
+        }
 
         val items = mutableListOf<MediaItem>()
         context.contentResolver.query(
             collection,
             MediaProjection,
-            selection,
+            effectiveSelection,
             selectionArgs,
             sortOrder,
         )?.use { cursor ->

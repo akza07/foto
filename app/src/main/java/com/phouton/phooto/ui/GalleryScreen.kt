@@ -633,6 +633,11 @@ fun GalleryScreen(
     // True when the in-flight consent intent covers every entry of
     // [pendingConsent] (API 30+ batch); false for API 29's per-item flow.
     var consentCoversAll by remember { mutableStateOf(false) }
+    // True when the in-flight consent is a trash (API 30+) rather than a delete.
+    var consentIsTrash by remember { mutableStateOf(false) }
+    // Items moved to the trash that can still be restored (API 31+).
+    var undoItems by remember { mutableStateOf<List<MediaItem>?>(null) }
+    var undoKey by remember { mutableStateOf(0) }
     // Sentinel consumed by the LaunchedEffect below to launch the next API 29
     // consent dialog without the launcher referencing itself.
     var nextConsentLaunch by remember { mutableStateOf<androidx.activity.result.IntentSenderRequest?>(null) }
@@ -647,10 +652,15 @@ fun GalleryScreen(
             return@rememberLauncherForActivityResult
         }
         if (consentCoversAll) {
-            // One dialog covered the whole batch: everything was deleted.
+            // One dialog covered the whole batch: everything was deleted/trashed.
             removeDeletedBatch(queue.map { it.uri }.toSet())
             pendingConsent = emptyList()
             clearSelection()
+            if (consentIsTrash) {
+                undoKey += 1
+                undoItems = queue
+                consentIsTrash = false
+            }
         } else {
             removeDeletedBatch(setOf(head.uri))
             val rest = queue.drop(1)
@@ -680,17 +690,44 @@ fun GalleryScreen(
         }
     }
 
-    // API 30+ consent path: a single system dialog for a list of MediaStore items.
+    // Restores trashed items (API 31+); the system shows its own confirmation.
+    var pendingRestore by remember { mutableStateOf<List<MediaItem>>(emptyList()) }
+    val restoreLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartIntentSenderForResult()
+    ) { result ->
+        val items = pendingRestore
+        pendingRestore = emptyList()
+        if (result.resultCode == android.app.Activity.RESULT_OK && items.isNotEmpty()) {
+            undoItems = null
+            reload()
+            toastKey += 1
+            toastMessage = "Restored"
+        }
+    }
+
+    val undoTrash: () -> Unit = {
+        val items = undoItems
+        if (items != null) {
+            val sender = com.phouton.phooto.data.restoreConsentSender(context, items)
+            if (sender != null) {
+                pendingRestore = items
+                restoreLauncher.launch(
+                    androidx.activity.result.IntentSenderRequest.Builder(sender).build(),
+                )
+            } else {
+                undoItems = null
+            }
+        }
+    }
+
+    // API 30+ consent path: a single system dialog that moves the item(s) to the
+    // system trash, so the action is non-destructive and (API 31+) undoable.
     val requestConsent: (List<MediaItem>) -> Unit = { items ->
-        val sender = runCatching {
-            MediaStore.createDeleteRequest(
-                context.contentResolver,
-                items.map { mediaCollectionUri(it.isVideo, it.id) },
-            ).intentSender
-        }.getOrNull()
+        val sender = com.phouton.phooto.data.trashConsentSender(context, items)
         if (sender != null) {
             pendingConsent = items
             consentCoversAll = true
+            consentIsTrash = true
             consentLauncher.launch(
                 androidx.activity.result.IntentSenderRequest.Builder(sender).build(),
             )
@@ -1086,6 +1123,14 @@ fun GalleryScreen(
 
         toastMessage?.let { message ->
             Toast(message = message, key = toastKey, onDismiss = { toastMessage = null })
+        }
+
+        if (undoItems != null) {
+            UndoBar(
+                key = undoKey,
+                onUndo = undoTrash,
+                onDismiss = { undoItems = null },
+            )
         }
 
         busyMessage?.let { message ->
@@ -2027,6 +2072,67 @@ private fun Toast(message: String, key: Int, onDismiss: () -> Unit) {
 }
 
 private val DeleteRed = Color(0xFFEF4444)
+
+/**
+ * Undo bar shown after items are moved to the system trash. Sits where the toast
+ * would and offers a single "Undo" action (restore) before auto-dismissing.
+ */
+@Composable
+private fun UndoBar(key: Int, onUndo: () -> Unit, onDismiss: () -> Unit) {
+    var visible by remember { mutableStateOf(false) }
+
+    LaunchedEffect(key) {
+        visible = true
+        delay(4000)
+        onDismiss()
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(bottom = 96.dp),
+        contentAlignment = Alignment.BottomCenter,
+    ) {
+        AnimatedVisibility(
+            visible = visible,
+            enter = fadeIn() + slideInVertically(initialOffsetY = { it / 2 }),
+            exit = fadeOut() + slideOutVertically(targetOffsetY = { it / 2 }),
+        ) {
+            Surface(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(50))
+                    .padding(bottom = 8.dp),
+                shape = RoundedCornerShape(50),
+                color = TextPrimary,
+                shadowElevation = 8.dp,
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    Text(
+                        text = "Moved to trash",
+                        color = AmoledBlack,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Medium,
+                        modifier = Modifier.padding(start = 20.dp),
+                    )
+                    Text(
+                        text = "Undo",
+                        color = AmoledBlack,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(50))
+                            .clickable(onClick = onUndo)
+                            .padding(horizontal = 12.dp, vertical = 10.dp),
+                    )
+                    Spacer(Modifier.width(8.dp))
+                }
+            }
+        }
+    }
+}
 
 /** Shadcn-style delete confirmation modal with a red-accented confirm button. */
 @Composable
