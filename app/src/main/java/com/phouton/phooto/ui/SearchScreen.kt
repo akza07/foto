@@ -45,6 +45,7 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.phouton.phooto.data.MediaItem
@@ -64,6 +65,7 @@ fun SearchScreen(
     items: List<MediaItem>,
     onBack: () -> Unit,
     onItemClick: (List<MediaItem>, Int, Rect) -> Unit,
+    minTileSize: Dp = 112.dp,
 ) {
     var query by remember { mutableStateOf("") }
     val focusRequester = remember { FocusRequester() }
@@ -162,7 +164,7 @@ fun SearchScreen(
             }
             else -> {
                 LazyVerticalGrid(
-                    columns = GridCells.Adaptive(minSize = 112.dp),
+                    columns = GridCells.Adaptive(minSize = minTileSize),
                     modifier = Modifier
                         .fillMaxSize()
                         .navigationBarsPadding(),

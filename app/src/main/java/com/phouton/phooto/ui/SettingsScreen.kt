@@ -51,6 +51,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.phouton.phooto.data.AppSettings
+import com.phouton.phooto.data.GridSize
 import com.phouton.phooto.data.MediaSort
 import com.phouton.phooto.data.SettingsRepository
 import com.phouton.phooto.data.thumbnails.ExternalReloadSink
@@ -118,6 +119,7 @@ private fun SettingsRoot(
     var clearing by remember { mutableStateOf(false) }
     var showClearConfirm by remember { mutableStateOf(false) }
     var showSortDialog by remember { mutableStateOf(false) }
+    var showGridDialog by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
         cacheBytes = with(Dispatchers.IO) { ThumbCache.totalCacheBytes() }
@@ -153,6 +155,13 @@ private fun SettingsRoot(
                         subtitle = "How media and folders are ordered.",
                         trailingText = settings.sortOrder.label,
                         onClick = { showSortDialog = true },
+                    )
+                    SettingsDivider()
+                    SettingsActionRow(
+                        title = "Grid size",
+                        subtitle = "Thumbnail density in the grid.",
+                        trailingText = settings.gridSize.label,
+                        onClick = { showGridDialog = true },
                     )
                 }
             }
@@ -248,8 +257,11 @@ private fun SettingsRoot(
     }
 
     if (showSortDialog) {
-        SortOrderDialog(
+        OptionPickerDialog(
+            title = "Sort order",
+            options = MediaSort.entries,
             current = settings.sortOrder,
+            label = { it.label },
             onSelect = { order ->
                 showSortDialog = false
                 SettingsRepository.setSortOrder(order)
@@ -258,12 +270,30 @@ private fun SettingsRoot(
             onDismiss = { showSortDialog = false },
         )
     }
+
+    if (showGridDialog) {
+        OptionPickerDialog(
+            title = "Grid size",
+            options = GridSize.entries,
+            current = settings.gridSize,
+            label = { it.label },
+            onSelect = { size ->
+                showGridDialog = false
+                SettingsRepository.setGridSize(size)
+            },
+            onDismiss = { showGridDialog = false },
+        )
+    }
 }
 
+/** Simple single-choice dialog reused by the sort-order and grid-size rows. */
 @Composable
-private fun SortOrderDialog(
-    current: MediaSort,
-    onSelect: (MediaSort) -> Unit,
+private fun <T> OptionPickerDialog(
+    title: String,
+    options: List<T>,
+    current: T,
+    label: (T) -> String,
+    onSelect: (T) -> Unit,
     onDismiss: () -> Unit,
 ) {
     Box(
@@ -283,13 +313,13 @@ private fun SortOrderDialog(
         ) {
             Column(modifier = Modifier.padding(20.dp)) {
                 Text(
-                    text = "Sort order",
+                    text = title,
                     color = TextPrimary,
                     fontSize = 18.sp,
                     fontWeight = FontWeight.SemiBold,
                 )
                 Spacer(Modifier.height(8.dp))
-                MediaSort.entries.forEach { option ->
+                options.forEach { option ->
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -299,7 +329,7 @@ private fun SortOrderDialog(
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Text(
-                            text = option.label,
+                            text = label(option),
                             color = if (option == current) TextPrimary else TextMuted,
                             fontSize = 15.sp,
                             fontWeight = if (option == current) FontWeight.SemiBold else FontWeight.Normal,

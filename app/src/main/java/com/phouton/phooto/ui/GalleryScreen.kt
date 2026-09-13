@@ -90,6 +90,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
@@ -1005,6 +1006,7 @@ fun GalleryScreen(
             onItemClick = { list, index, rect -> openViewer(list, index, rect) },
             onSettingsClick = { showSettings = true },
             onSearchClick = { showSearch = true },
+            minTileSize = appSettings.gridSize.minTileDp.dp,
             selection = selection,
             onToggleSelect = toggleSelect,
             onLongSelect = toggleSelect,
@@ -1045,6 +1047,7 @@ fun GalleryScreen(
                 items = allItems,
                 onBack = { showSearch = false },
                 onItemClick = { list, index, rect -> openViewer(list, index, rect) },
+                minTileSize = appSettings.gridSize.minTileDp.dp,
             )
         }
 
@@ -1057,6 +1060,7 @@ fun GalleryScreen(
                 onBack = closeFolder,
                 onItemClick = { list, index, rect -> openViewer(list, index, rect) },
                 reloadKey = albumReloadKey,
+                minTileSize = appSettings.gridSize.minTileDp.dp,
                 selection = selection,
                 onToggleSelect = toggleSelect,
                 onLongSelect = toggleSelect,
@@ -1193,6 +1197,7 @@ private fun MainGalleryGrid(
     onItemClick: (List<MediaItem>, Int, Rect) -> Unit,
     onSettingsClick: () -> Unit,
     onSearchClick: () -> Unit,
+    minTileSize: Dp,
     selection: SelectionState,
     onToggleSelect: (MediaItem) -> Unit,
     onLongSelect: (MediaItem) -> Unit,
@@ -1292,7 +1297,7 @@ private fun MainGalleryGrid(
             }
             else -> {
                 LazyVerticalGrid(
-                    columns = GridCells.Adaptive(minSize = 112.dp),
+                    columns = GridCells.Adaptive(minSize = minTileSize),
                     modifier = Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(
                         start = 12.dp,
@@ -1342,6 +1347,7 @@ private fun AlbumGrid(
     onBack: () -> Unit,
     onItemClick: (List<MediaItem>, Int, Rect) -> Unit,
     reloadKey: Int,
+    minTileSize: Dp,
     selection: SelectionState,
     onToggleSelect: (MediaItem) -> Unit,
     onLongSelect: (MediaItem) -> Unit,
@@ -1411,7 +1417,7 @@ private fun AlbumGrid(
                 }
             } else {
                 LazyVerticalGrid(
-                    columns = GridCells.Adaptive(minSize = 112.dp),
+                    columns = GridCells.Adaptive(minSize = minTileSize),
                     modifier = Modifier
                         .fillMaxSize()
                         .hazeSource(state = hazeState),

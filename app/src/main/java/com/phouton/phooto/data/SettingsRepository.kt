@@ -14,6 +14,13 @@ enum class MediaSort(val label: String) {
     NAME_DESC("Name (Z–A)"),
 }
 
+/** Thumbnail grid density: the minimum tile width in dp. */
+enum class GridSize(val label: String, val minTileDp: Int) {
+    SMALL("Small", 88),
+    MEDIUM("Medium", 112),
+    LARGE("Large", 144),
+}
+
 data class AppSettings(
     val respectNoMedia: Boolean = true,
     val requireExplicit: Boolean = false,
@@ -22,6 +29,7 @@ data class AppSettings(
     val confirmBeforeDelete: Boolean = true,
     val loopVideos: Boolean = false,
     val sortOrder: MediaSort = MediaSort.DATE_NEWEST,
+    val gridSize: GridSize = GridSize.MEDIUM,
 )
 
 object SettingsRepository {
@@ -33,6 +41,7 @@ object SettingsRepository {
     private const val KEY_CONFIRM_BEFORE_DELETE = "confirm_before_delete"
     private const val KEY_LOOP_VIDEOS = "loop_videos"
     private const val KEY_SORT_ORDER = "sort_order"
+    private const val KEY_GRID_SIZE = "grid_size"
 
     private val _settings = MutableStateFlow(AppSettings())
     val settings: StateFlow<AppSettings> = _settings.asStateFlow()
@@ -53,6 +62,9 @@ object SettingsRepository {
             sortOrder = runCatching {
                 MediaSort.valueOf(prefs.getString(KEY_SORT_ORDER, null) ?: MediaSort.DATE_NEWEST.name)
             }.getOrDefault(MediaSort.DATE_NEWEST),
+            gridSize = runCatching {
+                GridSize.valueOf(prefs.getString(KEY_GRID_SIZE, null) ?: GridSize.MEDIUM.name)
+            }.getOrDefault(GridSize.MEDIUM),
         )
     }
 
@@ -84,6 +96,11 @@ object SettingsRepository {
     fun setSortOrder(value: MediaSort) {
         prefs.edit().putString(KEY_SORT_ORDER, value.name).apply()
         _settings.value = _settings.value.copy(sortOrder = value)
+    }
+
+    fun setGridSize(value: GridSize) {
+        prefs.edit().putString(KEY_GRID_SIZE, value.name).apply()
+        _settings.value = _settings.value.copy(gridSize = value)
     }
 
     fun addTreeUri(uri: String) {
