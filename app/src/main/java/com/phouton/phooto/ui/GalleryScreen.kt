@@ -123,8 +123,6 @@ import androidx.activity.result.contract.ActivityResultContracts
 import android.content.Intent
 import coil3.compose.AsyncImage
 import coil3.compose.AsyncImagePainter
-import coil3.compose.SubcomposeAsyncImage
-import coil3.compose.SubcomposeAsyncImageContent
 import dev.chrisbanes.haze.HazeStyle
 import dev.chrisbanes.haze.HazeTint
 import dev.chrisbanes.haze.hazeEffect
@@ -1682,7 +1680,9 @@ internal fun ImageTile(
     onToggleSelect: (MediaItem) -> Unit = {},
     onLongSelect: (MediaItem) -> Unit = {},
 ) {
-    var tileRect by remember { mutableStateOf(Rect.Zero) }
+    // Layout coordinates are kept in a non-observable holder: writing window
+    // bounds into state would recompose every tile on every scroll frame.
+    val coordsRef = remember { arrayOfNulls<androidx.compose.ui.layout.LayoutCoordinates>(1) }
     val isSelecting = selection.active
     val isSelected = item in selection.selected
     val haptics = LocalHapticFeedback.current
@@ -1693,7 +1693,7 @@ internal fun ImageTile(
             .aspectRatio(1f)
             .clip(TileShape)
             .background(SurfaceColor)
-            .onGloballyPositioned { tileRect = it.boundsInWindow() }
+            .onGloballyPositioned { coordsRef[0] = it }
             .semantics {
                 contentDescription = buildString {
                     append(item.displayName ?: if (item.isVideo) "Video" else "Photo")
@@ -1712,7 +1712,7 @@ internal fun ImageTile(
                     Modifier.combinedClickable(
                         interactionSource = remember { MutableInteractionSource() },
                         indication = null,
-                        onClick = { onClick(tileRect) },
+                        onClick = { onClick(coordsRef[0]?.boundsInWindow() ?: Rect.Zero) },
                         onLongClick = {
                             haptics.performHapticFeedback(HapticFeedbackType.LongPress)
                             onLongSelect(item)
@@ -1810,18 +1810,17 @@ private fun Thumb(uri: Uri, modifier: Modifier = Modifier) {
         )
         return
     }
-    SubcomposeAsyncImage(
-        model = uri,
-        contentDescription = null,
-        contentScale = ContentScale.Crop,
-        modifier = modifier,
-    ) {
-        val state by painter.state.collectAsState()
-        when (val s = state) {
-            is AsyncImagePainter.State.Success -> SubcomposeAsyncImageContent()
-            is AsyncImagePainter.State.Error -> EmptyPreview()
-            else -> SkeletonShimmer()
-        }
+    val painter = coil3.compose.rememberAsyncImagePainter(model = uri)
+    val state by painter.state.collectAsState()
+    when (state) {
+        is AsyncImagePainter.State.Success -> Image(
+            painter = painter,
+            contentDescription = null,
+            contentScale = ContentScale.Crop,
+            modifier = modifier,
+        )
+        is AsyncImagePainter.State.Error -> EmptyPreview(modifier = modifier)
+        else -> SkeletonShimmer(modifier = modifier)
     }
 }
 
@@ -1864,18 +1863,17 @@ private fun Thumb(
             animated = animated,
         )
     }
-    SubcomposeAsyncImage(
-        model = model,
-        contentDescription = null,
-        contentScale = ContentScale.Crop,
-        modifier = modifier,
-    ) {
-        val state by painter.state.collectAsState()
-        when (val s = state) {
-            is AsyncImagePainter.State.Success -> SubcomposeAsyncImageContent()
-            is AsyncImagePainter.State.Error -> EmptyPreview()
-            else -> SkeletonShimmer()
-        }
+    val painter = coil3.compose.rememberAsyncImagePainter(model = model)
+    val state by painter.state.collectAsState()
+    when (state) {
+        is AsyncImagePainter.State.Success -> Image(
+            painter = painter,
+            contentDescription = null,
+            contentScale = ContentScale.Crop,
+            modifier = modifier,
+        )
+        is AsyncImagePainter.State.Error -> EmptyPreview(modifier = modifier)
+        else -> SkeletonShimmer(modifier = modifier)
     }
 }
 
@@ -1923,6 +1921,9 @@ private fun FlyInTile(
     val density = LocalDensity.current
     var targetRect by remember { mutableStateOf(Rect.Zero) }
     val captured = targetRect != Rect.Zero
+    // Live coordinates for the click handler, without driving recomposition on
+    // scroll once the entry animation has settled.
+    val coordsRef = remember { arrayOfNulls<androidx.compose.ui.layout.LayoutCoordinates>(1) }
 
     val (offX, offY) = collapsedOffsetDp(index)
     val offXPx = with(density) { offX.dp.toPx() }
@@ -1943,7 +1944,14 @@ private fun FlyInTile(
             .fillMaxWidth()
             .aspectRatio(1f)
             .zIndex(100f - index)
-            .onGloballyPositioned { targetRect = it.boundsInWindow() }
+            .onGloballyPositioned { coords ->
+                coordsRef[0] = coords
+                // Only chase the target rect while the fly-in is animating;
+                // after it settles, updating it would recompose on every scroll.
+                if (targetRect == Rect.Zero || phase.value < 1f) {
+                    targetRect = coords.boundsInWindow()
+                }
+            }
             .graphicsLayer {
                 val p = ((phase.value - s) / (1f - s)).coerceIn(0f, 1f)
                 val dx = (source.left + offXPx - targetRect.left) * (1f - p)
@@ -1966,7 +1974,7 @@ private fun FlyInTile(
                     Modifier.combinedClickable(
                         interactionSource = remember { MutableInteractionSource() },
                         indication = null,
-                        onClick = { onClick(targetRect) },
+                        onClick = { onClick(coordsRef[0]?.boundsInWindow() ?: targetRect) },
                         onLongClick = {
                             haptics.performHapticFeedback(HapticFeedbackType.LongPress)
                             onLongSelect(item)

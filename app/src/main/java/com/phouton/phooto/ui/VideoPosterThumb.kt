@@ -35,8 +35,6 @@ import com.phouton.phooto.data.thumbnails.VideoFrameCache
 import com.phouton.phooto.data.thumbnails.VideoPosterExtractor
 import com.phouton.phooto.ui.theme.EmptySurface
 import coil3.compose.AsyncImagePainter
-import coil3.compose.SubcomposeAsyncImage
-import coil3.compose.SubcomposeAsyncImageContent
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -169,22 +167,21 @@ fun VideoPosterThumb(
         val model = remember(item.uri) {
             ThumbCache.buildRequest(context, item, key, animated = false)
         }
-        SubcomposeAsyncImage(
-            model = model,
-            contentDescription = null,
-            contentScale = contentScale,
-            modifier = modifier,
-        ) {
-            val state by painter.state.collectAsState()
-            if (state is AsyncImagePainter.State.Success) {
-                SubcomposeAsyncImageContent()
-            } else {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(EmptySurface),
-                )
-            }
+        val painter = coil3.compose.rememberAsyncImagePainter(model = model)
+        val state by painter.state.collectAsState()
+        if (state is AsyncImagePainter.State.Success) {
+            Image(
+                painter = painter,
+                contentDescription = null,
+                contentScale = contentScale,
+                modifier = modifier,
+            )
+        } else {
+            Box(
+                modifier = modifier
+                    .fillMaxSize()
+                    .background(EmptySurface),
+            )
         }
         return
     }
