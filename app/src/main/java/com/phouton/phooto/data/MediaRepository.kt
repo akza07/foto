@@ -6,6 +6,7 @@ import android.net.Uri
 import android.os.Build
 import android.provider.DocumentsContract
 import android.provider.MediaStore
+import com.phouton.phooto.AppLog
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -118,6 +119,7 @@ object MediaRepository {
                     } catch (e: Exception) {
                         // Grant expired / provider failure: fall back to the
                         // MediaStore supplement for this tree.
+                        AppLog.w("SAF browse failed for $treeUri", e)
                         emptyList()
                     }
                 }
@@ -605,6 +607,7 @@ object MediaRepository {
                 // API 30+: consent is obtained via MediaStore.createDeleteRequest.
                 DeleteResult.Failed
             } catch (e: Exception) {
+                AppLog.w("delete failed for ${item.uri}", e)
                 DeleteResult.Failed
             }
         }
@@ -624,7 +627,8 @@ object MediaRepository {
             for (item in items) {
                 try {
                     if (createAndCopy(context, item, destDir)) copied++
-                } catch (_: Exception) {
+                } catch (e: Exception) {
+                    AppLog.w("copy failed for ${item.uri}", e)
                 }
             }
             copied
@@ -650,7 +654,8 @@ object MediaRepository {
                     if (createAndCopy(context, item, destDir)) {
                         if (deleteSource(context, item)) moved++ else copiedOnly++
                     }
-                } catch (_: Exception) {
+                } catch (e: Exception) {
+                    AppLog.w("move failed for ${item.uri}", e)
                 }
             }
             MoveResult(moved, copiedOnly)
@@ -667,7 +672,8 @@ object MediaRepository {
         } else {
             context.contentResolver.delete(item.uri, null, null) > 0
         }
-    } catch (_: Exception) {
+    } catch (e: Exception) {
+        AppLog.w("couldn't remove move source ${item.uri}", e)
         false
     }
 

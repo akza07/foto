@@ -4,6 +4,7 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.media.MediaMetadataRetriever
 import android.net.Uri
+import com.phouton.phooto.AppLog
 import kotlin.math.roundToInt
 
 /**
@@ -46,7 +47,8 @@ object VideoPosterExtractor {
                 targetW,
                 targetH,
             ) ?: fallbackFrame(retriever)
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            AppLog.w("poster extraction failed for $uri", e)
             null
         } finally {
             runCatching { retriever.release() }

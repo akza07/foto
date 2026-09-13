@@ -11,6 +11,7 @@ import coil3.request.CachePolicy
 import coil3.request.ImageRequest
 import coil3.size.Size
 import coil3.video.videoFramePercent
+import com.phouton.phooto.AppLog
 import com.phouton.phooto.data.MediaItem
 import java.io.File
 import okio.Path.Companion.toOkioPath
@@ -384,9 +385,10 @@ object ThumbCache {
                         markFailed(key)
                     }
                 }
-            } catch (_: Exception) {
+            } catch (e: Exception) {
                 if (!item.isVideo) markFailed(key)
                 // Best-effort: cache miss is fine, the next render will retry.
+                AppLog.w("thumbnail decode failed for ${item.uri}", e)
             } finally {
                 bumpDone()
             }
