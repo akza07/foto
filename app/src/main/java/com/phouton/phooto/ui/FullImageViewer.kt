@@ -6,6 +6,7 @@ import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.exponentialDecay
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -54,6 +55,7 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -67,8 +69,10 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.PointerInputScope
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.util.VelocityTracker
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
@@ -78,6 +82,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.util.lerp
@@ -99,6 +104,12 @@ private val SheetRadius = RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp)
 
 /** Slide duration when a delete moves the viewer to the adjacent item. */
 private const val DeleteSlideDurationMs = 280
+
+// Pan momentum glide after a flick. Lower friction = a longer coast; the
+// velocity threshold decides when a drag was slow enough to not fling at all.
+private const val PAN_FLING_FRICTION = 0.6f
+private const val PAN_FLING_VELOCITY_THRESHOLD = 0.5f
+private const val PAN_FLING_MIN_VELOCITY = 250f
 
 /**
  * Watches pointer count and reports when the gesture becomes multi-touch
@@ -850,6 +861,48 @@ private fun ZoomableImage(
         correctionY = 1f
     }
 
+    // ── Momentum glide ──────────────────────────────────────────────────────
+    // Panning stays 1:1 with the finger (precise); on release the offset coasts
+    // with a low-friction decay, clamped to the same pan bounds.
+    val liveScale = rememberUpdatedState(scale)
+    val liveOffset = rememberUpdatedState(offset)
+    val liveContainer = rememberUpdatedState(containerSize)
+    val flingJob = remember { mutableStateOf<Job?>(null) }
+
+    val startPanFling: (Velocity) -> Unit = { velocity ->
+        flingJob.value?.cancel()
+        val s = liveScale.value
+        val c = liveContainer.value
+        if (s > 1.01f && c != IntSize.Zero) {
+            val halfW = c.width * (s - 1f) / 2f
+            val halfH = c.height * (s - 1f) / 2f
+            val from = liveOffset.value
+            flingJob.value = scope.launch {
+                val decay = exponentialDecay<Float>(
+                    frictionMultiplier = PAN_FLING_FRICTION,
+                    absVelocityThreshold = PAN_FLING_VELOCITY_THRESHOLD,
+                )
+                val animX = Animatable(from.x).apply { updateBounds(-halfW, halfW) }
+                val animY = Animatable(from.y).apply { updateBounds(-halfH, halfH) }
+                launch {
+                    animX.animateDecay(velocity.x, decay) {
+                        offset = Offset(value, offset.y)
+                    }
+                }
+                launch {
+                    animY.animateDecay(velocity.y, decay) {
+                        offset = Offset(offset.x, value)
+                    }
+                }
+            }
+        }
+    }
+
+    // Cancel any coasting as soon as a pinch starts or the page changes.
+    LaunchedEffect(item.uri, multiTouchActive) {
+        if (multiTouchActive) flingJob.value?.cancel()
+    }
+
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -872,6 +925,7 @@ private fun ZoomableImage(
                             onLongPress()
                         },
                         onDoubleTap = { tap ->
+                            flingJob.value?.cancel()
                             scope.launch {
                                 val w = containerSize.width.toFloat().coerceAtLeast(1f)
                                 val h = containerSize.height.toFloat().coerceAtLeast(1f)
@@ -932,6 +986,40 @@ private fun ZoomableImage(
                     )
                 }
                 .transformable(state = transformableState, canPan = { scale != 1f })
+                // Velocity observer for the pan fling. Reads at the Final pass so
+                // transformable/taps handle the gesture first, and never consumes.
+                .pointerInput(multiTouchActive) {
+                    if (multiTouchActive) return@pointerInput
+                    val tracker = VelocityTracker()
+                    awaitEachGesture {
+                        awaitFirstDown(requireUnconsumed = false)
+                        flingJob.value?.cancel()
+                        tracker.resetTracking()
+                        var singlePointer = true
+                        while (true) {
+                            val event = awaitPointerEvent(PointerEventPass.Final)
+                            val pressedCount = event.changes.count { it.pressed }
+                            if (pressedCount > 1) {
+                                // A pinch is in play: no single-finger fling.
+                                singlePointer = false
+                                tracker.resetTracking()
+                            }
+                            if (singlePointer) {
+                                event.changes.lastOrNull()?.let { change ->
+                                    tracker.addPosition(change.uptimeMillis, change.position)
+                                }
+                            }
+                            if (pressedCount == 0) break
+                        }
+                        if (singlePointer) {
+                            val velocity = tracker.calculateVelocity()
+                            val speed = kotlin.math.hypot(velocity.x, velocity.y)
+                            if (speed > PAN_FLING_MIN_VELOCITY) {
+                                startPanFling(velocity)
+                            }
+                        }
+                    }
+                }
                 .graphicsLayer {
                     scaleX = scale
                     scaleY = scale
