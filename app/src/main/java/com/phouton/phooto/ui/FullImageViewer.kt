@@ -253,11 +253,17 @@ fun FullImageViewer(
 
     // Measured size of the viewer. The entry zoom can't be computed until we know
     // the container, so the animation is started once (and the pager only composed
-    // after) the first layout pass reports a non-zero size.
+    // after) the first layout pass reports a non-zero size. With no source rect
+    // (e.g. opened from a share intent) the viewer starts settled.
     var containerSize by remember { mutableStateOf(IntSize.Zero) }
+    val animateFromSource = sourceRect != Rect.Zero
     LaunchedEffect(containerSize) {
         if (containerSize != IntSize.Zero && !leaving) {
-            progress.animateTo(1f, tween(280, easing = FastOutSlowInEasing))
+            if (animateFromSource) {
+                progress.animateTo(1f, tween(280, easing = FastOutSlowInEasing))
+            } else {
+                progress.snapTo(1f)
+            }
         }
     }
 
@@ -303,9 +309,14 @@ fun FullImageViewer(
     val close = {
         if (!leaving) {
             leaving = true
-            scope.launch {
-                progress.animateTo(0f, tween(240, easing = FastOutSlowInEasing))
+            if (!animateFromSource) {
+                // No tile to shrink back into: dismiss immediately.
                 onDismiss()
+            } else {
+                scope.launch {
+                    progress.animateTo(0f, tween(240, easing = FastOutSlowInEasing))
+                    onDismiss()
+                }
             }
         }
     }

@@ -407,6 +407,8 @@ private fun collapsedOffsetDp(index: Int): Pair<Float, Float> = when (index) {
 @Composable
 fun GalleryScreen(
     modifier: Modifier = Modifier,
+    openUri: Uri? = null,
+    onOpenUriHandled: () -> Unit = {},
 ) {
     val context = LocalContext.current
     SettingsRepository.init(context)
@@ -499,6 +501,21 @@ fun GalleryScreen(
         viewerIndex = index
         viewerSourceRect = rect
         pendingViewerRemoval = null
+    }
+
+    // Open a media Uri handed to us by another app (VIEW/SEND) in the viewer.
+    // A single-item list with no source rect: the viewer opens without the
+    // tile-zoom animation.
+    LaunchedEffect(openUri) {
+        val uri = openUri ?: return@LaunchedEffect
+        val item = MediaRepository.loadItem(context, uri)
+        onOpenUriHandled()
+        if (item != null) {
+            openViewer(listOf(item), 0, Rect.Zero)
+        } else {
+            toastKey += 1
+            toastMessage = "Couldn't open file"
+        }
     }
 
     // Selection helpers ------------------------------------------------------

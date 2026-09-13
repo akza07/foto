@@ -492,6 +492,90 @@ object MediaRepository {
             folderItems + content.looseItems
         }
 
+    /**
+     * Resolves a single content Uri handed over by another app (VIEW/SEND) into a
+     * [MediaItem] so the viewer can open it. Falls back to a minimal item built
+     * from the MIME type when no MediaStore row / document metadata is available.
+     */
+    suspend fun loadItem(context: Context, uri: Uri): MediaItem? =
+        withContext(Dispatchers.IO) {
+            try {
+                val mime = runCatching { context.contentResolver.getType(uri) }.getOrNull()
+                val isVideo = mime?.startsWith("video/") == true
+                if (DocumentsContract.isDocumentUri(context, uri)) {
+                    val name = uri.lastPathSegment?.substringAfterLast('/')
+                    MediaItem(
+                        id = 0L,
+                        uri = uri,
+                        bucketId = "",
+                        bucketName = "",
+                        relativePath = null,
+                        dateAdded = 0L,
+                        isVideo = isVideo,
+                        displayName = name,
+                        mimeType = mime,
+                    )
+                } else {
+                    val projection = arrayOf(
+                        MediaStore.MediaColumns._ID,
+                        MediaStore.MediaColumns.DISPLAY_NAME,
+                        MediaStore.MediaColumns.DATE_ADDED,
+                        MediaStore.MediaColumns.DATE_MODIFIED,
+                        MediaStore.MediaColumns.SIZE,
+                        MediaStore.MediaColumns.MIME_TYPE,
+                        MediaStore.MediaColumns.RELATIVE_PATH,
+                        MediaStore.Files.FileColumns.MEDIA_TYPE,
+                    )
+                    val fromStore = context.contentResolver.query(
+                        uri,
+                        projection,
+                        null,
+                        null,
+                        null,
+                    )?.use { cursor ->
+                        if (cursor.moveToFirst()) {
+                            val id = cursor.getLong(0)
+                            val name = cursor.getString(1)
+                            val added = cursor.getLong(2)
+                            val modified = cursor.getLong(3)
+                            val size = cursor.getLong(4)
+                            val m = cursor.getString(5) ?: mime
+                            val rel = cursor.getString(6)
+                            val type = cursor.getInt(7)
+                            MediaItem(
+                                id = id,
+                                uri = uri,
+                                bucketId = rel?.trimEnd('/')?.substringAfterLast('/') ?: "",
+                                bucketName = rel?.trimEnd('/')?.substringAfterLast('/') ?: "",
+                                relativePath = rel,
+                                dateAdded = added,
+                                isVideo = type == MediaStore.Files.FileColumns.MEDIA_TYPE_VIDEO,
+                                displayName = name,
+                                mimeType = m,
+                                lastModified = modified,
+                                sizeBytes = size,
+                            )
+                        } else {
+                            null
+                        }
+                    }
+                    fromStore ?: MediaItem(
+                        id = 0L,
+                        uri = uri,
+                        bucketId = "",
+                        bucketName = "",
+                        relativePath = null,
+                        dateAdded = 0L,
+                        isVideo = isVideo,
+                        displayName = uri.lastPathSegment,
+                        mimeType = mime,
+                    )
+                }
+            } catch (_: Exception) {
+                null
+            }
+        }
+
     /** Decodes the full-resolution bitmap for [uri]. */
     suspend fun loadFullBitmap(context: Context, uri: Uri): android.graphics.Bitmap? =
         withContext(Dispatchers.IO) {

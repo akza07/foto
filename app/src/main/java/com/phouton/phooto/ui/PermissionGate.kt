@@ -55,6 +55,8 @@ private val ShadcnRadius = RoundedCornerShape(12.dp)
 @Composable
 fun PermissionGate(
     preferHighRefreshRate: Boolean = false,
+    openUri: android.net.Uri? = null,
+    onOpenUriHandled: () -> Unit = {},
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -90,7 +92,11 @@ fun PermissionGate(
     }
 
     if (granted) {
-        GalleryScreen(modifier = rootModifier)
+        GalleryScreen(
+            modifier = rootModifier,
+            openUri = openUri,
+            onOpenUriHandled = onOpenUriHandled,
+        )
     } else {
         val permissions = requiredPermissions()
         val shouldShowRationale = permissions.any { permission ->

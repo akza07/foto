@@ -1,7 +1,10 @@
 package com.phouton.phooto
 
 import android.content.Context
+import android.content.Intent
 import android.hardware.display.DisplayManager
+import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.view.Display
 import androidx.activity.ComponentActivity
@@ -19,9 +22,13 @@ import com.phouton.phooto.data.thumbnails.ThumbCache
 import com.phouton.phooto.ui.GalleryScreen
 import com.phouton.phooto.ui.PermissionGate
 import com.phouton.phooto.ui.theme.PhootoTheme
+import kotlinx.coroutines.flow.MutableStateFlow
 
 class MainActivity : ComponentActivity() {
     private lateinit var syncCoordinator: SyncCoordinator
+
+    /** A media Uri handed to us by another app (VIEW/SEND), consumed by the UI. */
+    private val pendingOpenUri = MutableStateFlow<Uri?>(null)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -37,6 +44,9 @@ class MainActivity : ComponentActivity() {
         // code runs so the first gallery frame can already hit it.
         ThumbCache.init(this)
 
+        // Media handed over by another app at launch.
+        pendingOpenUri.value = extractOpenUri(intent)
+
         // Whether the hardware can do better than 60Hz doesn't change at
         // runtime, so probe it once. The preference itself is observed below so
         // toggling it takes effect without restarting the app.
@@ -46,6 +56,7 @@ class MainActivity : ComponentActivity() {
             val settings by SettingsRepository.settings.collectAsState()
             val preferHighRefreshRate =
                 settings.preferHighRefreshRate && supportsHighRefreshRate
+            val openUri by pendingOpenUri.collectAsState()
 
             // Window-level refresh hint, kept in sync with the setting. 0f means
             // "no preference". PermissionGate additionally votes at the Compose
@@ -57,7 +68,11 @@ class MainActivity : ComponentActivity() {
             }
 
             PhootoTheme {
-                PermissionGate(preferHighRefreshRate = preferHighRefreshRate)
+                PermissionGate(
+                    preferHighRefreshRate = preferHighRefreshRate,
+                    openUri = openUri,
+                    onOpenUriHandled = { pendingOpenUri.value = null },
+                )
             }
         }
 
@@ -70,12 +85,33 @@ class MainActivity : ComponentActivity() {
         syncCoordinator.start(this)
     }
 
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        pendingOpenUri.value = extractOpenUri(intent)
+    }
+
     override fun onDestroy() {
         if (::syncCoordinator.isInitialized) {
             syncCoordinator.stop(this)
         }
         ThumbCache.shutdown()
         super.onDestroy()
+    }
+}
+
+/** The single media Uri carried by a VIEW or SEND intent, if any. */
+private fun extractOpenUri(intent: Intent?): Uri? {
+    if (intent == null) return null
+    return when (intent.action) {
+        Intent.ACTION_VIEW -> intent.data
+        Intent.ACTION_SEND -> if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            intent.getParcelableExtra(Intent.EXTRA_STREAM, Uri::class.java)
+        } else {
+            @Suppress("DEPRECATION")
+            intent.getParcelableExtra(Intent.EXTRA_STREAM)
+        }
+        else -> null
     }
 }
 
