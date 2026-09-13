@@ -207,6 +207,9 @@ fun FullImageViewer(
     loopVideos: Boolean = false,
     pendingRemoval: MediaItem? = null,
     onRemovalAnimationEnd: () -> Unit = {},
+    /** URI to animate the pager back to after an Undo restore. */
+    restoreUri: android.net.Uri? = null,
+    onRestored: () -> Unit = {},
 ) {
     val scope = rememberCoroutineScope()
     val density = LocalDensity.current
@@ -384,6 +387,24 @@ fun FullImageViewer(
             removing = false
         }
         onRemovalAnimationEnd()
+    }
+
+    // Undo restore: slide the pager back to the item that was just re-inserted,
+    // the reverse of the delete slide above.
+    LaunchedEffect(restoreUri, items) {
+        val uri = restoreUri ?: return@LaunchedEffect
+        val index = items.indexOfFirst { it.uri == uri }
+        if (index < 0) return@LaunchedEffect
+        removing = true
+        try {
+            pagerState.animateScrollToPage(
+                index,
+                animationSpec = tween(DeleteSlideDurationMs, easing = FastOutSlowInEasing),
+            )
+        } finally {
+            removing = false
+        }
+        onRestored()
     }
 
     // Preload adjacent pages so page swipes never flash black while loading.

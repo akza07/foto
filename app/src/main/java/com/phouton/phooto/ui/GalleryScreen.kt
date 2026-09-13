@@ -114,6 +114,9 @@ private val GridSpacing = 8.dp
 // Height of the selection action bar so grids can reserve space for it.
 private val ActionBarHeightDp = 96.dp
 
+/** A viewer item removed by a pending delete, with its index for a slide-back Undo. */
+private data class ViewerUndo(val item: MediaItem, val index: Int)
+
 // Transition timings.
 private const val ForwardDurationMs = 320
 private const val ReverseDurationMs = 260
@@ -157,6 +160,11 @@ fun GalleryScreen(
     // contains it so the pager can animate to the neighbor; the actual list
     // mutation happens in commitViewerRemoval once the slide ends.
     var pendingViewerRemoval by remember { mutableStateOf<MediaItem?>(null) }
+    // The viewer item removed by the pending delete, with its list index, so an
+    // Undo can slide the pager back to it (the reverse of the delete slide).
+    var viewerUndo by remember { mutableStateOf<ViewerUndo?>(null) }
+    // Set when the pager should animate back to a restored item.
+    var viewerRestoreUri by remember { mutableStateOf<android.net.Uri?>(null) }
     var infoItem by remember { mutableStateOf<MediaItem?>(null) }
     var albumReloadKey by remember { mutableStateOf(0) }
     var toastMessage by remember { mutableStateOf<UiText?>(null) }
@@ -325,30 +333,27 @@ fun GalleryScreen(
         }
     }
 
-    // Batch variant: removes a set of URIs in one pass and reloads once.
-    // Same stay-in-viewer contract as the single delete.
-    val removeDeletedBatch = { deletedUris: Set<android.net.Uri> ->
-        val current = content
-        if (current != null) {
-            content = current.copy(
-                looseItems = current.looseItems.filterNot { it.uri in deletedUris },
-            )
+    // Starts the viewer's delete slide for [item] (no-op when the viewer is
+    // closed or does not contain it), recording its index for a possible Undo.
+    val startViewerRemoval: (MediaItem) -> Unit = { item ->
+        val list = viewerItems
+        val index = list?.indexOfFirst { it.uri == item.uri } ?: -1
+        if (list != null && index >= 0) {
+            viewerUndo = ViewerUndo(item, index)
+            pendingViewerRemoval = item
         }
-        val remaining = viewerItems?.filterNot { it.uri in deletedUris }
-        if (remaining.isNullOrEmpty()) {
-            closeViewer()
-        } else {
-            viewerItems = remaining
-            viewerIndex = viewerIndex.coerceIn(0, remaining.lastIndex)
-            toastKey += 1
-            toastMessage = if (deletedUris.size == 1) {
-                UiText.Res(R.string.deleted)
-            } else {
-                UiText.Qty(R.plurals.deleted_items, deletedUris.size)
-            }
+    }
+
+    // Re-inserts a restored item at its old index and asks the pager to slide
+    // back to it (the reverse of the delete slide).
+    val restoreViewerItem: (ViewerUndo) -> Unit = { undo ->
+        val list = viewerItems
+        if (list != null && list.none { it.uri == undo.item.uri }) {
+            val at = undo.index.coerceIn(0, list.size)
+            viewerItems = list.toMutableList().apply { add(at, undo.item) }
+            viewerIndex = at
+            viewerRestoreUri = undo.item.uri
         }
-        albumReloadKey += 1
-        reload()
     }
 
     // ── Delete consent ──────────────────────────────────────────────────────
@@ -377,6 +382,21 @@ fun GalleryScreen(
     // consent dialog without the launcher referencing itself.
     var nextConsentLaunch by remember { mutableStateOf<androidx.activity.result.IntentSenderRequest?>(null) }
 
+    // Hides deleted URIs from the grid/search and reloads. The open viewer is
+    // handled separately (slide out on delete, slide back on Undo) so this must
+    // not touch viewerItems.
+    val hideDeleted = { deletedUris: Set<android.net.Uri> ->
+        val current = content
+        if (current != null) {
+            content = current.copy(
+                looseItems = current.looseItems.filterNot { it.uri in deletedUris },
+            )
+        }
+        hiddenUris = hiddenUris + deletedUris
+        albumReloadKey += 1
+        reload()
+    }
+
     val consentLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartIntentSenderForResult()
     ) { result ->
@@ -389,18 +409,19 @@ fun GalleryScreen(
         }
         if (consentCoversAll) {
             // API 30+: the system already trashed/deleted the whole batch.
-            removeDeletedBatch(queue.map { it.uri }.toSet())
+            hideDeleted(queue.map { it.uri }.toSet())
             clearSelection()
             if (consentIsTrash) {
                 undoKey += 1
                 undoItems = queue
                 consentIsTrash = false
+                queue.firstOrNull()?.let { startViewerRemoval(it) }
             }
         } else {
             // API 29: the dialog only granted write access; perform the delete now.
             scope.launch {
                 if (MediaRepository.delete(context, head) == DeleteResult.Deleted) {
-                    removeDeletedBatch(setOf(head.uri))
+                    hideDeleted(setOf(head.uri))
                 }
                 val rest = queue.drop(1)
                 pendingConsent = rest
@@ -437,9 +458,14 @@ fun GalleryScreen(
         pendingRestore = emptyList()
         if (result.resultCode == android.app.Activity.RESULT_OK && items.isNotEmpty()) {
             undoItems = null
+            // Slide the viewer back to the restored item, if it was deleted there.
+            viewerUndo?.let { restoreViewerItem(it) }
+            viewerUndo = null
             reload()
             toastKey += 1
             toastMessage = UiText.Res(R.string.restored)
+        } else {
+            viewerUndo = null
         }
     }
 
@@ -447,19 +473,24 @@ fun GalleryScreen(
         val items = undoItems
         if (items != null) {
             undoItems = null
+            hiddenUris = hiddenUris - items.map { it.uri }.toSet()
             if (undoCommit != null) {
                 // Deferred delete: nothing hit disk yet, so just unhide.
                 undoCommit = null
-                hiddenUris = hiddenUris - items.map { it.uri }.toSet()
+                viewerUndo?.let { restoreViewerItem(it) }
+                viewerUndo = null
                 reload()
             } else {
-                // System trash: ask the system to restore.
+                // System trash: ask the system to restore, then slide back.
                 val sender = com.phouton.phooto.data.restoreConsentSender(context, items)
                 if (sender != null) {
                     pendingRestore = items
                     restoreLauncher.launch(
                         androidx.activity.result.IntentSenderRequest.Builder(sender).build(),
                     )
+                } else {
+                    viewerUndo?.let { restoreViewerItem(it) }
+                    viewerUndo = null
                 }
             }
         }
@@ -526,6 +557,7 @@ fun GalleryScreen(
         if (commit != null) {
             undoCommit = null
             undoItems = null
+            viewerUndo = null
             commit()
         }
     }
@@ -537,6 +569,8 @@ fun GalleryScreen(
         undoCommit = { commitDeferredDelete(items) }
         undoKey += 1
         undoItems = items
+        // Slide the viewer to the neighbour; Undo slides it back.
+        items.firstOrNull()?.let { startViewerRemoval(it) }
     }
 
     // API 30+ consent path: a single system dialog that moves the item(s) to the
@@ -828,7 +862,7 @@ fun GalleryScreen(
             )
         }
 
-        val viewing = viewerItems?.filterNot { it.uri in hiddenUris }
+        val viewing = viewerItems
         if (viewing != null && viewing.isNotEmpty()) {
             FullImageViewer(
                 items = viewing,
@@ -836,6 +870,8 @@ fun GalleryScreen(
                 sourceRect = viewerSourceRect,
                 pendingRemoval = pendingViewerRemoval,
                 onRemovalAnimationEnd = commitViewerRemoval,
+                restoreUri = viewerRestoreUri,
+                onRestored = { viewerRestoreUri = null },
                 onDismiss = closeViewer,
                 onPageChanged = { viewerIndex = it },
                 onDelete = {
@@ -944,7 +980,12 @@ fun GalleryScreen(
                 key = undoKey,
                 onUndo = undoTrash,
                 onDismiss = {
+                    val items = undoItems
                     undoItems = null
+                    viewerUndo = null
+                    if (items != null) {
+                        hiddenUris = hiddenUris - items.map { it.uri }.toSet()
+                    }
                     val commit = undoCommit
                     undoCommit = null
                     commit?.invoke()
