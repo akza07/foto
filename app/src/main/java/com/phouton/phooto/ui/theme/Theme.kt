@@ -1,6 +1,5 @@
 package com.phouton.phooto.ui.theme
 
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
@@ -35,8 +34,7 @@ private val PhootoDarkColorScheme = darkColorScheme(
 
 @Composable
 fun PhootoTheme(content: @Composable () -> Unit) {
-    // This app is AMOLED-only; ignore system theme and always use the dark palette.
-    isSystemInDarkTheme()
+    // This app is AMOLED-only; ignore the system theme and always use the dark palette.
     MaterialTheme(
         colorScheme = PhootoDarkColorScheme,
         content = content,
