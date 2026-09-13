@@ -32,6 +32,11 @@ data class AppSettings(
     val loopVideos: Boolean = false,
     val sortOrder: MediaSort = MediaSort.DATE_NEWEST,
     val gridSize: GridSize = GridSize.MEDIUM,
+    /** Floating viewer action button position, as fractions of the viewport. */
+    val actionButtonX: Float = 0.70f,
+    val actionButtonY: Float = 0.58f,
+    /** Whether the viewer action button position is locked. */
+    val actionButtonPinned: Boolean = false,
 )
 
 object SettingsRepository {
@@ -44,6 +49,9 @@ object SettingsRepository {
     private const val KEY_LOOP_VIDEOS = "loop_videos"
     private const val KEY_SORT_ORDER = "sort_order"
     private const val KEY_GRID_SIZE = "grid_size"
+    private const val KEY_ACTION_X = "action_button_x"
+    private const val KEY_ACTION_Y = "action_button_y"
+    private const val KEY_ACTION_PINNED = "action_button_pinned"
 
     private val _settings = MutableStateFlow(AppSettings())
     val settings: StateFlow<AppSettings> = _settings.asStateFlow()
@@ -67,6 +75,9 @@ object SettingsRepository {
             gridSize = runCatching {
                 GridSize.valueOf(prefs.getString(KEY_GRID_SIZE, null) ?: GridSize.MEDIUM.name)
             }.getOrDefault(GridSize.MEDIUM),
+            actionButtonX = prefs.getFloat(KEY_ACTION_X, 0.70f),
+            actionButtonY = prefs.getFloat(KEY_ACTION_Y, 0.58f),
+            actionButtonPinned = prefs.getBoolean(KEY_ACTION_PINNED, false),
         )
     }
 
@@ -103,6 +114,16 @@ object SettingsRepository {
     fun setGridSize(value: GridSize) {
         prefs.edit().putString(KEY_GRID_SIZE, value.name).apply()
         _settings.value = _settings.value.copy(gridSize = value)
+    }
+
+    fun setActionButtonPosition(x: Float, y: Float) {
+        prefs.edit().putFloat(KEY_ACTION_X, x).putFloat(KEY_ACTION_Y, y).apply()
+        _settings.value = _settings.value.copy(actionButtonX = x, actionButtonY = y)
+    }
+
+    fun setActionButtonPinned(value: Boolean) {
+        prefs.edit().putBoolean(KEY_ACTION_PINNED, value).apply()
+        _settings.value = _settings.value.copy(actionButtonPinned = value)
     }
 
     fun addTreeUri(uri: String) {

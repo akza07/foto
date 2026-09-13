@@ -153,7 +153,13 @@ edge-to-edge rendering.
 - **Pinch:** zoom (1–5×) + pan (clamped; panning disabled at 1×).
 - **Two-finger rotation:** rotates the image in the gesture direction.
 - **Long-press / swipe up:** opens the bottom action drawer.
+- **Floating actions button (images):** a draggable circular button opens a
+  **radial menu** (Delete / Info / Share / Crop) — slide to a sector and release
+  to run it, or tap the centre hub to **pin** the button's position. When
+  unpinned, dragging the button moves it; the position and pin state persist.
 - **Swipe down (at 1×):** dismisses the viewer.
+- **Zoomed panning:** 1:1 while dragging, then a low-friction **momentum glide**
+  on release, clamped to the image bounds.
 - **Top-left:** back button + counter pill (`3/12`).
 - **Drawer actions:** Delete (red), Share, Info, Crop ("Coming soon" shadcn toast).
   - **Delete:** shadcn confirmation modal (red accent) → MediaStore items go to

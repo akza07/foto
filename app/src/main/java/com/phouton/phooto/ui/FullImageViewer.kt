@@ -221,6 +221,12 @@ fun FullImageViewer(
     /** URI to animate the pager back to after an Undo restore. */
     restoreUri: android.net.Uri? = null,
     onRestored: () -> Unit = {},
+    /** Floating action-button position (fractions of the viewport) + lock state. */
+    actionButtonX: Float = 0.70f,
+    actionButtonY: Float = 0.58f,
+    actionButtonPinned: Boolean = false,
+    onActionButtonPosition: (Float, Float) -> Unit = { _, _ -> },
+    onActionButtonPinned: (Boolean) -> Unit = {},
 ) {
     val scope = rememberCoroutineScope()
     val density = LocalDensity.current
@@ -285,6 +291,9 @@ fun FullImageViewer(
     }
 
     var drawerVisible by remember { mutableStateOf(false) }
+    // True while the radial action menu is open. Suspends control auto-hide and
+    // locks paging so the slide-to-select gesture can't leak through.
+    var actionWheelVisible by remember { mutableStateOf(false) }
     var currentPageZoomed by remember { mutableStateOf(false) }
     var videoControlsVisible by remember { mutableStateOf(true) }
     var imageControlsVisible by remember { mutableStateOf(true) }
@@ -295,7 +304,7 @@ fun FullImageViewer(
         imageHideJob.value?.cancel()
         imageHideJob.value = scope.launch {
             delay(3000L)
-            if (!drawerVisible) {
+            if (!drawerVisible && !actionWheelVisible) {
                 imageControlsVisible = false
             }
         }
@@ -471,8 +480,10 @@ fun FullImageViewer(
             // Applies to images and videos alike: the video pill only covers the
             // bottom, so a swipe starting on the video surface reaches this
             // detector cleanly.
-            .pointerInput(currentPageZoomed, drawerVisible, leaving, multiTouchActive, removing) {
-                if (!currentPageZoomed && !drawerVisible && !leaving && !multiTouchActive && !removing) {
+            .pointerInput(currentPageZoomed, drawerVisible, actionWheelVisible, leaving, multiTouchActive, removing) {
+                if (!currentPageZoomed && !drawerVisible && !actionWheelVisible && !leaving &&
+                    !multiTouchActive && !removing
+                ) {
                     detectVerticalSwipe(
                         threshold = swipeThreshold,
                         onSwipeUp = {
@@ -522,6 +533,7 @@ fun FullImageViewer(
                 userScrollEnabled = (!currentPageIsVideo || !videoPlaying) &&
                     !currentPageZoomed &&
                     !multiTouchActive &&
+                    !actionWheelVisible &&
                     !removing,
                 // Stable page identity: lets the pager remap a page to its new
                 // index when a delete shrinks the list, instead of flashing the
@@ -681,47 +693,33 @@ fun FullImageViewer(
             }
         }
 
-        // Bottom-right: Delete button for image viewer within thumb reach (fades on tap/auto-hide).
+        // Floating actions button + radial menu (images only). It fades with the
+        // chrome; tapping opens the menu, dragging (when unpinned) repositions it.
         if (!currentPageIsVideo) {
-            Box(
-                modifier = Modifier
-                    .align(Alignment.BottomEnd)
-                    .navigationBarsPadding()
-                    .padding(end = 16.dp, bottom = 16.dp)
-                    .graphicsLayer {
-                        alpha = p * topChromeAlpha
-                        translationY = 12.dp.toPx() * (1f - p)
-                    },
-            ) {
-                Surface(
-                    modifier = Modifier
-                        .size(48.dp)
-                        .shadow(8.dp, CircleShape)
-                        .clip(CircleShape)
-                        .clickable(
-                            enabled = imageControlsVisible,
-                            role = Role.Button,
-                            interactionSource = remember { MutableInteractionSource() },
-                            indication = null,
-                        ) {
-                            if (currentItem != null) {
-                                onDelete(currentItem)
-                            }
-                        },
-                    shape = CircleShape,
-                    color = Color.Black.copy(alpha = 0.68f),
-                    shadowElevation = 0.dp,
-                ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        Icon(
-                            imageVector = Icons.Outlined.Delete,
-                            contentDescription = stringResource(R.string.action_delete),
-                            tint = DeleteRed,
-                            modifier = Modifier.size(24.dp),
-                        )
+            ViewerActionOverlay(
+                containerSize = containerSize,
+                alpha = p * topChromeAlpha,
+                buttonX = actionButtonX,
+                buttonY = actionButtonY,
+                pinned = actionButtonPinned,
+                wheelVisible = actionWheelVisible,
+                onWheelVisibleChange = { visible ->
+                    actionWheelVisible = visible
+                    if (visible) showImageControls()
+                },
+                onPositionChange = onActionButtonPosition,
+                onPinnedChange = onActionButtonPinned,
+                onAction = { action ->
+                    currentItem?.let { item ->
+                        when (action) {
+                            ViewerAction.Delete -> onDelete(item)
+                            ViewerAction.Info -> onInfo(item)
+                            ViewerAction.Share -> onShare(item)
+                            ViewerAction.Crop -> onCrop()
+                        }
                     }
-                }
-            }
+                },
+            )
         }
 
         // Sliding bottom action drawer.
