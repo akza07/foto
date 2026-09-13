@@ -72,6 +72,8 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
@@ -83,6 +85,7 @@ import androidx.compose.ui.zIndex
 import com.phouton.phooto.data.GalleryContent
 import com.phouton.phooto.data.DeleteResult
 import com.phouton.phooto.data.GalleryEvents
+import com.phouton.phooto.R
 import com.phouton.phooto.data.MediaFolder
 import com.phouton.phooto.data.MediaItem
 import com.phouton.phooto.data.MediaRepository
@@ -243,7 +246,7 @@ fun GalleryScreen(
             openViewer(listOf(item), 0, Rect.Zero)
         } else {
             toastKey += 1
-            toastMessage = "Couldn't open file"
+            toastMessage = context.getString(R.string.error_open_file)
         }
     }
 
@@ -342,7 +345,7 @@ fun GalleryScreen(
             } else {
                 pendingViewerRemoval = removed
                 toastKey += 1
-                toastMessage = "Deleted"
+                toastMessage = context.getString(R.string.deleted)
             }
         }
         albumReloadKey += 1
@@ -366,17 +369,25 @@ fun GalleryScreen(
             viewerItems = remaining
             viewerIndex = viewerIndex.coerceIn(0, remaining.lastIndex)
             toastKey += 1
-            toastMessage = if (deletedUris.size == 1) "Deleted" else "Deleted ${deletedUris.size} items"
+            toastMessage = if (deletedUris.size == 1) {
+                context.getString(R.string.deleted)
+            } else {
+                context.resources.getQuantityString(
+                    R.plurals.deleted_items,
+                    deletedUris.size,
+                    deletedUris.size,
+                )
+            }
         }
         albumReloadKey += 1
         reload()
     }
 
     // ── Delete consent ──────────────────────────────────────────────────────
-    // Some MediaStore items need explicit user consent to delete. API 30+ uses a
-    // single MediaStore.createDeleteRequest for the whole batch; API 29 hands
-    // back a per-item RecoverableSecurityException intent sender, processed one
-    // at a time through this queue.
+    // Some MediaStore items need explicit user consent. API 30+ uses a single
+    // MediaStore.createTrashRequest for the whole batch (restorable from the
+    // Undo bar); API 29 hands back a per-item RecoverableSecurityException
+    // intent sender, processed one at a time through this queue.
     val scope = rememberCoroutineScope()
     var pendingConsent by remember { mutableStateOf<List<MediaItem>>(emptyList()) }
     // True when the in-flight consent intent covers every entry of
@@ -453,7 +464,7 @@ fun GalleryScreen(
             undoItems = null
             reload()
             toastKey += 1
-            toastMessage = "Restored"
+            toastMessage = context.getString(R.string.restored)
         }
     }
 
@@ -485,7 +496,7 @@ fun GalleryScreen(
             )
         } else {
             toastKey += 1
-            toastMessage = "Couldn't delete"
+            toastMessage = context.getString(R.string.error_delete)
         }
     }
 
@@ -505,7 +516,7 @@ fun GalleryScreen(
                     val isSafItem = android.provider.DocumentsContract.isDocumentUri(context, item.uri)
                     if (isSafItem) {
                         toastKey += 1
-                        toastMessage = "Couldn't delete"
+                        toastMessage = context.getString(R.string.error_delete)
                     } else {
                         requestConsent(listOf(item))
                     }
@@ -607,24 +618,36 @@ fun GalleryScreen(
         if (toCopy != null && toCopy.isNotEmpty()) {
             val items = toCopy
             val count = items.size
-            busyMessage = "Copying $count item${if (count == 1) "" else "s"}…"
+            busyMessage = context.resources.getQuantityString(
+                R.plurals.copying_items,
+                count,
+                count,
+            )
             transferScope.launch {
                 val done = MediaRepository.copyTo(context, items, uri)
                 busyMessage = null
                 clearSelection()
                 if (done > 0) {
                     toastKey += 1
-                    toastMessage = "Copied $done item${if (done == 1) "" else "s"}"
+                    toastMessage = context.resources.getQuantityString(
+                        R.plurals.copied_items,
+                        done,
+                        done,
+                    )
                     reload()
                 } else {
                     toastKey += 1
-                    toastMessage = "Couldn't copy"
+                    toastMessage = context.getString(R.string.error_copy)
                 }
             }
         } else if (toMove != null && toMove.isNotEmpty()) {
             val items = toMove
             val count = items.size
-            busyMessage = "Moving $count item${if (count == 1) "" else "s"}…"
+            busyMessage = context.resources.getQuantityString(
+                R.plurals.moving_items,
+                count,
+                count,
+            )
             transferScope.launch {
                 val result = MediaRepository.moveTo(context, items, uri)
                 busyMessage = null
@@ -632,19 +655,26 @@ fun GalleryScreen(
                 when {
                     result.total == 0 -> {
                         toastKey += 1
-                        toastMessage = "Couldn't move"
+                        toastMessage = context.getString(R.string.error_move)
                     }
                     result.copiedOnly > 0 -> {
                         // Copied, but the source couldn't be removed (system
                         // consent needed), so the user now has a duplicate.
                         toastKey += 1
-                        toastMessage = "Moved ${result.moved}, copied ${result.copiedOnly} " +
-                            "(couldn't remove original)"
+                        toastMessage = context.getString(
+                            R.string.moved_partial,
+                            result.moved,
+                            result.copiedOnly,
+                        )
                         reload()
                     }
                     else -> {
                         toastKey += 1
-                        toastMessage = "Moved ${result.moved} item${if (result.moved == 1) "" else "s"}"
+                        toastMessage = context.resources.getQuantityString(
+                            R.plurals.moved_items,
+                            result.moved,
+                            result.moved,
+                        )
                         reload()
                     }
                 }
@@ -717,7 +747,7 @@ fun GalleryScreen(
 
     val showComingSoonToast = {
         toastKey += 1
-        toastMessage = "Coming soon"
+        toastMessage = context.getString(R.string.coming_soon)
     }
 
     // The root Albums grid stays composed underneath the album, so when the album
@@ -835,9 +865,12 @@ fun GalleryScreen(
         val deleteTarget = pendingDeleteItem
         if (deleteTarget != null) {
             ConfirmDialog(
-                title = "Delete this ${if (deleteTarget.isVideo) "video" else "photo"}?",
-                message = "This action can't be undone.",
-                confirmLabel = "Delete",
+                title = stringResource(
+                    if (deleteTarget.isVideo) R.string.delete_confirm_video
+                    else R.string.delete_confirm_photo,
+                ),
+                message = stringResource(R.string.delete_confirm_message),
+                confirmLabel = stringResource(R.string.action_delete),
                 destructive = true,
                 onConfirm = {
                     pendingDeleteItem = null
@@ -878,9 +911,13 @@ fun GalleryScreen(
         val batch = pendingBatchDelete
         if (batch != null && batch.isNotEmpty()) {
             ConfirmDialog(
-                title = "Delete ${batch.size} item${if (batch.size == 1) "" else "s"}?",
-                message = "This action can't be undone.",
-                confirmLabel = "Delete",
+                title = pluralStringResource(
+                    R.plurals.delete_confirm_count,
+                    batch.size,
+                    batch.size,
+                ),
+                message = stringResource(R.string.delete_confirm_message),
+                confirmLabel = stringResource(R.string.action_delete),
                 destructive = true,
                 onConfirm = {
                     pendingBatchDelete = null
@@ -958,13 +995,13 @@ private fun MainGalleryGrid(
                 IconButton(onClick = onExitSelection) {
                     Icon(
                         imageVector = Icons.Outlined.Close,
-                        contentDescription = "Exit selection",
+                        contentDescription = stringResource(R.string.selection_exit),
                         tint = TextPrimary,
                     )
                 }
                 Spacer(Modifier.width(4.dp))
                 Text(
-                    text = "${selection.size} selected",
+                    text = stringResource(R.string.selection_count, selection.size),
                     color = TextPrimary,
                     fontSize = 16.sp,
                     fontWeight = FontWeight.SemiBold,
@@ -973,13 +1010,13 @@ private fun MainGalleryGrid(
                 IconButton(onClick = onSelectAll) {
                     Icon(
                         imageVector = Icons.Outlined.SelectAll,
-                        contentDescription = "Select all",
+                        contentDescription = stringResource(R.string.select_all),
                         tint = TextPrimary,
                     )
                 }
             } else {
                 Text(
-                    text = "Albums",
+                    text = stringResource(R.string.albums),
                     color = TextPrimary,
                     fontSize = 28.sp,
                     fontWeight = FontWeight.SemiBold,
@@ -989,7 +1026,7 @@ private fun MainGalleryGrid(
                 IconButton(onClick = onSearchClick) {
                     Icon(
                         imageVector = Icons.Outlined.Search,
-                        contentDescription = "Search",
+                        contentDescription = stringResource(R.string.action_search),
                         tint = TextPrimary,
                         modifier = Modifier.width(24.dp),
                     )
@@ -997,7 +1034,7 @@ private fun MainGalleryGrid(
                 IconButton(onClick = onSettingsClick) {
                     Icon(
                         imageVector = Icons.Outlined.Settings,
-                        contentDescription = "Settings",
+                        contentDescription = stringResource(R.string.action_settings),
                         tint = TextPrimary,
                         modifier = Modifier.width(24.dp),
                     )
@@ -1022,7 +1059,7 @@ private fun MainGalleryGrid(
             current.folders.isEmpty() && current.looseItems.isEmpty() -> {
                 Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     Text(
-                        text = "No media found",
+                        text = stringResource(R.string.no_media_found),
                         color = TextMuted,
                         fontSize = 14.sp,
                     )
@@ -1146,7 +1183,7 @@ private fun AlbumGrid(
 
             if (displayItems.isEmpty()) {
                 Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Text(text = "No items", color = TextMuted, fontSize = 14.sp)
+                    Text(text = stringResource(R.string.no_items), color = TextMuted, fontSize = 14.sp)
                 }
             } else {
                 LazyVerticalGrid(
@@ -1236,13 +1273,13 @@ private fun AlbumGrid(
                     IconButton(onClick = onExitSelection) {
                         Icon(
                             imageVector = Icons.Outlined.Close,
-                            contentDescription = "Exit selection",
+                            contentDescription = stringResource(R.string.selection_exit),
                             tint = TextPrimary,
                         )
                     }
                     Spacer(Modifier.width(4.dp))
                     Text(
-                        text = "${selection.selected.size} selected",
+                        text = stringResource(R.string.selection_count, selection.selected.size),
                         color = TextPrimary,
                         fontSize = 16.sp,
                         fontWeight = FontWeight.SemiBold,
@@ -1251,7 +1288,7 @@ private fun AlbumGrid(
                     IconButton(onClick = { onSelectAll(displayItems) }) {
                         Icon(
                             imageVector = Icons.Outlined.SelectAll,
-                            contentDescription = "Select all",
+                            contentDescription = stringResource(R.string.select_all),
                             tint = TextPrimary,
                         )
                     }
@@ -1259,7 +1296,7 @@ private fun AlbumGrid(
                     IconButton(onClick = onBack) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
-                            contentDescription = "Back",
+                            contentDescription = stringResource(R.string.action_back),
                             tint = TextPrimary,
                         )
                     }
@@ -1274,7 +1311,7 @@ private fun AlbumGrid(
                             overflow = TextOverflow.Ellipsis,
                         )
                         Text(
-                            text = "${folder.count} items",
+                            text = pluralStringResource(R.plurals.item_count, folder.count, folder.count),
                             color = TextMuted,
                             fontSize = 12.sp,
                             maxLines = 1,
@@ -1298,12 +1335,13 @@ private fun FolderTile(
     val isSelecting = selection.active
     val isSelected = folder in selection.selectedFolders
     val haptics = LocalHapticFeedback.current
+    val a11yLabel = stringResource(R.string.folder_a11y, folder.name, folder.count)
 
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .semantics {
-                contentDescription = "${folder.name}, ${folder.count} items"
+                contentDescription = a11yLabel
             }
             .then(
                 if (isSelecting) {
@@ -1358,7 +1396,7 @@ private fun FolderTile(
             overflow = TextOverflow.Ellipsis,
         )
         Text(
-            text = "${folder.count} items",
+            text = pluralStringResource(R.plurals.item_count, folder.count, folder.count),
             color = TextMuted,
             fontSize = 11.sp,
             maxLines = 1,
@@ -1419,6 +1457,11 @@ internal fun ImageTile(
     val isSelecting = selection.active
     val isSelected = item in selection.selected
     val haptics = LocalHapticFeedback.current
+    // Resolved here: the semantics lambda below is not composable.
+    val kindLabel = stringResource(if (item.isVideo) R.string.video_badge else R.string.media_photo)
+    val selectionSuffix = stringResource(
+        if (isSelected) R.string.a11y_selected else R.string.a11y_not_selected,
+    )
 
     Box(
         modifier = Modifier
@@ -1429,10 +1472,8 @@ internal fun ImageTile(
             .onGloballyPositioned { coordsRef[0] = it }
             .semantics {
                 contentDescription = buildString {
-                    append(item.displayName ?: if (item.isVideo) "Video" else "Photo")
-                    if (isSelecting) {
-                        append(if (isSelected) ", selected" else ", not selected")
-                    }
+                    append(item.displayName ?: kindLabel)
+                    if (isSelecting) append(selectionSuffix)
                 }
             }
             .then(
