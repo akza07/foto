@@ -19,6 +19,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.awaitLongPressOrCancellation
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.rememberTransformableState
 import androidx.compose.foundation.gestures.transformable
@@ -221,12 +222,6 @@ fun FullImageViewer(
     /** URI to animate the pager back to after an Undo restore. */
     restoreUri: android.net.Uri? = null,
     onRestored: () -> Unit = {},
-    /** Floating action-button position (fractions of the viewport) + lock state. */
-    actionButtonX: Float = 0.70f,
-    actionButtonY: Float = 0.58f,
-    actionButtonPinned: Boolean = false,
-    onActionButtonPosition: (Float, Float) -> Unit = { _, _ -> },
-    onActionButtonPinned: (Boolean) -> Unit = {},
 ) {
     val scope = rememberCoroutineScope()
     val density = LocalDensity.current
@@ -291,9 +286,13 @@ fun FullImageViewer(
     }
 
     var drawerVisible by remember { mutableStateOf(false) }
-    // True while the radial action menu is open. Suspends control auto-hide and
-    // locks paging so the slide-to-select gesture can't leak through.
-    var actionWheelVisible by remember { mutableStateOf(false) }
+    // Long-press radial menu: summoned at the finger and resolved in one motion.
+    var radialVisible by remember { mutableStateOf(false) }
+    var radialCenter by remember { mutableStateOf(Offset.Zero) }
+    var radialHovered by remember { mutableStateOf<ViewerAction?>(null) }
+    // True from the moment the radial opens until its gesture ends, so the page's
+    // tap handler can ignore the release that ran an action.
+    var radialActive by remember { mutableStateOf(false) }
     var currentPageZoomed by remember { mutableStateOf(false) }
     var videoControlsVisible by remember { mutableStateOf(true) }
     var imageControlsVisible by remember { mutableStateOf(true) }
@@ -304,7 +303,7 @@ fun FullImageViewer(
         imageHideJob.value?.cancel()
         imageHideJob.value = scope.launch {
             delay(3000L)
-            if (!drawerVisible && !actionWheelVisible) {
+            if (!drawerVisible) {
                 imageControlsVisible = false
             }
         }
@@ -457,6 +456,18 @@ fun FullImageViewer(
     // revealed in lockstep with the scale-out rather than popping in after it.
     val p = progress.value
 
+    // Maps a radial-menu choice onto the viewer's action callbacks.
+    val onRadialAction: (ViewerAction) -> Unit = { action ->
+        currentItem?.let { item ->
+            when (action) {
+                ViewerAction.Delete -> onDelete(item)
+                ViewerAction.Info -> onInfo(item)
+                ViewerAction.Share -> onShare(item)
+                ViewerAction.Crop -> onCrop()
+            }
+        }
+    }
+
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -480,8 +491,8 @@ fun FullImageViewer(
             // Applies to images and videos alike: the video pill only covers the
             // bottom, so a swipe starting on the video surface reaches this
             // detector cleanly.
-            .pointerInput(currentPageZoomed, drawerVisible, actionWheelVisible, leaving, multiTouchActive, removing) {
-                if (!currentPageZoomed && !drawerVisible && !actionWheelVisible && !leaving &&
+            .pointerInput(currentPageZoomed, drawerVisible, radialVisible, leaving, multiTouchActive, removing) {
+                if (!currentPageZoomed && !drawerVisible && !radialVisible && !leaving &&
                     !multiTouchActive && !removing
                 ) {
                     detectVerticalSwipe(
@@ -492,6 +503,44 @@ fun FullImageViewer(
                         },
                         onSwipeDown = { close() },
                     )
+                }
+            }
+            // Long-press anywhere (images) summons the radial menu at the finger;
+            // keep holding and slide to a sector, release to run it. The same
+            // gesture resolves everything in one motion.
+            .pointerInput(currentPageIsVideo, drawerVisible, leaving, multiTouchActive, removing) {
+                if (currentPageIsVideo || drawerVisible || leaving || multiTouchActive || removing) {
+                    return@pointerInput
+                }
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false)
+                    val longPress = awaitLongPressOrCancellation(down.id) ?: return@awaitEachGesture
+                    haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                    radialCenter = clampRadialCenter(longPress.position, containerSize, density)
+                    radialHovered = null
+                    radialActive = true
+                    radialVisible = true
+                    longPress.consume()
+                    var last = longPress.position
+                    while (true) {
+                        val event = awaitPointerEvent()
+                        val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                        last = change.position
+                        if (!change.pressed) break
+                        val hovered = radialActionAt(last, radialCenter, density)
+                        if (hovered != radialHovered) {
+                            if (hovered != null) {
+                                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            }
+                            radialHovered = hovered
+                        }
+                        change.consume()
+                    }
+                    val action = radialHovered
+                    radialVisible = false
+                    radialHovered = null
+                    radialActive = false
+                    action?.let { onRadialAction(it) }
                 }
             },
     ) {
@@ -533,7 +582,7 @@ fun FullImageViewer(
                 userScrollEnabled = (!currentPageIsVideo || !videoPlaying) &&
                     !currentPageZoomed &&
                     !multiTouchActive &&
-                    !actionWheelVisible &&
+                    !radialVisible &&
                     !removing,
                 // Stable page identity: lets the pager remap a page to its new
                 // index when a delete shrinks the list, instead of flashing the
@@ -593,8 +642,8 @@ fun FullImageViewer(
                         item = item,
                         sourceRect = sourceRect,
                         onZoomedChange = { zoomed -> currentPageZoomed = zoomed },
-                        onTap = { toggleImageControls() },
-                        onLongPress = { drawerVisible = true },
+                        // Skip the release that resolved a long-press radial action.
+                        onTap = { if (!radialActive) toggleImageControls() },
                         multiTouchActive = multiTouchActive,
                         // Live entry/exit progress so the page morphs the grid tile's
                         // square crop into the full-resolution image and back on
@@ -693,32 +742,13 @@ fun FullImageViewer(
             }
         }
 
-        // Floating actions button + radial menu (images only). It fades with the
-        // chrome; tapping opens the menu, dragging (when unpinned) repositions it.
-        if (!currentPageIsVideo) {
-            ViewerActionOverlay(
+        // Long-press radial menu (images only).
+        if (!currentPageIsVideo && radialVisible) {
+            ViewerActionWheel(
+                center = radialCenter,
+                hovered = radialHovered,
                 containerSize = containerSize,
-                alpha = p * topChromeAlpha,
-                buttonX = actionButtonX,
-                buttonY = actionButtonY,
-                pinned = actionButtonPinned,
-                wheelVisible = actionWheelVisible,
-                onWheelVisibleChange = { visible ->
-                    actionWheelVisible = visible
-                    if (visible) showImageControls()
-                },
-                onPositionChange = onActionButtonPosition,
-                onPinnedChange = onActionButtonPinned,
-                onAction = { action ->
-                    currentItem?.let { item ->
-                        when (action) {
-                            ViewerAction.Delete -> onDelete(item)
-                            ViewerAction.Info -> onInfo(item)
-                            ViewerAction.Share -> onShare(item)
-                            ViewerAction.Crop -> onCrop()
-                        }
-                    }
-                },
+                density = density,
             )
         }
 
@@ -760,7 +790,6 @@ private fun ZoomableImage(
     sourceRect: Rect,
     onZoomedChange: (Boolean) -> Unit,
     onTap: () -> Unit,
-    onLongPress: () -> Unit,
     multiTouchActive: Boolean,
     entryProgress: () -> Float,
 ) {
@@ -913,15 +942,11 @@ private fun ZoomableImage(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                // Re-keyed on multiTouchActive so taps / long-press are dead while a
-                // two-finger pinch is in effect (only pinch-zoom should act then).
+                // Re-keyed on multiTouchActive so taps are dead while a two-finger
+                // pinch is in effect (only pinch-zoom should act then).
                 .pointerInput(multiTouchActive) {
                     if (multiTouchActive) return@pointerInput
                     detectTapGestures(
-                        onLongPress = {
-                            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                            onLongPress()
-                        },
                         onDoubleTap = { tap ->
                             flingJob.value?.cancel()
                             scope.launch {

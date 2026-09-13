@@ -152,11 +152,10 @@ edge-to-edge rendering.
 - **Double-tap:** animated zoom 1×↔3× (spring), anchored at the tap point.
 - **Pinch:** zoom (1–5×) + pan (clamped; panning disabled at 1×).
 - **Two-finger rotation:** rotates the image in the gesture direction.
-- **Long-press / swipe up:** opens the bottom action drawer.
-- **Floating actions button (images):** a draggable circular button opens a
-  **radial menu** (Delete / Info / Share / Crop) — slide to a sector and release
-  to run it, or tap the centre hub to **pin** the button's position. When
-  unpinned, dragging the button moves it; the position and pin state persist.
+- **Long-press (images):** a **radial menu** appears at your finger — keep holding
+  and slide to Delete / Info / Share / Crop, then release to run it (release in
+  the centre to cancel). One gesture, no button to find.
+- **Swipe up:** opens the bottom action drawer.
 - **Swipe down (at 1×):** dismisses the viewer.
 - **Zoomed panning:** 1:1 while dragging, then a low-friction **momentum glide**
   on release, clamped to the image bounds.

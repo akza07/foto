@@ -888,11 +888,6 @@ fun GalleryScreen(
                 onInfo = { infoItem = it },
                 onCrop = { showComingSoonToast() },
                 loopVideos = appSettings.loopVideos,
-                actionButtonX = appSettings.actionButtonX,
-                actionButtonY = appSettings.actionButtonY,
-                actionButtonPinned = appSettings.actionButtonPinned,
-                onActionButtonPosition = { x, y -> SettingsRepository.setActionButtonPosition(x, y) },
-                onActionButtonPinned = { SettingsRepository.setActionButtonPinned(it) },
             )
         }
 

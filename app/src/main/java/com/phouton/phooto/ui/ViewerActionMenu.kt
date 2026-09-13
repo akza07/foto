@@ -3,45 +3,31 @@ package com.phouton.phooto.ui
 import androidx.annotation.StringRes
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.gestures.awaitEachGesture
-import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.offset
-import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Crop
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Info
-import androidx.compose.material.icons.outlined.MoreHoriz
-import androidx.compose.material.icons.outlined.PushPin
 import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.hapticfeedback.HapticFeedbackType
-import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import com.phouton.phooto.R
-import com.phouton.phooto.ui.theme.AmoledBlack
 import com.phouton.phooto.ui.theme.DeleteRed
 import com.phouton.phooto.ui.theme.TextMuted
 import com.phouton.phooto.ui.theme.TextPrimary
@@ -50,7 +36,7 @@ import kotlin.math.cos
 import kotlin.math.roundToInt
 import kotlin.math.sin
 
-/** Actions offered by the viewer's radial menu. */
+/** Actions offered by the viewer's long-press radial menu. */
 internal enum class ViewerAction { Delete, Info, Share, Crop }
 
 private fun ViewerAction.icon(): ImageVector = when (this) {
@@ -68,265 +54,136 @@ private fun ViewerAction.labelRes(): Int = when (this) {
     ViewerAction.Crop -> R.string.action_crop
 }
 
-private val ButtonSize = 52.dp
-private val SectorSize = 46.dp
-private val WheelRadius = 86.dp
-private val HubSize = 44.dp
-private val EdgeMargin = 10.dp
+private val SectorSize = 58.dp
+private val WheelRadius = 98.dp
+private val CancelRadius = 30.dp
+private val EdgeMargin = 8.dp
+
+// High-contrast palette that reads over any photo: a dimming scrim behind a
+// near-opaque disc, solid sector fills, and a light rim on every circle.
+private val WheelSurface = Color(0xFF09090B)
+private val SectorFill = Color(0xFF27272A)
+private val SectorFillSelected = Color(0xFFFAFAFA)
+private val WheelRim = Color.White.copy(alpha = 0.22f)
+
+private fun wheelOuterPx(density: Density): Float =
+    with(density) { (WheelRadius + SectorSize / 2).toPx() }
+
+/** Clamps a long-press point so the whole wheel stays on-screen. */
+internal fun clampRadialCenter(press: Offset, containerSize: IntSize, density: Density): Offset {
+    val outer = wheelOuterPx(density)
+    val edge = with(density) { EdgeMargin.toPx() }
+    val w = containerSize.width.toFloat()
+    val h = containerSize.height.toFloat()
+    if (w < outer * 2f + edge * 2f || h < outer * 2f + edge * 2f) {
+        return Offset(w / 2f, h / 2f)
+    }
+    return Offset(
+        press.x.coerceIn(outer + edge, w - outer - edge),
+        press.y.coerceIn(outer + edge, h - outer - edge),
+    )
+}
+
+/** The action under [position] for a wheel centred at [center], or null to cancel. */
+internal fun radialActionAt(position: Offset, center: Offset, density: Density): ViewerAction? {
+    val d = position - center
+    val dist = d.getDistance()
+    val outer = wheelOuterPx(density)
+    val cancel = with(density) { CancelRadius.toPx() }
+    if (dist < cancel || dist > outer) return null
+    val deg = atan2(d.y.toDouble(), d.x.toDouble()) * 180.0 / Math.PI
+    val norm = ((deg.toFloat() + 90f) % 360f + 360f) % 360f
+    return ViewerAction.entries[(norm / 90f).roundToInt() % ViewerAction.entries.size]
+}
 
 /**
- * Floating "actions" button for the image viewer. Tap opens a radial menu; drag
- * (when unpinned) repositions it; while the menu is open, slide to a sector and
- * release to run it, or tap the centre hub to pin/unpin.
- *
- * The button is its own small touch target so the image's own gestures are
- * untouched; only when the menu is open does a full-screen layer take over.
+ * Stateless radial menu drawn at [center]. The gesture that drives it lives in
+ * the viewer (long-press to summon, slide to hover, release to run); this only
+ * renders the scrim, disc and sectors.
  */
 @Composable
-internal fun ViewerActionOverlay(
+internal fun ViewerActionWheel(
+    center: Offset,
+    hovered: ViewerAction?,
     containerSize: IntSize,
-    alpha: Float,
-    buttonX: Float,
-    buttonY: Float,
-    pinned: Boolean,
-    wheelVisible: Boolean,
-    onWheelVisibleChange: (Boolean) -> Unit,
-    onPositionChange: (Float, Float) -> Unit,
-    onPinnedChange: (Boolean) -> Unit,
-    onAction: (ViewerAction) -> Unit,
+    density: Density,
     modifier: Modifier = Modifier,
 ) {
     if (containerSize == IntSize.Zero) return
-
-    val density = LocalDensity.current
-    val haptics = LocalHapticFeedback.current
-    val w = containerSize.width.toFloat()
-    val h = containerSize.height.toFloat()
-
-    val buttonPx = with(density) { ButtonSize.toPx() }
+    val outer = wheelOuterPx(density)
+    val radiusPx = with(density) { WheelRadius.toPx() }
     val sectorPx = with(density) { SectorSize.toPx() }
-    val wheelRadiusPx = with(density) { WheelRadius.toPx() }
-    val hubPx = with(density) { HubSize.toPx() }
-    val edgePx = with(density) { EdgeMargin.toPx() }
-    val wheelOuterPx = wheelRadiusPx + sectorPx / 2f
-    val wheelBoxPx = wheelOuterPx * 2f
-    val hubHitPx = hubPx / 2f + with(density) { 8.dp.toPx() }
 
-    val clampButton: (Offset) -> Offset = { c ->
-        Offset(
-            c.x.coerceIn(buttonPx / 2f + edgePx, w - buttonPx / 2f - edgePx),
-            c.y.coerceIn(buttonPx / 2f + edgePx, h - buttonPx / 2f - edgePx),
-        )
-    }
-    val buttonCenter = clampButton(Offset(buttonX * w, buttonY * h))
-    // Nudge the wheel inward so every sector stays on-screen and reachable.
-    val wheelCenter = Offset(
-        buttonCenter.x.coerceIn(wheelBoxPx / 2f + edgePx, w - wheelBoxPx / 2f - edgePx),
-        buttonCenter.y.coerceIn(wheelBoxPx / 2f + edgePx, h - wheelBoxPx / 2f - edgePx),
-    )
-
-    var hovered by remember { mutableStateOf<ViewerAction?>(null) }
-    var previewCenter by remember { mutableStateOf<Offset?>(null) }
-
-    if (!wheelVisible) {
-        // Drag preview while repositioning.
-        previewCenter?.let { pc ->
-            Box(
-                modifier = modifier
-                    .offset {
-                        IntOffset((pc.x - buttonPx / 2f).roundToInt(), (pc.y - buttonPx / 2f).roundToInt())
-                    }
-                    .size(ButtonSize)
-                    .graphicsLayer { this.alpha = alpha }
-                    .clip(CircleShape)
-                    .border(1.dp, TextPrimary.copy(alpha = 0.7f), CircleShape)
-                    .background(TextPrimary.copy(alpha = 0.15f)),
-            )
-        }
-
-        // The button: a small node, so touches elsewhere reach the image.
+    Box(modifier = modifier.fillMaxSize()) {
+        // Scrim: dims the photo so the wheel stays legible on any background.
         Box(
-            modifier = modifier
-                .offset {
-                    IntOffset(
-                        (buttonCenter.x - buttonPx / 2f).roundToInt(),
-                        (buttonCenter.y - buttonPx / 2f).roundToInt(),
-                    )
-                }
-                .size(ButtonSize)
-                .graphicsLayer { this.alpha = if (previewCenter != null) alpha * 0.5f else alpha }
-                .pointerInput(buttonX, buttonY, pinned, containerSize) {
-                    awaitEachGesture {
-                        val down = awaitFirstDown(requireUnconsumed = false)
-                        down.consume()
-                        var moved = false
-                        var last = down.position
-                        while (true) {
-                            val event = awaitPointerEvent()
-                            val change = event.changes.firstOrNull { it.id == down.id } ?: break
-                            last = change.position
-                            if (!change.pressed) break
-                            if (!moved &&
-                                (change.position - down.position).getDistance() > viewConfiguration.touchSlop
-                            ) {
-                                moved = true
-                            }
-                            if (moved) {
-                                change.consume()
-                                if (!pinned) {
-                                    val delta = last - down.position
-                                    previewCenter = clampButton(buttonCenter + delta)
-                                }
-                            }
-                        }
-                        previewCenter = null
-                        if (moved && !pinned) {
-                            val delta = last - down.position
-                            val newCenter = clampButton(buttonCenter + delta)
-                            onPositionChange(
-                                (newCenter.x / w).coerceIn(0f, 1f),
-                                (newCenter.y / h).coerceIn(0f, 1f),
-                            )
-                        } else if (!moved) {
-                            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                            onWheelVisibleChange(true)
-                        }
-                    }
-                }
-                .shadow(8.dp, CircleShape)
-                .clip(CircleShape)
-                .background(Color.Black.copy(alpha = 0.68f)),
-            contentAlignment = Alignment.Center,
-        ) {
-            Icon(
-                imageVector = Icons.Outlined.MoreHoriz,
-                contentDescription = stringResource(R.string.viewer_actions),
-                tint = TextPrimary,
-                modifier = Modifier.size(24.dp),
-            )
-            if (!pinned) {
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.TopEnd)
-                        .padding(6.dp)
-                        .size(6.dp)
-                        .clip(CircleShape)
-                        .background(TextMuted),
-                )
-            }
-        }
-    } else {
-        // Menu open: a full-screen layer that owns the slide-to-select gesture.
-        Box(
-            modifier = modifier
+            Modifier
                 .fillMaxSize()
-                .graphicsLayer { this.alpha = alpha }
-                .background(Color.Black.copy(alpha = 0.35f))
-                .pointerInput(buttonX, buttonY, pinned, containerSize) {
-                    awaitEachGesture {
-                        val down = awaitFirstDown(requireUnconsumed = false)
-                        down.consume()
-                        var current = down.position
-                        fun updateHover(p: Offset) {
-                            val d = p - wheelCenter
-                            val dist = d.getDistance()
-                            hovered = if (dist < hubHitPx || dist > wheelOuterPx) {
-                                null
-                            } else {
-                                val deg = atan2(d.y.toDouble(), d.x.toDouble()) * 180.0 / Math.PI
-                                val norm = ((deg.toFloat() + 90f) % 360f + 360f) % 360f
-                                ViewerAction.entries[(norm / 90f).roundToInt() % ViewerAction.entries.size]
-                            }
-                        }
-                        updateHover(current)
-                        while (true) {
-                            val event = awaitPointerEvent()
-                            val change = event.changes.firstOrNull { it.id == down.id } ?: break
-                            current = change.position
-                            if (!change.pressed) break
-                            val before = hovered
-                            updateHover(current)
-                            if (before != hovered) {
-                                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                            }
-                            change.consume()
-                        }
-                        val dist = (current - wheelCenter).getDistance()
-                        val action = hovered
-                        onWheelVisibleChange(false)
-                        hovered = null
-                        when {
-                            dist < hubHitPx -> {
-                                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                                onPinnedChange(!pinned)
-                            }
-                            action != null -> onAction(action)
-                        }
-                    }
-                },
-        ) {
-            // Menu disc.
-            Box(
-                modifier = Modifier
-                    .offset {
-                        IntOffset(
-                            (wheelCenter.x - wheelOuterPx).roundToInt(),
-                            (wheelCenter.y - wheelOuterPx).roundToInt(),
-                        )
-                    }
-                    .size(with(density) { (wheelOuterPx * 2f).toDp() })
-                    .clip(CircleShape)
-                    .background(Color.Black.copy(alpha = 0.55f)),
-            )
+                .background(Color.Black.copy(alpha = 0.5f)),
+        )
 
-            ViewerAction.entries.forEachIndexed { index, action ->
-                val angle = Math.toRadians((-90f + index * 90f).toDouble())
-                val cx = wheelCenter.x + (cos(angle) * wheelRadiusPx).toFloat()
-                val cy = wheelCenter.y + (sin(angle) * wheelRadiusPx).toFloat()
-                val selected = hovered == action
-                Box(
-                    modifier = Modifier
-                        .offset {
-                            IntOffset((cx - sectorPx / 2f).roundToInt(), (cy - sectorPx / 2f).roundToInt())
-                        }
-                        .size(SectorSize)
-                        .clip(CircleShape)
-                        .background(if (selected) TextPrimary else Color.Black.copy(alpha = 0.6f)),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(
-                        imageVector = action.icon(),
-                        contentDescription = stringResource(action.labelRes()),
-                        tint = when {
-                            action == ViewerAction.Delete -> DeleteRed
-                            selected -> AmoledBlack
-                            else -> TextPrimary
-                        },
-                        modifier = Modifier.size(22.dp),
-                    )
+        // Disc.
+        Box(
+            modifier = Modifier
+                .offset {
+                    IntOffset((center.x - outer).roundToInt(), (center.y - outer).roundToInt())
                 }
-            }
+                .size(with(density) { (outer * 2f).toDp() })
+                .clip(CircleShape)
+                .background(WheelSurface.copy(alpha = 0.96f))
+                .border(1.dp, WheelRim, CircleShape),
+        )
 
-            // Centre hub: pin / unpin.
+        ViewerAction.entries.forEachIndexed { index, action ->
+            val angle = Math.toRadians((-90f + index * 90f).toDouble())
+            val cx = center.x + (cos(angle) * radiusPx).toFloat()
+            val cy = center.y + (sin(angle) * radiusPx).toFloat()
+            val selected = hovered == action
             Box(
                 modifier = Modifier
                     .offset {
-                        IntOffset((wheelCenter.x - hubPx / 2f).roundToInt(), (wheelCenter.y - hubPx / 2f).roundToInt())
+                        IntOffset((cx - sectorPx / 2f).roundToInt(), (cy - sectorPx / 2f).roundToInt())
                     }
-                    .size(HubSize)
+                    .size(SectorSize)
+                    .scale(if (selected) 1.14f else 1f)
                     .clip(CircleShape)
-                    .background(Color.Black.copy(alpha = 0.75f)),
+                    .background(if (selected) SectorFillSelected else SectorFill)
+                    .border(1.dp, WheelRim, CircleShape),
                 contentAlignment = Alignment.Center,
             ) {
                 Icon(
-                    imageVector = Icons.Outlined.PushPin,
-                    contentDescription = stringResource(
-                        if (pinned) R.string.viewer_unpin else R.string.viewer_pin,
-                    ),
-                    tint = if (pinned) TextPrimary else TextMuted,
-                    modifier = Modifier.size(20.dp),
+                    imageVector = action.icon(),
+                    contentDescription = stringResource(action.labelRes()),
+                    tint = when {
+                        selected -> Color(0xFF09090B)
+                        action == ViewerAction.Delete -> DeleteRed
+                        else -> TextPrimary
+                    },
+                    modifier = Modifier.size(24.dp),
                 )
             }
+        }
+
+        // Centre marker / cancel zone.
+        Box(
+            modifier = Modifier
+                .offset {
+                    IntOffset(
+                        (center.x - with(density) { CancelRadius.toPx() }).roundToInt(),
+                        (center.y - with(density) { CancelRadius.toPx() }).roundToInt(),
+                    )
+                }
+                .size(CancelRadius * 2)
+                .clip(CircleShape)
+                .border(1.dp, WheelRim, CircleShape),
+            contentAlignment = Alignment.Center,
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(6.dp)
+                    .clip(CircleShape)
+                    .background(TextMuted.copy(alpha = 0.6f)),
+            )
         }
     }
 }
