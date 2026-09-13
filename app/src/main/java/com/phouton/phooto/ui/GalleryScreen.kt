@@ -836,16 +836,27 @@ fun GalleryScreen(
             val count = items.size
             busyMessage = "Moving $count item${if (count == 1) "" else "s"}…"
             transferScope.launch {
-                val done = MediaRepository.moveTo(context, items, uri)
+                val result = MediaRepository.moveTo(context, items, uri)
                 busyMessage = null
                 clearSelection()
-                if (done > 0) {
-                    toastKey += 1
-                    toastMessage = "Moved $done item${if (done == 1) "" else "s"}"
-                    reload()
-                } else {
-                    toastKey += 1
-                    toastMessage = "Couldn't move"
+                when {
+                    result.total == 0 -> {
+                        toastKey += 1
+                        toastMessage = "Couldn't move"
+                    }
+                    result.copiedOnly > 0 -> {
+                        // Copied, but the source couldn't be removed (system
+                        // consent needed), so the user now has a duplicate.
+                        toastKey += 1
+                        toastMessage = "Moved ${result.moved}, copied ${result.copiedOnly} " +
+                            "(couldn't remove original)"
+                        reload()
+                    }
+                    else -> {
+                        toastKey += 1
+                        toastMessage = "Moved ${result.moved} item${if (result.moved == 1) "" else "s"}"
+                        reload()
+                    }
                 }
             }
         }

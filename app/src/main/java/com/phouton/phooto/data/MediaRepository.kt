@@ -31,6 +31,16 @@ sealed interface DeleteResult {
     data object Failed : DeleteResult
 }
 
+/** Outcome of a [MediaRepository.moveTo] batch. */
+data class MoveResult(
+    /** Copied and the source was removed. */
+    val moved: Int,
+    /** Copied but the source could not be removed (left as a duplicate). */
+    val copiedOnly: Int,
+) {
+    val total: Int get() = moved + copiedOnly
+}
+
 /**
  * MediaStore's `createDeleteRequest`/`createTrashRequest` only accept URIs from the
  * item-specific collections (Images/Video/Audio), not the generic `Files` collection.
@@ -580,22 +590,26 @@ object MediaRepository {
      * Moves [items] into the directory tree [destTreeUri]: copies each item then
      * deletes the source document (for SAF items). MediaStore sources that can't
      * be deleted directly are left for the caller to request system consent for.
-     * Returns the number of items that were fully moved (copied + source deleted).
+     *
+     * Returns [MoveResult]: [MoveResult.moved] were fully moved (copied + source
+     * deleted); [MoveResult.copiedOnly] were copied but the original could not be
+     * removed, so the caller can tell the user rather than silently duplicating.
      */
-    suspend fun moveTo(context: Context, items: List<MediaItem>, destTreeUri: Uri): Int =
+    suspend fun moveTo(context: Context, items: List<MediaItem>, destTreeUri: Uri): MoveResult =
         withContext(Dispatchers.IO) {
-            if (items.isEmpty()) return@withContext 0
-            val destDir = rootDocumentOf(context, destTreeUri) ?: return@withContext 0
+            if (items.isEmpty()) return@withContext MoveResult(0, 0)
+            val destDir = rootDocumentOf(context, destTreeUri) ?: return@withContext MoveResult(0, 0)
             var moved = 0
+            var copiedOnly = 0
             for (item in items) {
                 try {
                     if (createAndCopy(context, item, destDir)) {
-                        if (deleteSource(context, item)) moved++
+                        if (deleteSource(context, item)) moved++ else copiedOnly++
                     }
                 } catch (_: Exception) {
                 }
             }
-            moved
+            MoveResult(moved, copiedOnly)
         }
 
     /**
