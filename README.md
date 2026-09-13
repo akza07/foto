@@ -156,11 +156,10 @@ edge-to-edge rendering.
 - **Swipe down (at 1×):** dismisses the viewer.
 - **Top-left:** back button + counter pill (`3/12`).
 - **Drawer actions:** Delete (red), Share, Info, Crop ("Coming soon" shadcn toast).
-  - **Delete:** shadcn confirmation modal (red accent) → on API 30+ every
-    MediaStore item is moved to the system **trash** (`MediaStore.createTrashRequest`)
-    with an Undo bar, so deletes are always reversible; API 29 uses direct delete
-    with per-item `RecoverableSecurityException` consent. SAF items delete
-    directly (no system trash).
+  - **Delete:** shadcn confirmation modal (red accent) → MediaStore items go to
+    the system **trash** (`MediaStore.createTrashRequest`, API 30+) and SAF items
+    or API 29 use an in-app **deferred delete**. Every delete shows an **Undo**
+    bar, so it is always reversible.
   - **Share:** `ACTION_SEND` chooser with URI grant.
   - **Info:** sheet with name, size, and date.
 
@@ -262,8 +261,10 @@ edge-to-edge rendering.
   Results are grouped by month/year and open in the viewer.
 - **Open from other apps**: Phooto handles `ACTION_VIEW` and `ACTION_SEND` for
   `image/*` and `video/*`, opening the handed-over file in the viewer.
-- **Non-destructive delete**: on API 30+ deletes move files to the **system trash**
-  with an **Undo** restore bar; the trash can also be emptied from Settings.
+- **Non-destructive delete**: every delete is undoable — MediaStore items move to
+  the **system trash** (API 30+) with an **Undo** bar; SAF items and API 29 use an
+  in-app deferred delete with the same Undo bar. The trash can be emptied from
+  Settings.
 
 ---
 
