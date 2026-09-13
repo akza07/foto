@@ -233,7 +233,9 @@ edge-to-edge rendering.
     - **Only show selected folders** (toggle): switches between allow-list and deny-list.
     - **Manage folders** → a **Folders** sub-screen (slide transition, its own back
       handling) with the directory list and **Add directory**.
-  - **Storage** — *Clear thumbnail cache* (shows the current size, confirms before clearing).
+  - **Storage** — *Clear thumbnail cache* (shows the current size, confirms before
+    clearing) and *Empty trash* (API 30+, shows the trashed item count and
+    permanently deletes them after confirmation).
 - **Toggle rows** are tappable across their whole width, not just on the switch.
 - Only **Library** changes reload the media list; Display/Playback toggles apply
   through `SettingsRepository`'s `StateFlow` without re-querying MediaStore.
