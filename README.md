@@ -328,6 +328,8 @@ apk-output/phooto-arm64-android16-release.apk
 
 ## 8. Known Notes / Out of Scope
 
+- UI strings live in `res/values/strings.xml` (with `plurals` for counts); only the
+  default locale is shipped so far.
 - Crop is a placeholder ("Coming soon" toast).
 - `.nomedia` content is shown only inside directories the user explicitly adds. Content
   outside granted directories stays hidden because Android's media scanner never indexes

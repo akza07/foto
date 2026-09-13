@@ -1314,7 +1314,8 @@ private fun FolderTile(
     val isSelecting = selection.active
     val isSelected = folder in selection.selectedFolders
     val haptics = LocalHapticFeedback.current
-    val a11yLabel = stringResource(R.string.folder_a11y, folder.name, folder.count)
+    val a11yLabel = folder.name + ", " +
+        pluralStringResource(R.plurals.item_count, folder.count, folder.count)
 
     Column(
         modifier = Modifier

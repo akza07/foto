@@ -135,7 +135,6 @@
     <string name="delete_confirm_message">This action can\'t be undone.</string>
     <string name="delete_confirm_photo">Delete this photo?</string>
     <string name="delete_confirm_video">Delete this video?</string>
-    <string name="folder_a11y">%1$s, %2$d items</string>
     <plurals name="item_count">
         <item quantity="one">%1$d item</item>
         <item quantity="other">%1$d items</item>
