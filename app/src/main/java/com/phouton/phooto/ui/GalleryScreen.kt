@@ -112,6 +112,7 @@ import com.phouton.phooto.data.thumbnails.ExternalReloadSink
 import com.phouton.phooto.data.thumbnails.ThumbCache
 import com.phouton.phooto.ui.theme.AmoledBlack
 import com.phouton.phooto.ui.theme.Border
+import com.phouton.phooto.ui.theme.DeleteRed
 import com.phouton.phooto.ui.theme.Surface as SurfaceColor
 import com.phouton.phooto.ui.theme.TextMuted
 import com.phouton.phooto.ui.theme.TextPrimary
@@ -2143,8 +2144,6 @@ private fun Toast(message: String, key: Int, onDismiss: () -> Unit) {
         }
     }
 }
-
-private val DeleteRed = Color(0xFFEF4444)
 
 /**
  * Undo bar shown after items are moved to the system trash. Sits where the toast

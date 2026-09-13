@@ -85,6 +85,7 @@ import coil3.compose.AsyncImage
 import coil3.request.ImageRequest
 import com.phouton.phooto.data.MediaItem
 import com.phouton.phooto.ui.theme.AmoledBlack
+import com.phouton.phooto.ui.theme.DeleteRed
 import com.phouton.phooto.ui.theme.Surface as ThemeSurface
 import com.phouton.phooto.ui.theme.TextMuted
 import com.phouton.phooto.ui.theme.TextPrimary
@@ -93,7 +94,6 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 private val SheetRadius = RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp)
-private val DeleteRed = Color(0xFFEF4444)
 
 /** Slide duration when a delete moves the viewer to the adjacent item. */
 private const val DeleteSlideDurationMs = 280

@@ -75,6 +75,7 @@ import androidx.media3.ui.compose.state.rememberSeekBackButtonState
 import androidx.media3.ui.compose.state.rememberSeekForwardButtonState
 import com.phouton.phooto.data.MediaItem
 import com.phouton.phooto.ui.theme.AmoledBlack
+import com.phouton.phooto.ui.theme.DeleteRed
 import com.phouton.phooto.ui.theme.TextMuted
 import com.phouton.phooto.ui.theme.TextPrimary
 import kotlinx.coroutines.Job
@@ -87,7 +88,6 @@ import kotlinx.coroutines.withTimeoutOrNull
 private val SeekTrackColor = Color(0xFF3F3F46)   // zinc-700 — visible but subtle track
 private val SeekBufferedColor = Color(0xFF71717A) // zinc-500 — buffered segment
 private val SeekFillColor = Color(0xFFFAFAFA)     // white — played segment
-private val DeleteRed = Color(0xFFEF4444)
 
 /** Playback speeds offered by the speed chip, in menu order. */
 private val PlaybackSpeeds = listOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 2f)
