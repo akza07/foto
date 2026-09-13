@@ -19,6 +19,8 @@ data class MediaInfo(
     val width: Int,
     val height: Int,
     val dateAdded: Long,
+    val dateModified: Long = 0L,
+    val mimeType: String? = null,
 )
 
 /** Outcome of a [MediaRepository.delete] attempt. */
@@ -484,6 +486,7 @@ object MediaRepository {
                         DocumentsContract.Document.COLUMN_DISPLAY_NAME,
                         DocumentsContract.Document.COLUMN_SIZE,
                         DocumentsContract.Document.COLUMN_LAST_MODIFIED,
+                        DocumentsContract.Document.COLUMN_MIME_TYPE,
                     )
                     context.contentResolver.query(
                         item.uri,
@@ -497,13 +500,10 @@ object MediaRepository {
                                 ?: item.uri.lastPathSegment ?: "Unknown"
                             val size = cursor.getLong(1)
                             val lastModified = cursor.getLong(2)
-                            MediaInfo(
-                                name = name,
-                                sizeBytes = size,
-                                width = 0,
-                                height = 0,
-                                dateAdded = if (lastModified > 0) lastModified / 1000L else 0L,
-                            )
+                            val mime = cursor.getString(3)
+                            val (w, h) = readDimensions(context, item.uri, mime)
+                            val seconds = if (lastModified > 0) lastModified / 1000L else 0L
+                            MediaInfo(name, size, w, h, seconds, seconds, mime)
                         } else {
                             null
                         }
@@ -513,6 +513,10 @@ object MediaRepository {
                         MediaStore.MediaColumns.DISPLAY_NAME,
                         MediaStore.MediaColumns.SIZE,
                         MediaStore.MediaColumns.DATE_ADDED,
+                        MediaStore.MediaColumns.DATE_MODIFIED,
+                        MediaStore.MediaColumns.WIDTH,
+                        MediaStore.MediaColumns.HEIGHT,
+                        MediaStore.MediaColumns.MIME_TYPE,
                     )
                     context.contentResolver.query(
                         item.uri,
@@ -525,7 +529,16 @@ object MediaRepository {
                             val name = cursor.getString(0) ?: item.uri.lastPathSegment ?: "Unknown"
                             val size = cursor.getLong(1)
                             val dateAdded = cursor.getLong(2)
-                            MediaInfo(name, size, 0, 0, dateAdded)
+                            val dateModified = cursor.getLong(3)
+                            var w = cursor.getInt(4)
+                            var h = cursor.getInt(5)
+                            val mime = cursor.getString(6)
+                            if (w <= 0 || h <= 0) {
+                                val dims = readDimensions(context, item.uri, mime)
+                                w = dims.first
+                                h = dims.second
+                            }
+                            MediaInfo(name, size, w, h, dateAdded, dateModified, mime)
                         } else {
                             null
                         }
@@ -535,6 +548,39 @@ object MediaRepository {
                 null
             }
         }
+
+    /**
+     * Best-effort pixel dimensions: MediaMetadataRetriever (rotation-aware) for
+     * video, bounds-only decode for images. Returns (0, 0) if unreadable.
+     */
+    private fun readDimensions(context: Context, uri: Uri, mime: String?): Pair<Int, Int> = try {
+        if (mime?.startsWith("video/") == true) {
+            val retriever = android.media.MediaMetadataRetriever()
+            try {
+                retriever.setDataSource(context, uri)
+                val w = retriever.extractMetadata(
+                    android.media.MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH,
+                )?.toIntOrNull() ?: 0
+                val h = retriever.extractMetadata(
+                    android.media.MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT,
+                )?.toIntOrNull() ?: 0
+                val rotation = retriever.extractMetadata(
+                    android.media.MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION,
+                )?.toIntOrNull() ?: 0
+                if (rotation == 90 || rotation == 270) h to w else w to h
+            } finally {
+                runCatching { retriever.release() }
+            }
+        } else {
+            val opts = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            context.contentResolver.openInputStream(uri)?.use {
+                android.graphics.BitmapFactory.decodeStream(it, null, opts)
+            }
+            opts.outWidth to opts.outHeight
+        }
+    } catch (_: Exception) {
+        0 to 0
+    }
 
     /** Removes the media item from the gallery. */
     suspend fun delete(context: Context, item: MediaItem): DeleteResult =

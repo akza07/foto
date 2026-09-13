@@ -95,6 +95,7 @@ import androidx.compose.ui.zIndex
 import com.phouton.phooto.data.GalleryContent
 import com.phouton.phooto.data.DeleteResult
 import com.phouton.phooto.data.MediaFolder
+import com.phouton.phooto.data.MediaInfo
 import com.phouton.phooto.data.MediaItem
 import com.phouton.phooto.data.MediaRepository
 import com.phouton.phooto.data.SettingsRepository
@@ -1029,6 +1030,7 @@ fun GalleryScreen(
         val deleteTarget = pendingDeleteItem
         if (deleteTarget != null) {
             DeleteConfirmDialog(
+                item = deleteTarget,
                 onConfirm = {
                     pendingDeleteItem = null
                     requestDelete(deleteTarget)
@@ -1907,7 +1909,7 @@ private fun FlyInTile(
 @Composable
 private fun InfoSheet(item: MediaItem, onClose: () -> Unit) {
     val context = LocalContext.current
-    var info by remember { mutableStateOf<com.phouton.phooto.data.MediaInfo?>(null) }
+    var info by remember { mutableStateOf<MediaInfo?>(null) }
 
     LaunchedEffect(item) {
         info = MediaRepository.loadInfo(context, item)
@@ -1932,11 +1934,24 @@ private fun InfoSheet(item: MediaItem, onClose: () -> Unit) {
                 Spacer(Modifier.height(12.dp))
                 val d = info
                 InfoRow("Name", d?.name ?: "…")
+                InfoRow("Type", typeLabel(item, d))
                 InfoRow("Size", d?.let { formatSize(it.sizeBytes) } ?: "…")
+                val w = d?.width ?: 0
+                val h = d?.height ?: 0
+                if (w > 0 && h > 0) InfoRow("Dimensions", "$w × $h")
+                if (item.bucketName.isNotBlank()) InfoRow("Album", item.bucketName)
                 InfoRow("Date added", d?.let { formatDate(it.dateAdded) } ?: "…")
+                val modified = d?.dateModified ?: 0L
+                if (modified > 0L) InfoRow("Date modified", formatDate(modified))
             }
         }
     }
+}
+
+/** Human-readable kind: the MIME type when known, else Image/Video. */
+private fun typeLabel(item: MediaItem, info: MediaInfo?): String {
+    val mime = info?.mimeType ?: item.mimeType
+    return mime ?: if (item.isVideo) "Video" else "Image"
 }
 
 @Composable
@@ -1955,9 +1970,12 @@ private fun InfoRow(label: String, value: String) {
 private fun formatSize(bytes: Long): String {
     val kb = bytes / 1024.0
     val mb = kb / 1024.0
+    val gb = mb / 1024.0
     return when {
-        mb >= 1 -> String.format("%.1f MB", mb)
-        else -> String.format("%.0f KB", kb)
+        gb >= 1 -> String.format(java.util.Locale.US, "%.2f GB", gb)
+        mb >= 1 -> String.format(java.util.Locale.US, "%.1f MB", mb)
+        kb >= 1 -> String.format(java.util.Locale.US, "%.0f KB", kb)
+        else -> "$bytes B"
     }
 }
 
@@ -2012,7 +2030,7 @@ private val DeleteRed = Color(0xFFEF4444)
 
 /** Shadcn-style delete confirmation modal with a red-accented confirm button. */
 @Composable
-private fun DeleteConfirmDialog(onConfirm: () -> Unit, onDismiss: () -> Unit) {
+private fun DeleteConfirmDialog(item: MediaItem, onConfirm: () -> Unit, onDismiss: () -> Unit) {
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -2030,7 +2048,7 @@ private fun DeleteConfirmDialog(onConfirm: () -> Unit, onDismiss: () -> Unit) {
         ) {
             Column(modifier = Modifier.padding(24.dp)) {
                 Text(
-                    text = "Delete this photo?",
+                    text = "Delete this ${if (item.isVideo) "video" else "photo"}?",
                     color = TextPrimary,
                     fontSize = 18.sp,
                     fontWeight = FontWeight.SemiBold,
