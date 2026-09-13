@@ -136,99 +136,6 @@ private val GridSpacing = 8.dp
 // Height of the selection action bar so grids can reserve space for it.
 private val ActionBarHeightDp = 96.dp
 
-/** Confirmation dialog for deleting multiple selected items. */
-@Composable
-private fun MultiDeleteConfirmDialog(
-    count: Int,
-    onConfirm: () -> Unit,
-    onDismiss: () -> Unit,
-) {
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(AmoledBlack.copy(alpha = 0.7f))
-            .clickable(onClick = onDismiss, indication = null, interactionSource = null),
-        contentAlignment = Alignment.Center,
-    ) {
-        Surface(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 32.dp),
-            shape = RoundedCornerShape(16.dp),
-            color = SurfaceColor,
-            shadowElevation = 0.dp,
-        ) {
-            Column(modifier = Modifier.padding(24.dp)) {
-                Text(
-                    text = "Delete $count item${if (count == 1) "" else "s"}?",
-                    color = TextPrimary,
-                    fontSize = 18.sp,
-                    fontWeight = FontWeight.SemiBold,
-                )
-                Spacer(Modifier.height(8.dp))
-                Text(
-                    text = "This action can't be undone.",
-                    color = TextMuted,
-                    fontSize = 14.sp,
-                )
-                Spacer(Modifier.height(24.dp))
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                ) {
-                    // Cancel (outlined).
-                    Surface(
-                        modifier = Modifier
-                            .weight(1f)
-                            .clip(RoundedCornerShape(10.dp))
-                            .clickable(onClick = onDismiss, indication = null, interactionSource = null),
-                        shape = RoundedCornerShape(10.dp),
-                        color = Color.Transparent,
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(44.dp),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            Text(
-                                text = "Cancel",
-                                color = TextPrimary,
-                                fontSize = 14.sp,
-                                fontWeight = FontWeight.Medium,
-                            )
-                        }
-                    }
-                    // Confirm (red accent).
-                    Surface(
-                        modifier = Modifier
-                            .weight(1f)
-                            .clip(RoundedCornerShape(10.dp))
-                            .clickable(onClick = onConfirm, indication = null, interactionSource = null),
-                        shape = RoundedCornerShape(10.dp),
-                        color = DeleteRed,
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(44.dp),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            Text(
-                                text = "Delete",
-                                color = Color.White,
-                                fontSize = 14.sp,
-                                fontWeight = FontWeight.SemiBold,
-                            )
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
 /** Simple centered spinner + label overlay while a long operation runs. */
 @Composable
 private fun BusyOverlay(message: String) {
@@ -984,8 +891,11 @@ fun GalleryScreen(
 
         val deleteTarget = pendingDeleteItem
         if (deleteTarget != null) {
-            DeleteConfirmDialog(
-                item = deleteTarget,
+            ConfirmDialog(
+                title = "Delete this ${if (deleteTarget.isVideo) "video" else "photo"}?",
+                message = "This action can't be undone.",
+                confirmLabel = "Delete",
+                destructive = true,
                 onConfirm = {
                     pendingDeleteItem = null
                     requestDelete(deleteTarget)
@@ -1024,8 +934,11 @@ fun GalleryScreen(
         // Batch-delete confirmation dialog.
         val batch = pendingBatchDelete
         if (batch != null && batch.isNotEmpty()) {
-            MultiDeleteConfirmDialog(
-                count = batch.size,
+            ConfirmDialog(
+                title = "Delete ${batch.size} item${if (batch.size == 1) "" else "s"}?",
+                message = "This action can't be undone.",
+                confirmLabel = "Delete",
+                destructive = true,
                 onConfirm = {
                     pendingBatchDelete = null
                     requestBatchDelete(batch)
@@ -2082,95 +1995,6 @@ private fun UndoBar(key: Int, onUndo: () -> Unit, onDismiss: () -> Unit) {
                             .padding(horizontal = 12.dp, vertical = 10.dp),
                     )
                     Spacer(Modifier.width(8.dp))
-                }
-            }
-        }
-    }
-}
-
-/** Shadcn-style delete confirmation modal with a red-accented confirm button. */
-@Composable
-private fun DeleteConfirmDialog(item: MediaItem, onConfirm: () -> Unit, onDismiss: () -> Unit) {
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(AmoledBlack.copy(alpha = 0.7f))
-            .clickable(onClick = onDismiss, indication = null, interactionSource = null),
-        contentAlignment = Alignment.Center,
-    ) {
-        Surface(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 32.dp),
-            shape = RoundedCornerShape(16.dp),
-            color = SurfaceColor,
-            shadowElevation = 0.dp,
-        ) {
-            Column(modifier = Modifier.padding(24.dp)) {
-                Text(
-                    text = "Delete this ${if (item.isVideo) "video" else "photo"}?",
-                    color = TextPrimary,
-                    fontSize = 18.sp,
-                    fontWeight = FontWeight.SemiBold,
-                )
-                Spacer(Modifier.height(8.dp))
-                Text(
-                    text = "This action can't be undone.",
-                    color = TextMuted,
-                    fontSize = 14.sp,
-                )
-                Spacer(Modifier.height(24.dp))
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                ) {
-                    // Cancel (outlined).
-                    Surface(
-                        modifier = Modifier
-                            .weight(1f)
-                            .clip(RoundedCornerShape(10.dp))
-                            .clickable(onClick = onDismiss, indication = null, interactionSource = null),
-                        shape = RoundedCornerShape(10.dp),
-                        color = Color.Transparent,
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(44.dp),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            Text(
-                                text = "Cancel",
-                                color = TextPrimary,
-                                fontSize = 14.sp,
-                                fontWeight = FontWeight.Medium,
-                            )
-                        }
-                    }
-                    // Confirm (red accent).
-                    Surface(
-                        modifier = Modifier
-                            .weight(1f)
-                            .clip(RoundedCornerShape(10.dp))
-                            .clickable(onClick = onConfirm, indication = null, interactionSource = null),
-                        shape = RoundedCornerShape(10.dp),
-                        color = DeleteRed,
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(44.dp),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            Text(
-                                text = "Delete",
-                                color = Color.White,
-                                fontSize = 14.sp,
-                                fontWeight = FontWeight.SemiBold,
-                            )
-                        }
-                    }
                 }
             }
         }

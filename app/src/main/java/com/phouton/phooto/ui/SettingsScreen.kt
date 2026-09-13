@@ -255,7 +255,12 @@ private fun SettingsRoot(
     }
 
     if (showClearConfirm) {
-        ClearCacheConfirmDialog(
+        ConfirmDialog(
+            title = "Clear thumbnail cache?",
+            message = "Cached previews will be deleted and regenerated the next time " +
+                "you scroll. This may take a moment.",
+            confirmLabel = "Clear",
+            destructive = false,
             onConfirm = {
                 showClearConfirm = false
                 clearing = true
@@ -477,95 +482,6 @@ private fun formatCacheSize(bytes: Long): String {
         mb >= 1 -> String.format("%.1f MB", mb)
         kb >= 1 -> String.format("%.0f KB", kb)
         else -> "$bytes B"
-    }
-}
-
-@Composable
-private fun ClearCacheConfirmDialog(
-    onConfirm: () -> Unit,
-    onDismiss: () -> Unit,
-) {
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(AmoledBlack.copy(alpha = 0.7f))
-            .clickable(onClick = onDismiss, indication = null, interactionSource = null),
-        contentAlignment = Alignment.Center,
-    ) {
-        Surface(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 32.dp),
-            shape = RoundedCornerShape(16.dp),
-            color = ThemeSurface,
-            shadowElevation = 0.dp,
-        ) {
-            Column(modifier = Modifier.padding(24.dp)) {
-                Text(
-                    text = "Clear thumbnail cache?",
-                    color = TextPrimary,
-                    fontSize = 18.sp,
-                    fontWeight = FontWeight.SemiBold,
-                )
-                Spacer(Modifier.height(8.dp))
-                Text(
-                    text = "Cached previews will be deleted and regenerated the next time you scroll. This may take a moment.",
-                    color = TextMuted,
-                    fontSize = 14.sp,
-                    lineHeight = 20.sp,
-                )
-                Spacer(Modifier.height(24.dp))
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                ) {
-                    Surface(
-                        modifier = Modifier
-                            .weight(1f)
-                            .clip(RoundedCornerShape(10.dp))
-                            .clickable(onClick = onDismiss, indication = null, interactionSource = null),
-                        shape = RoundedCornerShape(10.dp),
-                        color = Color.Transparent,
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(44.dp),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            Text(
-                                text = "Cancel",
-                                color = TextPrimary,
-                                fontSize = 14.sp,
-                                fontWeight = FontWeight.Medium,
-                            )
-                        }
-                    }
-                    Surface(
-                        modifier = Modifier
-                            .weight(1f)
-                            .clip(RoundedCornerShape(10.dp))
-                            .clickable(onClick = onConfirm, indication = null, interactionSource = null),
-                        shape = RoundedCornerShape(10.dp),
-                        color = TextPrimary,
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(44.dp),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            Text(
-                                text = "Clear",
-                                color = AmoledBlack,
-                                fontSize = 14.sp,
-                                fontWeight = FontWeight.SemiBold,
-                            )
-                        }
-                    }
-                }
-            }
-        }
     }
 }
 
