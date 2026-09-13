@@ -86,9 +86,14 @@ object ThumbCache {
      * underlying `SingletonImageLoader.setSafe` is idempotent in Coil 3.
      */
     fun init(context: Context) {
-        if (initialized) return
         val app = context.applicationContext
+        // Always re-arm: MainActivity calls shutdown() on destroy, and an
+        // activity can be recreated in a surviving process. Bailing out on
+        // [initialized] alone would leave [shutdown] latched true, silently
+        // disabling every enqueue for the rest of the process.
         appContext = app
+        shutdown = false
+        if (initialized) return
 
         SingletonImageLoader.setSafe { ctx ->
             val cacheDir = app.filesDir.resolve(DISK_CACHE_DIR).apply { mkdirs() }
