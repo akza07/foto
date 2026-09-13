@@ -164,10 +164,10 @@ edge-to-edge rendering.
   on release, clamped to the image bounds.
 - **Top-left:** back button + counter pill (`3/12`).
 - **Drawer actions:** Delete (red), Share, Info, Crop ("Coming soon" shadcn toast).
-  - **Delete:** shadcn confirmation modal (red accent) → MediaStore items go to
-    the system **trash** (`MediaStore.createTrashRequest`, API 30+) and SAF items
-    or API 29 use an in-app **deferred delete**. Every delete shows an **Undo**
-    bar, so it is always reversible.
+  - **Delete:** shadcn confirmation modal (red accent) → the file is copied into
+    **Phooto's own trash** (`filesDir/trash`, isolated from Android's system trash)
+    and then its original is removed, so every delete shows an **Undo** bar and can
+    be restored later from **Settings → Storage → Trash**.
   - **Share:** `ACTION_SEND` chooser with URI grant.
   - **Info:** sheet with name, size, and date.
 
@@ -241,8 +241,8 @@ edge-to-edge rendering.
     - **Manage folders** → a **Folders** sub-screen (slide transition, its own back
       handling) with the directory list and **Add directory**.
   - **Storage** — *Clear thumbnail cache* (shows the current size, confirms before
-    clearing) and *Empty trash* (API 30+, shows the trashed item count and
-    permanently deletes them after confirmation).
+    clearing) and *Trash* (shows the count/size and opens a Trash screen with
+    per-item restore and empty).
 - **Toggle rows** are tappable across their whole width, not just on the switch.
 - Only **Library** changes reload the media list; Display/Playback toggles apply
   through `SettingsRepository`'s `StateFlow` without re-querying MediaStore.
@@ -269,10 +269,10 @@ edge-to-edge rendering.
   Results are grouped by month/year and open in the viewer.
 - **Open from other apps**: Phooto handles `ACTION_VIEW` and `ACTION_SEND` for
   `image/*` and `video/*`, opening the handed-over file in the viewer.
-- **Non-destructive delete**: every delete is undoable — MediaStore items move to
-  the **system trash** (API 30+) with an **Undo** bar; SAF items and API 29 use an
-  in-app deferred delete with the same Undo bar. The trash can be emptied from
-  Settings.
+- **Non-destructive delete**: every delete is undoable — the file is copied into
+  Phooto's **own trash** first (isolated from Android's system trash), then removed.
+  The Trash screen (Settings → Storage → Trash) lists what Phooto deleted, with
+  restore and empty.
 
 ---
 

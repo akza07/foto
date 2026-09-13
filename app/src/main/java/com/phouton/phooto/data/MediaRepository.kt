@@ -59,35 +59,8 @@ fun mediaCollectionUri(isVideo: Boolean, id: Long): Uri {
     return ContentUris.withAppendedId(collection, id)
 }
 
-/**
- * Consent sender that moves [items] to the system trash (API 30+). Trashed items
- * can be restored by the user or in-app via [restoreConsentSender]. Returns null
- * on older API levels or if the request can't be built.
- */
-fun trashConsentSender(context: Context, items: List<MediaItem>): android.content.IntentSender? {
-    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return null
-    return runCatching {
-        MediaStore.createTrashRequest(
-            context.contentResolver,
-            items.filter { it.id != 0L }.map { mediaCollectionUri(it.isVideo, it.id) },
-            true,
-        ).intentSender
-    }.getOrNull()
-}
-
-/** Consent sender that restores [items] from the trash (API 30+), or null. */
-fun restoreConsentSender(context: Context, items: List<MediaItem>): android.content.IntentSender? {
-    val uris = items.filter { it.id != 0L }.map { mediaCollectionUri(it.isVideo, it.id) }
-    if (uris.isEmpty()) return null
-    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return null
-    return runCatching {
-        // createTrashRequest with isTrash = false is the restore operation.
-        MediaStore.createTrashRequest(context.contentResolver, uris, false).intentSender
-    }.getOrNull()
-}
-
-/** Consent sender that permanently deletes trashed [items] (API 30+), or null. */
-fun emptyTrashConsentSender(context: Context, items: List<MediaItem>): android.content.IntentSender? {
+/** Consent sender that permanently deletes [items] (API 30+), or null. */
+fun deleteConsentSender(context: Context, items: List<MediaItem>): android.content.IntentSender? {
     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return null
     val uris = items.filter { it.id != 0L }.map { mediaCollectionUri(it.isVideo, it.id) }
     if (uris.isEmpty()) return null
@@ -389,24 +362,6 @@ object MediaRepository {
             val folderItems = content.folders.flatMap { loadBucket(context, it) }
             folderItems + content.looseItems
         }
-
-    /**
-     * Image/video rows currently in the system trash (API 30+), used by the
-     * Settings "Empty trash" action. Empty on older API levels, which have no
-     * system trash.
-     */
-    suspend fun trashedItems(context: Context): List<MediaItem> = withContext(Dispatchers.IO) {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return@withContext emptyList()
-        queryMediaInternal(
-            context,
-            selection = "${MediaStore.Files.FileColumns.MEDIA_TYPE} IN (?, ?)",
-            selectionArgs = arrayOf(
-                MediaStore.Files.FileColumns.MEDIA_TYPE_IMAGE.toString(),
-                MediaStore.Files.FileColumns.MEDIA_TYPE_VIDEO.toString(),
-            ),
-            trashed = true,
-        )
-    }
 
     /**
      * Resolves a single content Uri handed over by another app (VIEW/SEND) into a
@@ -787,16 +742,12 @@ object MediaRepository {
         context: Context,
         selection: String,
         selectionArgs: Array<String>,
-        trashed: Boolean = false,
     ): List<MediaItem> {
         val collection = MediaStore.Files.getContentUri("external")
         val sortOrder = "${MediaStore.Files.FileColumns.DATE_ADDED} DESC"
-        // Trashed items (API 30+) must not reappear in the gallery after a
-        // "move to trash"; they are still MediaStore rows until purged. The
-        // trash browser asks for them explicitly.
+        // Items another app moved to the system trash stay hidden.
         val effectiveSelection = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            val trashState = if (trashed) 1 else 0
-            "($selection) AND (${MediaStore.MediaColumns.IS_TRASHED} = $trashState)"
+            "($selection) AND (${MediaStore.MediaColumns.IS_TRASHED} = 0)"
         } else {
             selection
         }

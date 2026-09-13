@@ -2,7 +2,6 @@ package com.phouton.phooto.ui
 
 import android.content.Intent
 import android.net.Uri
-import android.os.Build
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -57,11 +56,9 @@ import com.phouton.phooto.R
 import com.phouton.phooto.data.AppSettings
 import com.phouton.phooto.data.GalleryEvents
 import com.phouton.phooto.data.GridSize
-import com.phouton.phooto.data.MediaItem
-import com.phouton.phooto.data.MediaRepository
 import com.phouton.phooto.data.MediaSort
 import com.phouton.phooto.data.SettingsRepository
-import com.phouton.phooto.data.emptyTrashConsentSender
+import com.phouton.phooto.data.TrashStore
 import com.phouton.phooto.data.thumbnails.ThumbCache
 import com.phouton.phooto.data.thumbnails.VideoFrameCache
 import com.phouton.phooto.ui.theme.AmoledBlack
@@ -70,6 +67,7 @@ import com.phouton.phooto.ui.theme.TextMuted
 import com.phouton.phooto.ui.theme.TextPrimary
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * Settings, grouped by intent:
@@ -86,6 +84,7 @@ import kotlinx.coroutines.launch
 fun SettingsScreen(onBack: () -> Unit, onSettingsChanged: () -> Unit) {
     val settings by SettingsRepository.settings.collectAsState()
     var showFolders by remember { mutableStateOf(false) }
+    var showTrash by remember { mutableStateOf(false) }
 
     Box(
         modifier = Modifier
@@ -97,6 +96,7 @@ fun SettingsScreen(onBack: () -> Unit, onSettingsChanged: () -> Unit) {
             onBack = onBack,
             onSettingsChanged = onSettingsChanged,
             onManageFolders = { showFolders = true },
+            onOpenTrash = { showTrash = true },
         )
 
         AnimatedVisibility(
@@ -110,6 +110,17 @@ fun SettingsScreen(onBack: () -> Unit, onSettingsChanged: () -> Unit) {
                 onSettingsChanged = onSettingsChanged,
             )
         }
+
+        AnimatedVisibility(
+            visible = showTrash,
+            enter = slideInHorizontally(initialOffsetX = { it }) + fadeIn(),
+            exit = slideOutHorizontally(targetOffsetX = { it }) + fadeOut(),
+        ) {
+            TrashScreen(
+                onBack = { showTrash = false },
+                onChanged = onSettingsChanged,
+            )
+        }
     }
 }
 
@@ -119,6 +130,7 @@ private fun SettingsRoot(
     onBack: () -> Unit,
     onSettingsChanged: () -> Unit,
     onManageFolders: () -> Unit,
+    onOpenTrash: () -> Unit,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -132,28 +144,16 @@ private fun SettingsRoot(
     var showClearConfirm by remember { mutableStateOf(false) }
     var showSortDialog by remember { mutableStateOf(false) }
     var showGridDialog by remember { mutableStateOf(false) }
-    // System trash (API 30+). null while loading, empty when nothing is trashed.
-    var trashItems by remember { mutableStateOf<List<MediaItem>?>(null) }
-    var showEmptyTrashConfirm by remember { mutableStateOf(false) }
-    var emptyingTrash by remember { mutableStateOf(false) }
-    var pendingEmptyTrash by remember { mutableStateOf<List<MediaItem>>(emptyList()) }
-
-    val emptyTrashLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.StartIntentSenderForResult()
-    ) { result ->
-        val pending = pendingEmptyTrash
-        pendingEmptyTrash = emptyList()
-        emptyingTrash = false
-        if (result.resultCode == android.app.Activity.RESULT_OK && pending.isNotEmpty()) {
-            trashItems = emptyList()
-            GalleryEvents.requestReload()
-            onSettingsChanged()
-        }
-    }
+    // App-private trash summary; null while loading.
+    var trashCount by remember { mutableStateOf<Int?>(null) }
+    var trashBytes by remember { mutableStateOf(0L) }
 
     LaunchedEffect(Unit) {
         cacheBytes = with(Dispatchers.IO) { ThumbCache.totalCacheBytes() }
-        trashItems = MediaRepository.trashedItems(context)
+        withContext(Dispatchers.IO) {
+            trashCount = TrashStore.count(context)
+            trashBytes = TrashStore.sizeBytes(context)
+        }
     }
 
     Column(
@@ -263,26 +263,20 @@ private fun SettingsRoot(
                         loading = clearing,
                         onClick = { showClearConfirm = true },
                     )
-                    // The system trash only exists on API 30+.
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                        SettingsDivider()
-                        SettingsActionRow(
-                            title = stringResource(R.string.storage_empty_trash_title),
-                            subtitle = when {
-                                emptyingTrash -> stringResource(R.string.storage_emptying_trash)
-                                trashItems == null -> stringResource(R.string.storage_checking_trash)
-                                trashItems!!.isEmpty() -> stringResource(R.string.storage_trash_empty)
-                                else -> {
-                                    val n = trashItems!!.size
-                                    pluralStringResource(R.plurals.item_count, n, n)
-                                }
-                            },
-                            enabled = !emptyingTrash && (trashItems?.isNotEmpty() == true),
-                            showChevron = !emptyingTrash,
-                            loading = emptyingTrash,
-                            onClick = { showEmptyTrashConfirm = true },
-                        )
-                    }
+                    SettingsDivider()
+                    SettingsActionRow(
+                        title = stringResource(R.string.storage_trash_title),
+                        subtitle = when {
+                            trashCount == null -> stringResource(R.string.storage_checking_trash)
+                            trashCount == 0 -> stringResource(R.string.storage_trash_empty)
+                            else -> {
+                                val n = trashCount!!
+                                "${pluralStringResource(R.plurals.item_count, n, n)} · " +
+                                    formatCacheSize(trashBytes)
+                            }
+                        },
+                        onClick = onOpenTrash,
+                    )
                 }
             }
             // ── About ────────────────────────────────────────────────
@@ -327,28 +321,6 @@ private fun SettingsRoot(
                 }
             },
             onDismiss = { showClearConfirm = false },
-        )
-    }
-
-    if (showEmptyTrashConfirm) {
-        ConfirmDialog(
-            title = stringResource(R.string.empty_trash_confirm_title),
-            message = stringResource(R.string.empty_trash_confirm_message),
-            confirmLabel = stringResource(R.string.action_empty),
-            destructive = true,
-            onConfirm = {
-                showEmptyTrashConfirm = false
-                val items = trashItems.orEmpty()
-                val sender = emptyTrashConsentSender(context, items)
-                if (sender != null) {
-                    pendingEmptyTrash = items
-                    emptyingTrash = true
-                    emptyTrashLauncher.launch(
-                        androidx.activity.result.IntentSenderRequest.Builder(sender).build(),
-                    )
-                }
-            },
-            onDismiss = { showEmptyTrashConfirm = false },
         )
     }
 

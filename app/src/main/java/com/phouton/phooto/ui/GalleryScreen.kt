@@ -90,6 +90,8 @@ import com.phouton.phooto.data.MediaFolder
 import com.phouton.phooto.data.MediaItem
 import com.phouton.phooto.data.MediaRepository
 import com.phouton.phooto.data.SettingsRepository
+import com.phouton.phooto.data.TrashEntry
+import com.phouton.phooto.data.TrashStore
 import com.phouton.phooto.data.thumbnails.ThumbCache
 import com.phouton.phooto.ui.theme.AmoledBlack
 import com.phouton.phooto.ui.theme.Border
@@ -106,8 +108,10 @@ import dev.chrisbanes.haze.HazeTint
 import dev.chrisbanes.haze.hazeEffect
 import dev.chrisbanes.haze.hazeSource
 import dev.chrisbanes.haze.rememberHazeState
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 private val TileShape = RoundedCornerShape(12.dp)
 private val GridSpacing = 8.dp
@@ -356,85 +360,123 @@ fun GalleryScreen(
         }
     }
 
-    // ── Delete consent ──────────────────────────────────────────────────────
-    // Some MediaStore items need explicit user consent. API 30+ uses a single
-    // MediaStore.createTrashRequest for the whole batch (restorable from the
-    // Undo bar); API 29 hands back a per-item RecoverableSecurityException
-    // intent sender, processed one at a time through this queue.
+    // ── Delete: move into Phooto's own trash ────────────────────────────────
+    // A deleted file is first copied into the app-private trash ([TrashStore]),
+    // then its original is removed. Deletes are isolated from Android's system
+    // trash: the Undo bar and the Trash screen only ever touch our copies.
     val scope = rememberCoroutineScope()
-    var pendingConsent by remember { mutableStateOf<List<MediaItem>>(emptyList()) }
-    // True when the in-flight consent intent covers every entry of
-    // [pendingConsent] (API 30+ batch); false for API 29's per-item flow.
+    // MediaStore items whose original still needs a system delete consent.
+    var pendingDeleteItems by remember { mutableStateOf<List<MediaItem>>(emptyList()) }
+    var pendingDeleteEntries by remember {
+        mutableStateOf<Map<android.net.Uri, TrashEntry>>(emptyMap())
+    }
+    // True when the in-flight consent covers the whole batch (API 30+); false for
+    // API 29's per-item RecoverableSecurityException flow.
     var consentCoversAll by remember { mutableStateOf(false) }
-    // True when the in-flight consent is a trash (API 30+) rather than a delete.
-    var consentIsTrash by remember { mutableStateOf(false) }
-    // Items moved to the trash that can still be restored (API 31+).
-    var undoItems by remember { mutableStateOf<List<MediaItem>?>(null) }
+    // Trash entries the Undo bar can restore.
+    var undoTrashEntries by remember { mutableStateOf<List<TrashEntry>?>(null) }
     var undoKey by remember { mutableStateOf(0) }
-    // Items hidden from the UI while a deferred delete waits for Undo. Only used
-    // when there is no system trash (SAF items, API < 30); the files are left
-    // untouched until the Undo bar is dismissed.
-    var hiddenUris by remember { mutableStateOf<Set<android.net.Uri>>(emptySet()) }
-    // Non-null when the visible Undo bar guards a deferred delete; dismissing the
-    // bar runs it. Null for system-trash deletes (nothing left to do on dismiss).
-    var undoCommit by remember { mutableStateOf<(() -> Unit)?>(null) }
     // Sentinel consumed by the LaunchedEffect below to launch the next API 29
     // consent dialog without the launcher referencing itself.
     var nextConsentLaunch by remember { mutableStateOf<androidx.activity.result.IntentSenderRequest?>(null) }
 
-    // Hides deleted URIs from the grid/search and reloads. The open viewer is
-    // handled separately (slide out on delete, slide back on Undo) so this must
-    // not touch viewerItems.
-    val hideDeleted = { deletedUris: Set<android.net.Uri> ->
+    // Removes URIs from the visible content + viewer and reloads.
+    val removeDeletedBatch = { deletedUris: Set<android.net.Uri> ->
         val current = content
         if (current != null) {
             content = current.copy(
                 looseItems = current.looseItems.filterNot { it.uri in deletedUris },
             )
         }
-        hiddenUris = hiddenUris + deletedUris
+        val viewerItem = viewerItems?.firstOrNull { it.uri in deletedUris }
+        if (viewerItem != null && deletedUris.size == 1) {
+            // Slide the viewer to the neighbour; Undo slides it back.
+            startViewerRemoval(viewerItem)
+        } else if (viewerItem != null) {
+            val remaining = viewerItems?.filterNot { it.uri in deletedUris }
+            if (remaining.isNullOrEmpty()) closeViewer() else viewerItems = remaining
+        }
         albumReloadKey += 1
         reload()
+    }
+
+    // Arms the Undo bar with the entries whose originals were removed.
+    val finishTrashDelete: (Map<android.net.Uri, TrashEntry>, Set<android.net.Uri>) -> Unit =
+        { entries, deletedUris ->
+            removeDeletedBatch(deletedUris)
+            val restored = entries.filterKeys { it in deletedUris }.values.toList()
+            if (restored.isNotEmpty()) {
+                undoTrashEntries = restored
+                undoKey += 1
+            }
+        }
+
+    // Drops trash copies we made for a delete that didn't go through.
+    val rollbackTrash: (Map<android.net.Uri, TrashEntry>) -> Unit = { entries ->
+        scope.launch {
+            withContext(Dispatchers.IO) {
+                entries.values.forEach { TrashStore.remove(context, it) }
+            }
+        }
     }
 
     val consentLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartIntentSenderForResult()
     ) { result ->
-        val queue = pendingConsent
-        val head = queue.firstOrNull()
-        pendingConsent = emptyList()
-        if (result.resultCode != android.app.Activity.RESULT_OK || head == null) {
+        val queue = pendingDeleteItems
+        val entries = pendingDeleteEntries
+        val ok = result.resultCode == android.app.Activity.RESULT_OK
+        if (queue.isEmpty()) {
+            clearSelection()
+            return@rememberLauncherForActivityResult
+        }
+        if (!ok) {
+            // Denied: drop the trash copies we made for these items.
+            pendingDeleteItems = emptyList()
+            pendingDeleteEntries = emptyMap()
+            rollbackTrash(entries)
             clearSelection()
             return@rememberLauncherForActivityResult
         }
         if (consentCoversAll) {
-            // API 30+: the system already trashed/deleted the whole batch.
-            hideDeleted(queue.map { it.uri }.toSet())
-            clearSelection()
-            if (consentIsTrash) {
-                undoKey += 1
-                undoItems = queue
-                consentIsTrash = false
-                queue.firstOrNull()?.let { startViewerRemoval(it) }
+            // API 30+: the system already deleted the whole batch.
+            pendingDeleteItems = emptyList()
+            pendingDeleteEntries = emptyMap()
+            scope.launch {
+                finishTrashDelete(entries, queue.map { it.uri }.toSet())
+                clearSelection()
             }
         } else {
-            // API 29: the dialog only granted write access; perform the delete now.
+            // API 29: consent granted for one item; delete it and continue.
             scope.launch {
-                if (MediaRepository.delete(context, head) == DeleteResult.Deleted) {
-                    hideDeleted(setOf(head.uri))
-                }
+                val head = queue.first()
                 val rest = queue.drop(1)
-                pendingConsent = rest
+                val deleted =
+                    if (MediaRepository.delete(context, head) == DeleteResult.Deleted) {
+                        setOf(head.uri)
+                    } else {
+                        emptySet()
+                    }
+                removeDeletedBatch(deleted)
+                if (deleted.isNotEmpty()) {
+                    undoTrashEntries = entries.filterKeys { it in deleted }.values.toList()
+                    undoKey += 1
+                }
                 if (rest.isEmpty()) {
+                    pendingDeleteItems = emptyList()
+                    pendingDeleteEntries = emptyMap()
                     clearSelection()
                 } else {
-                    val sender = (MediaRepository.delete(context, rest.first()) as? DeleteResult.Consent)
-                        ?.intentSender
+                    pendingDeleteItems = rest
+                    val sender =
+                        (MediaRepository.delete(context, rest.first()) as? DeleteResult.Consent)
+                            ?.intentSender
                     if (sender != null) {
                         nextConsentLaunch =
                             androidx.activity.result.IntentSenderRequest.Builder(sender).build()
                     } else {
-                        pendingConsent = emptyList()
+                        pendingDeleteItems = emptyList()
+                        pendingDeleteEntries = emptyMap()
                         clearSelection()
                     }
                 }
@@ -449,160 +491,99 @@ fun GalleryScreen(
         }
     }
 
-    // Restores trashed items (API 31+); the system shows its own confirmation.
-    var pendingRestore by remember { mutableStateOf<List<MediaItem>>(emptyList()) }
-    val restoreLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.StartIntentSenderForResult()
-    ) { result ->
-        val items = pendingRestore
-        pendingRestore = emptyList()
-        if (result.resultCode == android.app.Activity.RESULT_OK && items.isNotEmpty()) {
-            undoItems = null
-            // Slide the viewer back to the restored item, if it was deleted there.
-            viewerUndo?.let { restoreViewerItem(it) }
-            viewerUndo = null
-            reload()
-            toastKey += 1
-            toastMessage = UiText.Res(R.string.restored)
-        } else {
-            viewerUndo = null
-        }
-    }
-
+    // Restores the last deleted items from Phooto's trash.
     val undoTrash: () -> Unit = {
-        val items = undoItems
-        if (items != null) {
-            undoItems = null
-            hiddenUris = hiddenUris - items.map { it.uri }.toSet()
-            if (undoCommit != null) {
-                // Deferred delete: nothing hit disk yet, so just unhide.
-                undoCommit = null
+        val entries = undoTrashEntries
+        if (entries != null) {
+            undoTrashEntries = null
+            scope.launch {
+                withContext(Dispatchers.IO) {
+                    entries.forEach { TrashStore.restore(context, it) }
+                }
+                // Slide the viewer back to the restored item, if it was deleted there.
                 viewerUndo?.let { restoreViewerItem(it) }
                 viewerUndo = null
                 reload()
-            } else {
-                // System trash: ask the system to restore, then slide back.
-                val sender = com.phouton.phooto.data.restoreConsentSender(context, items)
+                toastKey += 1
+                toastMessage = UiText.Res(R.string.restored)
+            }
+        }
+    }
+
+    // ── Delete ──────────────────────────────────────────────────────────────
+    // Copies each item into the app-private trash, then removes its original.
+    // MediaStore items on API 30+ also need a one-shot system delete consent for
+    // the originals; that consent is what the launcher above resolves.
+    val trashAndDelete: (List<MediaItem>) -> Unit = { items ->
+        scope.launch {
+            // 1. Copy the bytes into our trash first, so nothing is lost.
+            val entries: Map<android.net.Uri, TrashEntry> = withContext(Dispatchers.IO) {
+                items.mapNotNull { item -> TrashStore.add(context, item)?.let { item.uri to it } }
+                    .toMap()
+            }
+            val trashed = items.filter { entries.containsKey(it.uri) }
+            if (trashed.isEmpty()) {
+                toastKey += 1
+                toastMessage = UiText.Res(R.string.error_delete)
+                return@launch
+            }
+
+            // 2. Remove the originals.
+            val saf = trashed.filter { android.provider.DocumentsContract.isDocumentUri(context, it.uri) }
+            val media = trashed.filterNot { it in saf }
+            val deleted = mutableSetOf<android.net.Uri>()
+            saf.forEach { item ->
+                if (MediaRepository.delete(context, item) == DeleteResult.Deleted) deleted += item.uri
+            }
+            val needsConsent = mutableListOf<MediaItem>()
+            media.forEach { item ->
+                when (MediaRepository.delete(context, item)) {
+                    DeleteResult.Deleted -> deleted += item.uri
+                    is DeleteResult.Consent, DeleteResult.Failed -> needsConsent += item
+                }
+            }
+
+            if (deleted.isNotEmpty()) finishTrashDelete(entries, deleted)
+
+            if (needsConsent.isEmpty()) {
+                // Nothing pending: drop copies whose original couldn't be removed.
+                val unresolved = entries.filterKeys { it !in deleted }
+                if (unresolved.isNotEmpty()) rollbackTrash(unresolved)
+                clearSelection()
+            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                val sender = com.phouton.phooto.data.deleteConsentSender(context, needsConsent)
                 if (sender != null) {
-                    pendingRestore = items
-                    restoreLauncher.launch(
+                    pendingDeleteItems = needsConsent
+                    pendingDeleteEntries = entries
+                    consentCoversAll = true
+                    consentLauncher.launch(
                         androidx.activity.result.IntentSenderRequest.Builder(sender).build(),
                     )
                 } else {
-                    viewerUndo?.let { restoreViewerItem(it) }
-                    viewerUndo = null
+                    rollbackTrash(entries.filterKeys { it in needsConsent.map { m -> m.uri } })
+                    clearSelection()
                 }
-            }
-        }
-    }
-
-    // Deferred-delete support: used when the system trash is unavailable (SAF
-    // items, or API < 30). The items are hidden immediately and only removed from
-    // disk once the Undo bar is dismissed, so Undo can cancel for free.
-    val commitDeferredDelete: (List<MediaItem>) -> Unit = { items ->
-        scope.launch {
-            hiddenUris = hiddenUris - items.map { it.uri }.toSet()
-            val saf = items.filter {
-                android.provider.DocumentsContract.isDocumentUri(context, it.uri)
-            }
-            val media = items.filterNot { it in saf }
-            // SAF documents delete directly.
-            saf.forEach { MediaRepository.delete(context, it) }
-
-            if (media.isNotEmpty()) {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                    // API 30+ MediaStore: move to the system trash (no second Undo).
-                    val sender = com.phouton.phooto.data.trashConsentSender(context, media)
-                    if (sender != null) {
-                        pendingConsent = media
-                        consentCoversAll = true
-                        consentIsTrash = false
-                        consentLauncher.launch(
-                            androidx.activity.result.IntentSenderRequest.Builder(sender).build(),
-                        )
-                    }
+            } else {
+                // API 29: per-item RecoverableSecurityException consent.
+                pendingDeleteItems = needsConsent
+                pendingDeleteEntries = entries
+                consentCoversAll = false
+                val sender =
+                    (MediaRepository.delete(context, needsConsent.first()) as? DeleteResult.Consent)
+                        ?.intentSender
+                if (sender != null) {
+                    consentLauncher.launch(
+                        androidx.activity.result.IntentSenderRequest.Builder(sender).build(),
+                    )
                 } else {
-                    // API 29: direct delete, then per-item consent for failures.
-                    val needsConsent = mutableListOf<MediaItem>()
-                    media.forEach { item ->
-                        when (MediaRepository.delete(context, item)) {
-                            DeleteResult.Deleted -> Unit
-                            is DeleteResult.Consent, DeleteResult.Failed -> needsConsent += item
-                        }
-                    }
-                    if (needsConsent.isNotEmpty()) {
-                        val sender =
-                            (MediaRepository.delete(context, needsConsent.first()) as? DeleteResult.Consent)
-                                ?.intentSender
-                        if (sender != null) {
-                            pendingConsent = needsConsent
-                            consentCoversAll = false
-                            consentLauncher.launch(
-                                androidx.activity.result.IntentSenderRequest.Builder(sender).build(),
-                            )
-                        } else {
-                            pendingConsent = emptyList()
-                        }
-                    }
+                    rollbackTrash(entries.filterKeys { it in needsConsent.map { m -> m.uri } })
+                    clearSelection()
                 }
             }
-            reload()
         }
     }
 
-    // Runs any deferred delete that is still waiting for its Undo bar to expire
-    // (e.g. the user starts another delete before dismissing the previous one).
-    val flushDeferredDelete: () -> Unit = {
-        val commit = undoCommit
-        if (commit != null) {
-            undoCommit = null
-            undoItems = null
-            viewerUndo = null
-            commit()
-        }
-    }
-
-    val deferDelete: (List<MediaItem>) -> Unit = { items ->
-        flushDeferredDelete()
-        hiddenUris = hiddenUris + items.map { it.uri }.toSet()
-        consentIsTrash = false
-        undoCommit = { commitDeferredDelete(items) }
-        undoKey += 1
-        undoItems = items
-        // Slide the viewer to the neighbour; Undo slides it back.
-        items.firstOrNull()?.let { startViewerRemoval(it) }
-    }
-
-    // API 30+ consent path: a single system dialog that moves the item(s) to the
-    // system trash, so the action is non-destructive and undoable.
-    val requestConsent: (List<MediaItem>) -> Unit = { items ->
-        flushDeferredDelete()
-        val sender = com.phouton.phooto.data.trashConsentSender(context, items)
-        if (sender != null) {
-            pendingConsent = items
-            consentCoversAll = true
-            consentIsTrash = true
-            consentLauncher.launch(
-                androidx.activity.result.IntentSenderRequest.Builder(sender).build(),
-            )
-        } else {
-            toastKey += 1
-            toastMessage = UiText.Res(R.string.error_delete)
-        }
-    }
-
-    val requestDelete = { item: MediaItem ->
-        val isSafItem = android.provider.DocumentsContract.isDocumentUri(context, item.uri)
-        if (!isSafItem && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            // API 30+: every MediaStore delete goes to the system trash so it is
-            // always undoable, even for files this app owns.
-            requestConsent(listOf(item))
-        } else {
-            // SAF items have no system trash; API 29 has no trash API. Defer so
-            // the in-app Undo bar can cancel before anything is deleted.
-            deferDelete(listOf(item))
-        }
-    }
+    val requestDelete = { item: MediaItem -> trashAndDelete(listOf(item)) }
 
     // ── Selection resolution ────────────────────────────────────────────────
     // Expands the current selection into a flat list of MediaItems: selected
@@ -618,21 +599,10 @@ fun GalleryScreen(
     }
 
     // ── Multi-delete ────────────────────────────────────────────────────────
-    // A batch that is entirely MediaStore on API 30+ goes to the system trash in
-    // one dialog. Anything else (SAF items, or API 29) is deferred to the in-app
-    // Undo bar.
     var pendingBatchDelete by remember { mutableStateOf<List<MediaItem>?>(null) }
     val batchDeleteScope = rememberCoroutineScope()
 
-    val requestBatchDelete = { items: List<MediaItem> ->
-        val canTrashAll = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R &&
-            items.all { !android.provider.DocumentsContract.isDocumentUri(context, it.uri) }
-        if (canTrashAll) {
-            requestConsent(items)
-        } else {
-            deferDelete(items)
-        }
-    }
+    val requestBatchDelete = { items: List<MediaItem> -> trashAndDelete(items) }
 
     // ── Copy / Move ────────────────────────────────────────────────────────
     var pendingCopy by remember { mutableStateOf<List<MediaItem>?>(null) }
@@ -779,9 +749,7 @@ fun GalleryScreen(
     // land — the "after" state is the real top-level view, never a swap-in.
     Box(modifier = modifier.fillMaxSize()) {
         MainGalleryGrid(
-            content = content?.let { c ->
-                c.copy(looseItems = c.looseItems.filterNot { it.uri in hiddenUris })
-            },
+            content = content,
             onFolderClick = { folder, rect ->
                 openFolder = folder
                 openSourceRect = rect
@@ -827,7 +795,7 @@ fun GalleryScreen(
             exit = slideOutHorizontally(targetOffsetX = { it }) + fadeOut(),
         ) {
             SearchScreen(
-                items = allItems.filterNot { it.uri in hiddenUris },
+                items = allItems,
                 onBack = { showSearch = false },
                 onItemClick = { list, index, rect -> openViewer(list, index, rect) },
                 minTileSize = appSettings.gridSize.minTileDp.dp,
@@ -844,7 +812,6 @@ fun GalleryScreen(
                 onItemClick = { list, index, rect -> openViewer(list, index, rect) },
                 reloadKey = albumReloadKey,
                 minTileSize = appSettings.gridSize.minTileDp.dp,
-                hiddenUris = hiddenUris,
                 selection = selection,
                 onToggleSelect = toggleSelect,
                 onLongSelect = toggleSelect,
@@ -975,20 +942,13 @@ fun GalleryScreen(
             Toast(message = message.resolve(), key = toastKey, onDismiss = { toastMessage = null })
         }
 
-        if (undoItems != null) {
+        if (undoTrashEntries != null) {
             UndoBar(
                 key = undoKey,
                 onUndo = undoTrash,
                 onDismiss = {
-                    val items = undoItems
-                    undoItems = null
+                    undoTrashEntries = null
                     viewerUndo = null
-                    if (items != null) {
-                        hiddenUris = hiddenUris - items.map { it.uri }.toSet()
-                    }
-                    val commit = undoCommit
-                    undoCommit = null
-                    commit?.invoke()
                 },
             )
         }
@@ -1167,7 +1127,6 @@ private fun AlbumGrid(
     onItemClick: (List<MediaItem>, Int, Rect) -> Unit,
     reloadKey: Int,
     minTileSize: Dp,
-    hiddenUris: Set<android.net.Uri>,
     selection: SelectionState,
     onToggleSelect: (MediaItem) -> Unit,
     onLongSelect: (MediaItem) -> Unit,
@@ -1209,7 +1168,7 @@ private fun AlbumGrid(
     val realItems = items
     // Render the stack previews immediately (same URIs as the top items) so the
     // fly-to-grid animation can start without waiting for the query.
-    val displayItems = (realItems ?: folder.previews.mapIndexed { index, uri ->
+    val displayItems = realItems ?: folder.previews.mapIndexed { index, uri ->
         MediaItem(
             id = -(index + 1).toLong(),
             uri = uri,
@@ -1219,7 +1178,7 @@ private fun AlbumGrid(
             dateAdded = 0L,
             isVideo = false,
         )
-    }).filterNot { it.uri in hiddenUris }
+    }
 
     Column(
         modifier = Modifier
