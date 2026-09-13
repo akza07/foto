@@ -98,6 +98,7 @@ import com.phouton.phooto.data.MediaFolder
 import com.phouton.phooto.data.MediaInfo
 import com.phouton.phooto.data.MediaItem
 import com.phouton.phooto.data.MediaRepository
+import com.phouton.phooto.data.isAnimatedImage
 import com.phouton.phooto.data.SettingsRepository
 import com.phouton.phooto.data.mediaCollectionUri
 import com.phouton.phooto.data.thumbnails.ExternalReloadSink
@@ -1664,10 +1665,10 @@ private fun ImageTile(
                 modifier = Modifier.fillMaxSize(),
             )
         } else {
-            // Static thumbnail base for images (loads in ms).
+            // Thumbnail base for images (static formats load in ms; animated
+            // formats play inline via Coil).
             Thumb(
                 item = item,
-                animated = false,
                 modifier = Modifier.fillMaxSize(),
             )
         }
@@ -1762,30 +1763,34 @@ private fun Thumb(uri: Uri, modifier: Modifier = Modifier) {
 
 /**
  * Item-aware variant: routes through `ThumbCache` so each tile shares Coil's
- * disk + memory cache. [animated] controls whether GIF / animated WebP / HEIF
- * tiles play inline (true) or stay on the static first frame (false, default).
- * Grid tiles loop 3× when animated; viewer uses infinite.
+ * disk + memory cache. Animated formats (GIF / animated WebP / HEIF / AVIF)
+ * skip the static persisted thumbnail and play inline via Coil's animated
+ * decoder; static images load the persisted JPEG for an instant first paint.
  */
 @Composable
 private fun Thumb(
     item: MediaItem,
-    animated: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
     val key = remember(item.uri, item.lastModified, item.sizeBytes, item.mimeType) {
         ThumbCache.keyFor(item)
     }
+    val animated = item.isAnimatedImage()
     // Load from our persisted thumbnail cache first (instant), else via Coil.
-    val cached = remember(key) { ThumbCache.loadThumb(key) }
-    if (cached != null) {
-        Image(
-            bitmap = cached.asImageBitmap(),
-            contentDescription = null,
-            contentScale = ContentScale.Crop,
-            modifier = modifier,
-        )
-        return
+    // Animated items always go through Coil so the frames actually move; the
+    // persisted first frame would otherwise freeze them.
+    if (!animated) {
+        val cached = remember(key) { ThumbCache.loadThumb(key) }
+        if (cached != null) {
+            Image(
+                bitmap = cached.asImageBitmap(),
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = modifier,
+            )
+            return
+        }
     }
     val model = remember(item.uri, animated) {
         ThumbCache.buildRequest(
@@ -1921,7 +1926,7 @@ private fun FlyInTile(
         if (item.isVideo) {
             VideoPosterThumb(item = item, modifier = thumbAlphaMod)
         } else {
-            Thumb(item = item, animated = false, modifier = thumbAlphaMod)
+            Thumb(item = item, modifier = thumbAlphaMod)
         }
         if (item.isVideo) {
             VideoBadge(

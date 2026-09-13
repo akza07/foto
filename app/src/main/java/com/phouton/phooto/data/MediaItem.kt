@@ -27,6 +27,20 @@ data class MediaItem(
     val sizeBytes: Long = 0L,
 )
 
+/**
+ * True when [mimeType] denotes an image format that can carry animation. Coil's
+ * animated decoder handles GIF, animated WebP, animated HEIF and (API 31+)
+ * animated AVIF; static variants of the same formats simply render frame one.
+ */
+fun MediaItem.isAnimatedImage(): Boolean {
+    val m = mimeType?.lowercase() ?: return false
+    return m == "image/gif" ||
+        m == "image/webp" ||
+        m == "image/heif" ||
+        m == "image/heif-sequence" ||
+        m == "image/avif"
+}
+
 data class MediaFolder(
     val bucketId: String,
     val name: String,
