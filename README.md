@@ -50,20 +50,30 @@ rendering where the app's black extends behind the system status/navigation bars
 
 ```
 app/src/main/java/com/phouton/phooto/
-├── MainActivity.kt            # Entry point: edge-to-edge, Compose previews
+├── MainActivity.kt            # Entry point: edge-to-edge, share/view intents, previews
+├── AppLog.kt                  # Logcat tag for previously-silent failures
 ├── ui/
 │   ├── PermissionGate.kt      # Runtime permission request screen
 │   ├── GalleryScreen.kt       # Albums grid, folder (album) view, transitions
+│   ├── SearchScreen.kt        # Name search with month-grouped results
 │   ├── FullImageViewer.kt     # Pager-based full-screen image viewer
 │   ├── VideoPlayerPage.kt     # ExoPlayer video playback page (shadcn controls)
 │   ├── VideoPlaybackController.kt # Viewer-owned ExoPlayer + preload manager
 │   ├── SettingsScreen.kt      # Settings + Content Discovery
 │   ├── SettingsComponents.kt  # Shared settings rows / group card
+│   ├── SelectionUi.kt         # Multi-select state + action bar/badge
+│   ├── ConfirmDialog.kt       # Shared confirmation modal
+│   ├── Feedback.kt            # Toast / undo bar / busy overlay
+│   ├── Thumb.kt               # Thumbnail + skeleton-shimmer composables
+│   ├── InfoSheet.kt           # Media info bottom sheet
 │   └── theme/Theme.kt         # AMOLED shadcn palette + MaterialTheme
 └── data/
     ├── MediaItem.kt           # MediaItem / MediaFolder models
     ├── MediaRepository.kt     # MediaStore + SAF tree browsing, Content Discovery
-    └── SettingsRepository.kt  # SharedPreferences-backed settings (StateFlow)
+    ├── GalleryGrouping.kt     # Testable grouping/filter/sort logic
+    ├── GalleryEvents.kt       # SharedFlow reload events
+    ├── SettingsRepository.kt  # SharedPreferences-backed settings (StateFlow)
+    └── thumbnails/            # Coil-backed thumbnail + video-poster caches
 ```
 
 ### Navigation model
@@ -146,8 +156,10 @@ edge-to-edge rendering.
 - **Swipe down (at 1×):** dismisses the viewer.
 - **Top-left:** back button + counter pill (`3/12`).
 - **Drawer actions:** Delete (red), Share, Info, Crop ("Coming soon" shadcn toast).
-  - **Delete:** shadcn confirmation modal (red accent) → direct delete with
-    `MediaStore.createDeleteRequest` fallback.
+  - **Delete:** shadcn confirmation modal (red accent) → direct delete, falling
+    back to system-consent **trash** (`MediaStore.createTrashRequest`, API 30+)
+    with an Undo bar, or the per-item `RecoverableSecurityException` consent on
+    API 29.
   - **Share:** `ACTION_SEND` chooser with URI grant.
   - **Info:** sheet with name, size, and date.
 
@@ -202,6 +214,12 @@ edge-to-edge rendering.
   back button, or swipe to an adjacent page while paused.
 - Unsupported codecs → clean shadcn error state (no crash).
 
+### 5.4.2 Multi-select
+- Long-press a tile or folder to enter selection mode; taps toggle selection,
+  the header offers **Select all**, and a floating action bar provides
+  **Delete / Copy / Move / Share** across the selection (folders expand to their
+  contents). Copy/Move use the system directory picker (SAF).
+
 ### 5.5 Settings
 - **Gear icon** → Settings screen (slide transition). Grouped into four cards:
   - **Display** — *Prefer 120Hz refresh rate*: asks the system to run up to 120Hz
@@ -230,6 +248,20 @@ edge-to-edge rendering.
   `takePersistableUriPermission` (read + write) so access survives restarts and deletes
   keep working.
 - Settings persist in SharedPreferences (`SettingsRepository`, exposed via `StateFlow`).
+- **Sort order** (Display): newest/oldest first or name A–Z / Z–A, applied to both
+  folders and items.
+- **Grid size** (Display): Small / Medium / Large thumbnail density.
+- **About**: shows the installed version.
+
+### 5.6 Search & sharing
+- **Search** (magnifier in the Albums header): inline name search over the full
+  loaded library (MediaStore + SAF-browsed, including `.nomedia` content).
+  Results are grouped by month/year and open in the viewer.
+- **Open from other apps**: Phooto handles `ACTION_VIEW` and `ACTION_SEND` for
+  `image/*` and `video/*`, opening the handed-over file in the viewer.
+- **Non-destructive delete**: where the system requires consent (API 30+), files
+  are moved to the **system trash** with an **Undo** restore bar, instead of being
+  destroyed immediately.
 
 ---
 
@@ -286,7 +318,7 @@ apk-output/phooto-arm64-android16-release.apk
 
 - **Size:** ~3.4 MB (R8-optimized from a ~70 MB debug build).
 - **Targets Android 16** (targetSdk 37), minSdk 29.
-- **ABIs:** arm64-v8a (plus armeabi-v7a / x86 / x86_64).
+- **ABIs:** arm64-v8a (`ndk.abiFilters` — add more in `app/build.gradle.kts` to ship others).
 - **Signed:** V2-signed with `keystore/phooto-release.jks` (CN=Phooto).
 
 > ⚠️ Keep `keystore/phooto-release.jks` and its passwords safe. You must use the **same
