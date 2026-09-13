@@ -134,6 +134,9 @@ edge-to-edge rendering.
 - Missing → shadcn-style card: gallery icon, title, description, **Grant access** button,
   and an **Open settings** fallback when permanently denied.
 - Re-checks on every resume (revoking in Settings is caught).
+- Once access is granted, a one-time **first-run tutorial** (5 illustrated pages) explains
+  browsing, the viewer gestures, the long-press action wheel, and safe deletes. It can be
+  replayed from **Settings → About → Replay tutorial**.
 
 ### 5.2 Albums grid (home)
 - **Header:** "Albums" title (large, semi-bold, tight tracking) + **gear icon** on the right.
@@ -258,7 +261,7 @@ edge-to-edge rendering.
 - **Sort order** (Display): newest/oldest first or name A–Z / Z–A, applied to both
   folders and items.
 - **Grid size** (Display): Small / Medium / Large thumbnail density.
-- **About**: shows the installed version.
+- **About**: shows the installed version and a **Replay tutorial** action.
 
 ### 5.6 Search & sharing
 - **Search** (magnifier in the Albums header): inline name search over the full

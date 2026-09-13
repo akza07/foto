@@ -295,6 +295,13 @@ private fun SettingsRoot(
                         showChevron = false,
                         onClick = {},
                     )
+                    SettingsDivider()
+                    SettingsActionRow(
+                        title = stringResource(R.string.settings_replay_tutorial),
+                        subtitle = stringResource(R.string.settings_replay_tutorial_subtitle),
+                        showChevron = false,
+                        onClick = { SettingsRepository.setTutorialSeen(false) },
+                    )
                 }
             }
         }

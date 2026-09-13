@@ -32,6 +32,8 @@ data class AppSettings(
     val loopVideos: Boolean = false,
     val sortOrder: MediaSort = MediaSort.DATE_NEWEST,
     val gridSize: GridSize = GridSize.MEDIUM,
+    /** Whether the first-run tutorial has been completed or skipped. */
+    val tutorialSeen: Boolean = false,
 )
 
 object SettingsRepository {
@@ -44,6 +46,7 @@ object SettingsRepository {
     private const val KEY_LOOP_VIDEOS = "loop_videos"
     private const val KEY_SORT_ORDER = "sort_order"
     private const val KEY_GRID_SIZE = "grid_size"
+    private const val KEY_TUTORIAL_SEEN = "tutorial_seen"
 
     private val _settings = MutableStateFlow(AppSettings())
     val settings: StateFlow<AppSettings> = _settings.asStateFlow()
@@ -67,6 +70,7 @@ object SettingsRepository {
             gridSize = runCatching {
                 GridSize.valueOf(prefs.getString(KEY_GRID_SIZE, null) ?: GridSize.MEDIUM.name)
             }.getOrDefault(GridSize.MEDIUM),
+            tutorialSeen = prefs.getBoolean(KEY_TUTORIAL_SEEN, false),
         )
     }
 
@@ -103,6 +107,11 @@ object SettingsRepository {
     fun setGridSize(value: GridSize) {
         prefs.edit().putString(KEY_GRID_SIZE, value.name).apply()
         _settings.value = _settings.value.copy(gridSize = value)
+    }
+
+    fun setTutorialSeen(value: Boolean) {
+        prefs.edit().putBoolean(KEY_TUTORIAL_SEEN, value).apply()
+        _settings.value = _settings.value.copy(tutorialSeen = value)
     }
 
     fun addTreeUri(uri: String) {

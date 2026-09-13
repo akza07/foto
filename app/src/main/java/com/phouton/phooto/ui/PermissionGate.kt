@@ -28,6 +28,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -46,6 +47,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.phouton.phooto.R
+import com.phouton.phooto.data.SettingsRepository
 import com.phouton.phooto.ui.theme.AmoledBlack
 import com.phouton.phooto.ui.theme.Border
 import com.phouton.phooto.ui.theme.Surface
@@ -94,11 +96,17 @@ fun PermissionGate(
     }
 
     if (granted) {
-        GalleryScreen(
-            modifier = rootModifier,
-            openUri = openUri,
-            onOpenUriHandled = onOpenUriHandled,
-        )
+        Box(modifier = rootModifier.fillMaxSize()) {
+            GalleryScreen(
+                modifier = Modifier.fillMaxSize(),
+                openUri = openUri,
+                onOpenUriHandled = onOpenUriHandled,
+            )
+            val settings by SettingsRepository.settings.collectAsState()
+            if (!settings.tutorialSeen) {
+                TutorialScreen(onDone = { SettingsRepository.setTutorialSeen(true) })
+            }
+        }
     } else {
         val permissions = requiredPermissions()
         val shouldShowRationale = permissions.any { permission ->
