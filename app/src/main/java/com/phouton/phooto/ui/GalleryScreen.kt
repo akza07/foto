@@ -396,14 +396,14 @@ fun GalleryScreen(
     ) { result ->
         val queue = pendingConsent
         val head = queue.firstOrNull()
+        pendingConsent = emptyList()
         if (result.resultCode != android.app.Activity.RESULT_OK || head == null) {
-            pendingConsent = emptyList()
+            clearSelection()
             return@rememberLauncherForActivityResult
         }
         if (consentCoversAll) {
-            // One dialog covered the whole batch: everything was deleted/trashed.
+            // API 30+: the system already trashed/deleted the whole batch.
             removeDeletedBatch(queue.map { it.uri }.toSet())
-            pendingConsent = emptyList()
             clearSelection()
             if (consentIsTrash) {
                 undoKey += 1
@@ -411,21 +411,24 @@ fun GalleryScreen(
                 consentIsTrash = false
             }
         } else {
-            removeDeletedBatch(setOf(head.uri))
-            val rest = queue.drop(1)
-            pendingConsent = rest
-            if (rest.isEmpty()) {
-                clearSelection()
-            } else {
-                scope.launch {
-                    // API 29: re-attempt the next item to recover its sender.
-                    when (val r = MediaRepository.delete(context, rest.first())) {
-                        is DeleteResult.Consent -> nextConsentLaunch =
-                            androidx.activity.result.IntentSenderRequest.Builder(r.intentSender).build()
-                        else -> {
-                            pendingConsent = emptyList()
-                            clearSelection()
-                        }
+            // API 29: the dialog only granted write access; perform the delete now.
+            scope.launch {
+                if (MediaRepository.delete(context, head) == DeleteResult.Deleted) {
+                    removeDeletedBatch(setOf(head.uri))
+                }
+                val rest = queue.drop(1)
+                pendingConsent = rest
+                if (rest.isEmpty()) {
+                    clearSelection()
+                } else {
+                    val sender = (MediaRepository.delete(context, rest.first()) as? DeleteResult.Consent)
+                        ?.intentSender
+                    if (sender != null) {
+                        nextConsentLaunch =
+                            androidx.activity.result.IntentSenderRequest.Builder(sender).build()
+                    } else {
+                        pendingConsent = emptyList()
+                        clearSelection()
                     }
                 }
             }
