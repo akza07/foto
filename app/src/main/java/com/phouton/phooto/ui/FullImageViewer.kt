@@ -74,6 +74,7 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
@@ -615,6 +616,7 @@ fun FullImageViewer(
                     .clip(CircleShape)
                     .clickable(
                         enabled = if (currentPageIsVideo) videoControlsVisible else imageControlsVisible,
+                        role = Role.Button,
                         onClick = close,
                     ),
                 shape = CircleShape,
@@ -664,6 +666,7 @@ fun FullImageViewer(
                         .clip(CircleShape)
                         .clickable(
                             enabled = imageControlsVisible,
+                            role = Role.Button,
                             interactionSource = remember { MutableInteractionSource() },
                             indication = null,
                         ) {
@@ -1026,7 +1029,7 @@ private fun ActionItem(
 ) {
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
-        modifier = Modifier.clickable(onClick = onClick),
+        modifier = Modifier.clickable(role = Role.Button, onClick = onClick),
     ) {
         Box(
             modifier = Modifier

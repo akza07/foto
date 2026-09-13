@@ -88,6 +88,11 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -210,7 +215,7 @@ private fun SelectionAction(
         horizontalAlignment = Alignment.CenterHorizontally,
         modifier = Modifier
             .clip(RoundedCornerShape(10.dp))
-            .clickable(onClick = onClick)
+            .clickable(role = Role.Button, onClick = onClick)
             .padding(horizontal = 12.dp, vertical = 6.dp),
     ) {
         Icon(
@@ -1569,6 +1574,9 @@ private fun FolderTile(
     Column(
         modifier = Modifier
             .fillMaxWidth()
+            .semantics {
+                contentDescription = "${folder.name}, ${folder.count} items"
+            }
             .then(
                 if (isSelecting) {
                     Modifier.clickable(
@@ -1689,6 +1697,14 @@ internal fun ImageTile(
             .clip(TileShape)
             .background(SurfaceColor)
             .onGloballyPositioned { tileRect = it.boundsInWindow() }
+            .semantics {
+                contentDescription = buildString {
+                    append(item.displayName ?: if (item.isVideo) "Video" else "Photo")
+                    if (isSelecting) {
+                        append(if (isSelected) ", selected" else ", not selected")
+                    }
+                }
+            }
             .then(
                 if (isSelecting) {
                     Modifier.clickable(
@@ -2110,6 +2126,7 @@ private fun Toast(message: String, key: Int, onDismiss: () -> Unit) {
             Surface(
                 modifier = Modifier
                     .clip(RoundedCornerShape(50))
+                    .semantics { liveRegion = LiveRegionMode.Polite }
                     .padding(bottom = 8.dp),
                 shape = RoundedCornerShape(50),
                 color = TextPrimary,
@@ -2157,6 +2174,7 @@ private fun UndoBar(key: Int, onUndo: () -> Unit, onDismiss: () -> Unit) {
             Surface(
                 modifier = Modifier
                     .clip(RoundedCornerShape(50))
+                    .semantics { liveRegion = LiveRegionMode.Polite }
                     .padding(bottom = 8.dp),
                 shape = RoundedCornerShape(50),
                 color = TextPrimary,
