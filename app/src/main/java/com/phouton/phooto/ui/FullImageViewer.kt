@@ -74,6 +74,7 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntSize
@@ -83,6 +84,7 @@ import androidx.compose.ui.util.lerp
 import androidx.lifecycle.compose.LifecycleStartEffect
 import coil3.compose.AsyncImage
 import coil3.request.ImageRequest
+import com.phouton.phooto.R
 import com.phouton.phooto.data.MediaItem
 import com.phouton.phooto.ui.theme.AmoledBlack
 import com.phouton.phooto.ui.theme.DeleteRed
@@ -626,7 +628,7 @@ fun FullImageViewer(
                 Box(contentAlignment = Alignment.Center) {
                     Icon(
                         imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
-                        contentDescription = "Back",
+                        contentDescription = stringResource(R.string.action_back),
                         tint = TextPrimary,
                         modifier = Modifier.size(22.dp),
                     )
@@ -681,7 +683,7 @@ fun FullImageViewer(
                     Box(contentAlignment = Alignment.Center) {
                         Icon(
                             imageVector = Icons.Outlined.Delete,
-                            contentDescription = "Delete",
+                            contentDescription = stringResource(R.string.action_delete),
                             tint = DeleteRed,
                             modifier = Modifier.size(24.dp),
                         )
@@ -1007,12 +1009,12 @@ private fun ActionSheet(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceEvenly,
                 ) {
-                    ActionItem(Icons.Outlined.Share, "Share", TextPrimary, onShare)
-                    ActionItem(Icons.Outlined.Info, "Info", TextPrimary, onInfo)
-                    ActionItem(Icons.Outlined.Delete, "Delete", DeleteRed, onDelete)
+                    ActionItem(Icons.Outlined.Share, stringResource(R.string.action_share), TextPrimary, onShare)
+                    ActionItem(Icons.Outlined.Info, stringResource(R.string.info_title), TextPrimary, onInfo)
+                    ActionItem(Icons.Outlined.Delete, stringResource(R.string.action_delete), DeleteRed, onDelete)
                     // Videos have no crop action.
                     if (!item.isVideo) {
-                        ActionItem(Icons.Outlined.Crop, "Crop", TextPrimary, onCrop)
+                        ActionItem(Icons.Outlined.Crop, stringResource(R.string.action_crop), TextPrimary, onCrop)
                     }
                 }
             }

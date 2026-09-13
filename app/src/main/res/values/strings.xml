@@ -94,6 +94,7 @@
     <string name="action_copy">Copy</string>
     <string name="action_move">Move</string>
     <string name="action_share">Share</string>
+    <string name="action_crop">Crop</string>
 
     <!-- Feedback -->
     <string name="undo_moved_to_trash">Moved to trash</string>
