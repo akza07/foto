@@ -5,7 +5,6 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
 import java.io.File
-import java.security.MessageDigest
 
 /**
  * Persistent, app-private on-disk cache of the video poster (first frame).
@@ -52,17 +51,6 @@ object VideoFrameCache {
         File(baseDir(context), sha1Hex(uri.toString()))
 
     private fun posterFile(dir: File): File = File(dir, POSTER_NAME)
-
-    private fun sha1Hex(input: String): String {
-        val bytes = MessageDigest.getInstance("SHA-1").digest(input.toByteArray(Charsets.UTF_8))
-        val hex = StringBuilder(bytes.size * 2)
-        for (b in bytes) {
-            val v = b.toInt() and 0xff
-            if (v < 0x10) hex.append('0')
-            hex.append(v.toString(16))
-        }
-        return hex.toString()
-    }
 
     /** Returns true if a readable poster exists on disk. */
     fun has(context: Context, uri: Uri): Boolean {

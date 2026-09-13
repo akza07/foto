@@ -13,7 +13,6 @@ import coil3.size.Size
 import coil3.video.videoFramePercent
 import com.phouton.phooto.data.MediaItem
 import java.io.File
-import java.security.MessageDigest
 import okio.Path.Companion.toOkioPath
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -572,16 +571,5 @@ object ThumbCache {
 
     private fun emit() {
         _progress.value = Progress(total = pendingTotal, done = pendingDone)
-    }
-
-    private fun sha1Hex(input: String): String {
-        val bytes = MessageDigest.getInstance("SHA-1").digest(input.toByteArray(Charsets.UTF_8))
-        val hex = StringBuilder(bytes.size * 2)
-        for (b in bytes) {
-            val v = b.toInt() and 0xff
-            if (v < 0x10) hex.append('0')
-            hex.append(v.toString(16))
-        }
-        return hex.toString()
     }
 }
