@@ -75,10 +75,10 @@ class GalleryGroupingTest {
     fun `deny-list excludes media under a selected prefix`() {
         val settings = AppSettings(requireExplicit = false)
         assertFalse(
-            shouldIncludeMedia("DCIM/Camera/a.jpg", settings, listOf("DCIM/Camera/"), emptySet()),
+            shouldIncludeMedia("DCIM/Camera/a.jpg", settings, listOf("DCIM/Camera/")),
         )
         assertTrue(
-            shouldIncludeMedia("DCIM/Other/a.jpg", settings, listOf("DCIM/Camera/"), emptySet()),
+            shouldIncludeMedia("DCIM/Other/a.jpg", settings, listOf("DCIM/Camera/")),
         )
     }
 
@@ -86,31 +86,18 @@ class GalleryGroupingTest {
     fun `allow-list keeps only media under a selected prefix`() {
         val settings = AppSettings(requireExplicit = true)
         assertTrue(
-            shouldIncludeMedia("DCIM/Camera/a.jpg", settings, listOf("DCIM/Camera/"), emptySet()),
+            shouldIncludeMedia("DCIM/Camera/a.jpg", settings, listOf("DCIM/Camera/")),
         )
         assertFalse(
-            shouldIncludeMedia("DCIM/Other/a.jpg", settings, listOf("DCIM/Camera/"), emptySet()),
+            shouldIncludeMedia("DCIM/Other/a.jpg", settings, listOf("DCIM/Camera/")),
         )
     }
 
     @Test
     fun `allow-list with no folders hides everything`() {
         val settings = AppSettings(requireExplicit = true)
-        assertFalse(shouldIncludeMedia("DCIM/a.jpg", settings, emptyList(), emptySet()))
-        assertFalse(shouldIncludeMedia(null, settings, emptyList(), emptySet()))
-    }
-
-    @Test
-    fun `nomedia directories are excluded when respected`() {
-        val respected = AppSettings(respectNoMedia = true)
-        assertFalse(
-            shouldIncludeMedia("DCIM/Secret/a.jpg", respected, emptyList(), setOf("DCIM/Secret/")),
-        )
-
-        val ignored = AppSettings(respectNoMedia = false)
-        assertTrue(
-            shouldIncludeMedia("DCIM/Secret/a.jpg", ignored, emptyList(), setOf("DCIM/Secret/")),
-        )
+        assertFalse(shouldIncludeMedia("DCIM/a.jpg", settings, emptyList()))
+        assertFalse(shouldIncludeMedia(null, settings, emptyList()))
     }
 
     // ---- isAnimatedMime ---------------------------------------------------

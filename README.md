@@ -235,8 +235,11 @@ edge-to-edge rendering.
     no restart needed.
   - **Playback** — *Loop videos*: restart a video when it ends (`Player.REPEAT_MODE_ONE`).
   - **Library**:
-    - **Respect .nomedia** (toggle): hides MediaStore-indexed media whose directory
-      (or ancestor) has a `.nomedia` marker. Folders you explicitly add are always shown.
+    - **Respect .nomedia** (toggle): hides media whose directory (or ancestor) has a
+      `.nomedia` marker. This applies to directories you explicitly add too, so a
+      `.nomedia` folder inside a granted tree is hidden while the toggle is on and
+      shown when it is off. In the default view Android's media scanner already
+      excludes `.nomedia` content, so there the toggle only affects the allow-list browse.
     - **Only show selected folders** (toggle): switches between allow-list and deny-list.
     - **Manage folders** → a **Folders** sub-screen (slide transition, its own back
       handling) with the directory list and **Add directory**.
@@ -252,7 +255,9 @@ edge-to-edge rendering.
   - **OFF (deny-list):** all media is shown except the selected directories.
 - **SAF directory browsing:** in allow-list mode, each granted directory is enumerated
   directly through the Storage Access Framework (recursive tree browse), so content
-  inside `.nomedia` folders that Android's media scanner never indexes still appears.
+  inside `.nomedia` folders that Android's media scanner never indexes is reachable.
+  This is subject to **Respect .nomedia**: while that toggle is on, `.nomedia`
+  directories (and everything under them) are hidden from the browse.
   MediaStore items under the same directories are merged in and deduplicated by path.
 - Directory picker uses the system **Storage Access Framework** (`OpenDocumentTree`) with
   `takePersistableUriPermission` (read + write) so access survives restarts and deletes
@@ -347,9 +352,11 @@ apk-output/foto-arm64-android16-release.apk
 - UI strings live in `res/values/strings.xml` (with `plurals` for counts); only the
   default locale is shipped so far.
 - Crop is a placeholder ("Coming soon" toast).
-- `.nomedia` content is shown only inside directories the user explicitly adds. Content
-  outside granted directories stays hidden because Android's media scanner never indexes
-  it — showing it device-wide would require `MANAGE_EXTERNAL_STORAGE` ("All files access"),
+- `.nomedia` content is reachable only inside directories the user explicitly adds.
+  **Respect .nomedia** controls whether those markers are honored there (on by default):
+  with it off, `.nomedia` content inside granted directories is shown. Content outside
+  granted directories stays hidden because Android's media scanner never indexes it —
+  showing it device-wide would require `MANAGE_EXTERNAL_STORAGE` ("All files access"),
   which Foto intentionally does not request.
 - Selected-directory matching assumes the primary external volume (`primary:` tree URIs).
 - No network features, no cloud backup, no EXIF editing.

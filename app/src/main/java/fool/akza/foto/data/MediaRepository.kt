@@ -97,21 +97,26 @@ object MediaRepository {
         val settings = SettingsRepository.settings.value
 
         if (settings.requireExplicit) {
-            // Allow-list: directly browse each granted SAF tree (reveals .nomedia
-            // content, which MediaStore never indexes), supplemented by MediaStore
-            // items under the same relative prefixes (deduped).
-            val safItems = settings.selectedTreeUris
-                .flatMap { treeUri ->
-                    try {
-                        browseTree(context, treeUri)
-                    } catch (e: Exception) {
-                        // Grant expired / provider failure: fall back to the
-                        // MediaStore supplement for this tree.
-                        AppLog.w("SAF browse failed for $treeUri", e)
-                        emptyList()
-                    }
+            // Allow-list: directly browse each granted SAF tree (the only way to
+            // reach .nomedia content, which MediaStore never indexes), plus
+            // MediaStore items under the same relative prefixes (deduped).
+            val scans = settings.selectedTreeUris.map { treeUri ->
+                try {
+                    browseTree(context, treeUri)
+                } catch (e: Exception) {
+                    // Grant expired / provider failure: fall back to the
+                    // MediaStore supplement for this tree.
+                    AppLog.w("SAF browse failed for $treeUri", e)
+                    SafScan(emptyList(), emptySet())
                 }
+            }
+            val safItems = scans.flatMap { it.items }
             val safPaths = safItems.mapNotNull { it.canonicalPath() }.toHashSet()
+            // `.nomedia` markers are only observable through SAF. Respect them
+            // for the browsed items and the MediaStore supplement alike, so a
+            // stale indexed row can't leak through. Empty when the toggle is off.
+            val noMediaDirs =
+                if (settings.respectNoMedia) scans.flatMap { it.noMediaDirs }.toSet() else emptySet()
 
             val selectedPrefixes = settings.selectedTreeUris.mapNotNull { treeUri ->
                 treeUriToRelativePath(context, treeUri)
@@ -127,7 +132,11 @@ object MediaRepository {
                     .filterNot { item -> item.canonicalPath() in safPaths }
             }
 
-            val raw = safItems + mediaItems
+            val combined = safItems + mediaItems
+            val raw = combined.filterNot { isUnderNoMedia(it.canonicalDirPath(), noMediaDirs) }
+            if (raw.size != combined.size) {
+                AppLog.w("load: hid ${combined.size - raw.size} item(s) under .nomedia")
+            }
             val items = raw.filterNot { it.isExcluded(excludeUris, excludePaths) }
             if (items.size != raw.size) {
                 AppLog.w("load: excluded ${raw.size - items.size} suppressed uri(s)")
@@ -139,19 +148,16 @@ object MediaRepository {
                 context.getString(R.string.folder_storage),
             )
         } else {
-            // Deny-list: pure MediaStore path + existing filters (unchanged).
+            // Deny-list: pure MediaStore path. No `.nomedia` filter is needed —
+            // MediaStore never indexes content under a `.nomedia` directory, so
+            // the system already hides it here. (Marker detection needs SAF and
+            // only affects the allow-list browse above.)
             val selectedPrefixes = settings.selectedTreeUris.mapNotNull { uri ->
                 treeUriToRelativePath(context, uri)
             }
-            // Resolve all .nomedia directories once (single query), not per item.
-            val noMediaDirs: Set<String> = if (settings.respectNoMedia) {
-                queryNoMediaDirs(context)
-            } else {
-                emptySet()
-            }
 
             val raw = queryMedia(context)
-                .filter { item -> passesFilters(item, settings, selectedPrefixes, noMediaDirs) }
+                .filter { item -> passesFilters(item, settings, selectedPrefixes) }
             val items = raw.filterNot { it.isExcluded(excludeUris, excludePaths) }
             if (items.size != raw.size) {
                 AppLog.w("load: excluded ${raw.size - items.size} suppressed uri(s)")
@@ -163,27 +169,6 @@ object MediaRepository {
                 context.getString(R.string.folder_storage),
             )
         }
-    }
-
-    /** Returns the set of relative directory paths (e.g. "DCIM/Camera/") containing a `.nomedia` file. */
-    private fun queryNoMediaDirs(context: Context): Set<String> {
-        val projection = arrayOf(MediaStore.Files.FileColumns.RELATIVE_PATH)
-        val selection = "${MediaStore.Files.FileColumns.DISPLAY_NAME} = ?"
-        val dirs = mutableSetOf<String>()
-        context.contentResolver.query(
-            MediaStore.Files.getContentUri("external"),
-            projection,
-            selection,
-            arrayOf(".nomedia"),
-            null,
-        )?.use { cursor ->
-            val col = cursor.getColumnIndexOrThrow(MediaStore.Files.FileColumns.RELATIVE_PATH)
-            while (cursor.moveToNext()) {
-                val dir = cursor.getString(col)
-                if (!dir.isNullOrBlank()) dirs.add(dir)
-            }
-        }
-        return dirs
     }
 
     // ---------------------------------------------------------------------------
@@ -196,14 +181,30 @@ object MediaRepository {
     // Android/sandbox are hidden).
     // ---------------------------------------------------------------------------
 
-    /** Recursively browses a granted SAF tree and returns image/video items inside it. */
-    private fun browseTree(context: Context, treeUri: String): List<MediaItem> {
+    /** Media items and `.nomedia`-marked directories found under a granted tree. */
+    private data class SafScan(
+        val items: List<MediaItem>,
+        /** Relative dir paths (e.g. "DCIM/Secret") that contain a `.nomedia`. */
+        val noMediaDirs: Set<String>,
+    )
+
+    /**
+     * Recursively browses a granted SAF tree and returns the image/video items
+     * inside it plus the relative paths of its `.nomedia`-marked directories.
+     *
+     * MediaStore never indexes `.nomedia` markers, so SAF is the only place they
+     * are observable; ExternalStorageProvider lists them when enumerating a
+     * granted tree. The caller decides whether to honour them
+     * (see [isUnderNoMedia]).
+     */
+    private fun browseTree(context: Context, treeUri: String): SafScan {
         val tree = Uri.parse(treeUri)
         val rootDocId = DocumentsContract.getTreeDocumentId(tree)
         val rootName = rootDocId.substringAfter(":").substringAfterLast("/")
             .ifBlank { context.getString(R.string.folder_storage) }
 
         val items = mutableListOf<MediaItem>()
+        val noMediaDirs = mutableSetOf<String>()
         // Iterative DFS. Each entry: (parentDocId, parentName, depth).
         val stack = ArrayDeque<Triple<String, String, Int>>()
         stack.add(Triple(rootDocId, rootName, 0))
@@ -235,12 +236,14 @@ object MediaRepository {
                 val mimeCol = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_MIME_TYPE)
                 val modCol = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_LAST_MODIFIED)
                 val sizeCol = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_SIZE)
+                val childNames = mutableListOf<String>()
                 while (cursor.moveToNext()) {
                     if (items.size >= MaxSafItems) break
                     val docId = cursor.getString(idCol)
                     val name = cursor.getString(nameCol)
                     val mime = cursor.getString(mimeCol)
                     val isDir = mime == DocumentsContract.Document.MIME_TYPE_DIR
+                    if (name != null) childNames.add(name)
 
                     if (isDir) {
                         if (docId != null) {
@@ -268,9 +271,13 @@ object MediaRepository {
                         )
                     }
                 }
+                // A `.nomedia` child marks the directory whose children we just
+                // listed (parentId embeds its path, e.g. "primary:DCIM/Secret").
+                noMediaDirFor(parentId.substringAfter(":").trim('/'), childNames)
+                    ?.let { noMediaDirs.add(it) }
             }
         }
-        return items
+        return SafScan(items, noMediaDirs)
     }
 
     /** Browses a single directory inside a granted SAF tree (no recursion). */

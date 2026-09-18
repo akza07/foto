@@ -116,26 +116,22 @@ internal fun shouldIncludeMedia(
     path: String?,
     settings: AppSettings,
     selectedPrefixes: List<String>,
-    noMediaDirs: Set<String>,
 ): Boolean {
-    if (settings.respectNoMedia && path != null && noMediaDirs.any { path.startsWith(it) }) {
-        return false
-    }
-
     if (settings.requireExplicit) {
         // Allow-list: keep only media under a selected directory.
         if (selectedPrefixes.isEmpty()) return false
         val p = path ?: return false
         return selectedPrefixes.any { p.startsWith(it) }
     }
-    // Deny-list: keep media NOT under any selected directory.
+    // Deny-list: keep media NOT under any selected directory. No `.nomedia`
+    // test is needed here — MediaStore never indexes content under a `.nomedia`
+    // directory, so the platform already hides it in this view.
     val p = path ?: return true
     return selectedPrefixes.none { p.startsWith(it) }
 }
 
 /**
  * Applies the Content Discovery settings:
- * - .nomedia: exclude media whose directory (or ancestor) has a `.nomedia` file.
  * - explicit permission: if on, only media under a selected directory tree is kept
  *   (allow-list; nothing shown when no directory is selected). If off, media under
  *   selected trees is excluded (deny-list).
@@ -144,8 +140,29 @@ internal fun passesFilters(
     item: MediaItem,
     settings: AppSettings,
     selectedPrefixes: List<String>,
-    noMediaDirs: Set<String>,
-): Boolean = shouldIncludeMedia(item.relativePath, settings, selectedPrefixes, noMediaDirs)
+): Boolean = shouldIncludeMedia(item.relativePath, settings, selectedPrefixes)
+
+/**
+ * The relative directory path that a `.nomedia` child marks, or null when the
+ * directory has no marker. [parentDir] is the directory's own relative path
+ * ("" for the root of a granted tree).
+ *
+ * `.nomedia` markers are invisible to MediaStore; this is applied to SAF tree
+ * browsing, which is the only place the marker is observable.
+ */
+internal fun noMediaDirFor(parentDir: String, childNames: List<String>): String? =
+    if (childNames.any { it == ".nomedia" }) parentDir else null
+
+/**
+ * True when [dir] is a `.nomedia`-marked directory or a descendant of one. An
+ * empty marker ("") is the root of a granted tree, so it hides everything under
+ * it. Prefix matching is path-segment aware, so "DCIM/Secret" does not match
+ * "DCIM/Secret2".
+ */
+internal fun isUnderNoMedia(dir: String?, markers: Set<String>): Boolean {
+    if (dir == null) return false
+    return markers.any { m -> m.isEmpty() || dir == m || dir.startsWith("$m/") }
+}
 
 /** Ordering for media within a folder. */
 internal fun itemComparator(sort: MediaSort): Comparator<MediaItem> = when (sort) {
