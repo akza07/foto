@@ -1,4 +1,4 @@
-# Phooto — App Documentation
+# Foto — App Documentation
 
 > An AMOLED-first, edge-to-edge photo gallery for Android, built with **Jetpack Compose**
 > and Material 3, styled after **shadcn/ui** (dark zinc palette).
@@ -7,7 +7,7 @@
 
 ## 1. Overview
 
-**Phooto** is a local media gallery app that:
+**Foto** is a local media gallery app that:
 
 - Requests read access to images + videos on the device.
 - Shows media organized as **albums (folders)** and loose files.
@@ -38,7 +38,7 @@ rendering where the app's black extends behind the system status/navigation bars
 | Media3 (`media3-exoplayer`, `media3-ui-compose`) | 1.11.0 |
 | Haze (backdrop blur) | 1.7.2 |
 | `minSdk` / `targetSdk` / `compileSdk` | 29 / 37 / 37 |
-| Application ID | `com.phouton.phooto` |
+| Application ID | `fool.akza.foto` |
 
 > Note: The project uses AGP 9's **built-in Kotlin** — no `org.jetbrains.kotlin.android`
 > plugin. The Compose compiler plugin (`org.jetbrains.kotlin.plugin.compose`) is applied
@@ -49,7 +49,7 @@ rendering where the app's black extends behind the system status/navigation bars
 ## 3. Architecture
 
 ```
-app/src/main/java/com/phouton/phooto/
+app/src/main/java/fool/akza/foto/
 ├── MainActivity.kt            # Entry point: edge-to-edge, share/view intents, previews
 ├── AppLog.kt                  # Logcat tag for previously-silent failures
 ├── ui/
@@ -105,7 +105,7 @@ Defined in `ui/theme/Theme.kt`:
 | `TextMuted` | `#A1A1AA` | Secondary text, captions |
 | `DeleteRed` | `#EF4444` | Destructive actions (delete confirm) |
 
-The app is **dark-only** (`PhootoTheme` always uses `darkColorScheme`; system theme is
+The app is **dark-only** (`FotoTheme` always uses `darkColorScheme`; system theme is
 ignored). The theme has **no action bar** and uses transparent status/nav bars with
 edge-to-edge rendering.
 
@@ -165,7 +165,7 @@ edge-to-edge rendering.
 - **Top-left:** back button + counter pill (`3/12`).
 - **Drawer actions:** Delete (red), Share, Info, Crop ("Coming soon" shadcn toast).
   - **Delete:** shadcn confirmation modal (red accent) → the file is copied into
-    **Phooto's own trash** (`filesDir/trash`, isolated from Android's system trash)
+    **Foto's own trash** (`filesDir/trash`, isolated from Android's system trash)
     and then its original is removed, so every delete shows an **Undo** bar and can
     be restored later from **Settings → Storage → Trash**.
   - **Share:** `ACTION_SEND` chooser with URI grant.
@@ -267,11 +267,11 @@ edge-to-edge rendering.
 - **Search** (magnifier in the Albums header): inline name search over the full
   loaded library (MediaStore + SAF-browsed, including `.nomedia` content).
   Results are grouped by month/year and open in the viewer.
-- **Open from other apps**: Phooto handles `ACTION_VIEW` and `ACTION_SEND` for
+- **Open from other apps**: Foto handles `ACTION_VIEW` and `ACTION_SEND` for
   `image/*` and `video/*`, opening the handed-over file in the viewer.
 - **Non-destructive delete**: every delete is undoable — the file is copied into
-  Phooto's **own trash** first (isolated from Android's system trash), then removed.
-  The Trash screen (Settings → Storage → Trash) lists what Phooto deleted, with
+  Foto's **own trash** first (isolated from Android's system trash), then removed.
+  The Trash screen (Settings → Storage → Trash) lists what Foto deleted, with
   restore and empty.
 
 ---
@@ -282,9 +282,9 @@ edge-to-edge rendering.
 - JDK 17+, Android SDK (with platform 37), `ANDROID_HOME` set.
 - Release signing: `keystore.properties` at the repo root (git-ignored) with:
   ```properties
-  storeFile=keystore/phooto-release.jks
+  storeFile=keystore/foto-release.jks
   storePassword=…
-  keyAlias=phooto
+  keyAlias=foto
   keyPassword=…
   ```
   If the file is missing, release builds fall back to the debug keystore.
@@ -324,15 +324,15 @@ adb install -r app/build/outputs/apk/release/app-release.apk
 The optimized release APK is copied to:
 
 ```
-apk-output/phooto-arm64-android16-release.apk
+apk-output/foto-arm64-android16-release.apk
 ```
 
 - **Size:** ~3.4 MB (R8-optimized from a ~70 MB debug build).
 - **Targets Android 16** (targetSdk 37), minSdk 29.
 - **ABIs:** arm64-v8a (`ndk.abiFilters` — add more in `app/build.gradle.kts` to ship others).
-- **Signed:** V2-signed with `keystore/phooto-release.jks` (CN=Phooto).
+- **Signed:** V2-signed with `keystore/foto-release.jks` (certificate DN still `CN=Phooto`; the key pair predates the rename and is retained so the signing identity stays stable).
 
-> ⚠️ Keep `keystore/phooto-release.jks` and its passwords safe. You must use the **same
+> ⚠️ Keep `keystore/foto-release.jks` and its passwords safe. You must use the **same
 > key** for every future release to update the app on users' devices.
 
 ---
@@ -350,6 +350,6 @@ apk-output/phooto-arm64-android16-release.apk
 - `.nomedia` content is shown only inside directories the user explicitly adds. Content
   outside granted directories stays hidden because Android's media scanner never indexes
   it — showing it device-wide would require `MANAGE_EXTERNAL_STORAGE` ("All files access"),
-  which Phooto intentionally does not request.
+  which Foto intentionally does not request.
 - Selected-directory matching assumes the primary external volume (`primary:` tree URIs).
 - No network features, no cloud backup, no EXIF editing.

@@ -12,13 +12,13 @@ val keystoreProperties = Properties().apply {
 }
 
 android {
-    namespace = "com.phouton.phooto"
+    namespace = "fool.akza.foto"
     compileSdk {
         version = release(37)
     }
 
     defaultConfig {
-        applicationId = "com.phouton.phooto"
+        applicationId = "fool.akza.foto"
         minSdk = 29
         targetSdk = 37
         versionCode = 2

@@ -1,5 +1,5 @@
 <resources>
-    <string name="app_name">phooto</string>
+    <string name="app_name">Foto</string>
 
     <!-- Shared actions -->
     <string name="action_back">Back</string>
@@ -38,11 +38,15 @@
     <string name="storage_emptying_trash">Emptying…</string>
     <string name="storage_checking_trash">Checking…</string>
     <string name="storage_trash_empty">Trash is empty</string>
+    <plurals name="trash_summary">
+        <item quantity="one">%1$d · %2$s</item>
+        <item quantity="other">%1$d · %2$s</item>
+    </plurals>
     <string name="empty_trash_confirm_title">Empty trash?</string>
     <string name="empty_trash_confirm_message">Items in the trash will be permanently deleted. This can\'t be undone.</string>
     <string name="action_empty">Empty</string>
     <string name="section_about">About</string>
-    <string name="about_app_name">Phooto</string>
+    <string name="about_app_name">Foto</string>
     <string name="about_version">Version %1$s</string>
     <string name="clear_cache_confirm_title">Clear thumbnail cache?</string>
     <string name="clear_cache_confirm_message">Cached previews will be deleted and regenerated the next time you scroll. This may take a moment.</string>
@@ -65,6 +69,8 @@
     <string name="folders_empty">No folders added</string>
     <string name="folders_add_directory">Add directory</string>
     <string name="folder_name_fallback">Selected directory</string>
+    <string name="folder_unknown">Unknown</string>
+    <string name="folder_storage">Storage</string>
     <plurals name="folder_count">
         <item quantity="zero">None</item>
         <item quantity="one">1 folder</item>
@@ -73,7 +79,7 @@
 
     <!-- Permission gate -->
     <string name="permission_title">Allow access to your photos</string>
-    <string name="permission_message">Phooto needs access to your gallery to show and organize your photos and videos.</string>
+    <string name="permission_message">Foto needs access to your gallery to show and organize your photos and videos.</string>
     <string name="permission_grant">Grant access</string>
     <string name="permission_open_settings">Open settings</string>
 
@@ -95,6 +101,10 @@
     <string name="info_date_modified">Date modified</string>
     <string name="info_kind_video">Video</string>
     <string name="info_kind_image">Image</string>
+    <string name="size_gb">%1$s GB</string>
+    <string name="size_mb">%1$s MB</string>
+    <string name="size_kb">%1$s KB</string>
+    <string name="size_bytes">%1$d B</string>
 
     <!-- Selection -->
     <string name="selection_exit">Exit selection</string>
@@ -134,6 +144,7 @@
     <string name="select_all">Select all</string>
     <string name="no_media_found">No media found</string>
     <string name="no_items">No items</string>
+    <string name="viewer_position">%1$d/%2$d</string>
     <string name="coming_soon">Coming soon</string>
     <string name="deleted">Deleted</string>
     <string name="restored">Restored</string>
@@ -176,7 +187,7 @@
     </plurals>
 
     <!-- First-run tutorial -->
-    <string name="tutorial_welcome_title">Welcome to Phooto</string>
+    <string name="tutorial_welcome_title">Welcome to Foto</string>
     <string name="tutorial_welcome_body">A fast, AMOLED-first gallery for the photos and videos already on your device.</string>
     <string name="tutorial_browse_title">Find your photos</string>
     <string name="tutorial_browse_body">Open an album to see everything inside, or tap the search icon to find a file by name.</string>

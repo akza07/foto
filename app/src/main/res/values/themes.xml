@@ -2,7 +2,7 @@
     <!-- Base application theme: pitch-black AMOLED, no action bar.
          With edge-to-edge, the status/nav bars are transparent and the app's
          black background draws behind them (AMOLED = invisible seam). -->
-    <style name="Theme.Phooto" parent="android:Theme.Material.NoActionBar">
+    <style name="Theme.Foto" parent="android:Theme.Material.NoActionBar">
         <item name="android:windowBackground">@android:color/black</item>
         <item name="android:statusBarColor">@android:color/transparent</item>
         <item name="android:navigationBarColor">@android:color/transparent</item>
