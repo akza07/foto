@@ -241,11 +241,24 @@ private fun requiredPermissions(): List<String> {
 }
 
 private fun allGranted(context: android.content.Context): Boolean {
+    // Android 14+ "Select photos and videos": the full READ_MEDIA_* grants are
+    // denied, but the user explicitly allowed a subset. Treat that as granted
+    // (MediaStore then returns only the selected items) instead of blocking the
+    // app on a permission card the user has already answered.
+    if (hasPartialMediaAccess(context)) return true
     return requiredPermissions().all { permission ->
         ContextCompat.checkSelfPermission(context, permission) ==
             PackageManager.PERMISSION_GRANTED
     }
 }
+
+/** True on Android 14+ when the user granted access to selected items only. */
+private fun hasPartialMediaAccess(context: android.content.Context): Boolean =
+    Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE &&
+        ContextCompat.checkSelfPermission(
+            context,
+            android.Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED,
+        ) == PackageManager.PERMISSION_GRANTED
 
 private fun android.content.Context.openAppSettings() {
     val intent = Intent(

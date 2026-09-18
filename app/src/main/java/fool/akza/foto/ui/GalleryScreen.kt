@@ -85,8 +85,10 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import fool.akza.foto.AppLog
 import fool.akza.foto.data.GalleryContent
+import fool.akza.foto.data.DeleteAttempt
 import fool.akza.foto.data.DeleteResult
 import fool.akza.foto.data.GalleryEvents
+import fool.akza.foto.data.driveDeleteQueue
 import fool.akza.foto.R
 import fool.akza.foto.data.MediaFolder
 import fool.akza.foto.data.MediaItem
@@ -107,6 +109,7 @@ import android.provider.MediaStore
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import android.content.Intent
+import android.content.IntentSender
 import dev.chrisbanes.haze.hazeEffect
 import dev.chrisbanes.haze.hazeSource
 import dev.chrisbanes.haze.rememberHazeState
@@ -559,6 +562,45 @@ fun GalleryScreen(
         toastMessage = UiText.Res(R.string.error_delete)
     }
 
+    // API 29 drives MediaStore deletes through a per-item consent dialog. Walk
+    // [queue] calling MediaRepository.delete: direct deletes are recorded,
+    // failures roll back their trash copy, and the first item the system wants
+    // the user to approve arms the launcher. A successful direct delete must be
+    // recorded — treating it as "no consent path" would drop the file and stop
+    // the batch.
+    suspend fun runApi29Deletes(queue: List<MediaItem>, entries: Map<Uri, TrashEntry>) {
+        var sender: IntentSender? = null
+        val round = driveDeleteQueue(queue) { item ->
+            when (val result = MediaRepository.delete(context, item)) {
+                DeleteResult.Deleted -> DeleteAttempt.Deleted
+                is DeleteResult.Consent -> {
+                    sender = result.intentSender
+                    DeleteAttempt.NeedsConsent
+                }
+                DeleteResult.Failed -> DeleteAttempt.Failed
+            }
+        }
+        if (round.failed.isNotEmpty()) {
+            round.failed.forEach { item ->
+                entries[item.uri]?.let { rollbackTrash(mapOf(item.uri to it)) }
+            }
+            reportDeleteFailure()
+        }
+        if (round.deleted.isNotEmpty()) {
+            finishTrashDelete(entries, round.deleted)
+        }
+        val pendingSender = sender
+        if (pendingSender != null) {
+            pendingDeleteItems = round.pending
+            pendingDeleteEntries = entries
+            nextConsentLaunch = androidx.activity.result.IntentSenderRequest.Builder(pendingSender).build()
+        } else {
+            pendingDeleteItems = emptyList()
+            pendingDeleteEntries = emptyMap()
+            clearSelection()
+        }
+    }
+
     val consentLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartIntentSenderForResult()
     ) { result ->
@@ -589,48 +631,10 @@ fun GalleryScreen(
                 clearSelection()
             }
         } else {
-            // API 29: consent granted for one item; delete it and continue.
-            scope.launch {
-                val head = queue.first()
-                val rest = queue.drop(1)
-                val deleted =
-                    if (MediaRepository.delete(context, head) == DeleteResult.Deleted) {
-                        listOf(head)
-                    } else {
-                        emptyList()
-                    }
-                removeDeletedBatch(deleted)
-                if (deleted.isNotEmpty()) {
-                    undoTrashEntries = entries[head.uri]?.let { listOf(it) }.orEmpty()
-                    undoKey += 1
-                } else {
-                    // Consent granted but the original survived: keep nothing.
-                    entries[head.uri]?.let { rollbackTrash(mapOf(head.uri to it)) }
-                    reportDeleteFailure()
-                }
-                if (rest.isEmpty()) {
-                    pendingDeleteItems = emptyList()
-                    pendingDeleteEntries = emptyMap()
-                    clearSelection()
-                } else {
-                    pendingDeleteItems = rest
-                    val sender =
-                        (MediaRepository.delete(context, rest.first()) as? DeleteResult.Consent)
-                            ?.intentSender
-                    if (sender != null) {
-                        nextConsentLaunch =
-                            androidx.activity.result.IntentSenderRequest.Builder(sender).build()
-                    } else {
-                        rollbackTrash(
-                            entries.filterKeys { uri -> rest.any { it.uri == uri } },
-                        )
-                        reportDeleteFailure()
-                        pendingDeleteItems = emptyList()
-                        pendingDeleteEntries = emptyMap()
-                        clearSelection()
-                    }
-                }
-            }
+            // API 29: the consent applied to the item at the head of the queue.
+            // Continue through the remaining items; the next one that still
+            // needs consent re-arms the launcher.
+            scope.launch { runApi29Deletes(queue, entries) }
         }
     }
 
@@ -725,22 +729,12 @@ fun GalleryScreen(
                     clearSelection()
                 }
             } else {
-                // API 29: per-item RecoverableSecurityException consent.
-                pendingDeleteItems = needsConsent
+                // API 29: per-item RecoverableSecurityException consent. The
+                // driver deletes what it can, records those, and arms the
+                // launcher for the first item that still needs consent.
                 pendingDeleteEntries = entries
                 consentCoversAll = false
-                val sender =
-                    (MediaRepository.delete(context, needsConsent.first()) as? DeleteResult.Consent)
-                        ?.intentSender
-                if (sender != null) {
-                    consentLauncher.launch(
-                        androidx.activity.result.IntentSenderRequest.Builder(sender).build(),
-                    )
-                } else {
-                    rollbackTrash(entries.filterKeys { it in needsConsent.map { m -> m.uri } })
-                    reportDeleteFailure()
-                    clearSelection()
-                }
+                runApi29Deletes(needsConsent, entries)
             }
         }
     }

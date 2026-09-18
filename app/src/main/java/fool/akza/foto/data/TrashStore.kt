@@ -8,6 +8,7 @@ import android.provider.MediaStore
 import fool.akza.foto.AppLog
 import org.json.JSONObject
 import java.io.File
+import java.io.OutputStream
 import java.util.UUID
 
 /**
@@ -139,16 +140,14 @@ object TrashStore {
             null
         } ?: return false
 
-        val written = try {
-            context.contentResolver.openOutputStream(target, "w")?.use { output ->
-                entry.payload.inputStream().use { input -> input.copyTo(output) }
-            }
-            true
-        } catch (e: Exception) {
-            AppLog.w("trash restore write failed for ${entry.name}", e)
-            false
+        // A null output stream must be a hard failure: reporting success here
+        // would clear IS_PENDING and then delete the trash payload, destroying
+        // the only remaining copy of the file.
+        val written = writeRestore(entry.payload) {
+            context.contentResolver.openOutputStream(target, "w")
         }
         if (!written) {
+            AppLog.w("trash restore write failed for ${entry.name}")
             runCatching { context.contentResolver.delete(target, null, null) }
             return false
         }
@@ -232,3 +231,23 @@ object TrashStore {
 /** [JSONObject.optString] that maps JSON null / missing to a Kotlin null. */
 private fun JSONObject.optStringOrNull(key: String): String? =
     if (isNull(key)) null else optString(key).takeIf { it.isNotEmpty() }
+
+/**
+ * Copies [payload]'s bytes into the stream opened by [openOutput]. Returns
+ * false when no stream is available or any I/O fails, so the caller keeps the
+ * trash copy rather than deleting the last remaining source.
+ *
+ * Extracted from [TrashStore.restore] so the null-stream path — which used to
+ * report success and then destroy the payload — is unit-testable.
+ */
+internal fun writeRestore(payload: File, openOutput: () -> OutputStream?): Boolean {
+    val output = openOutput() ?: return false
+    return try {
+        output.use { out ->
+            payload.inputStream().use { input -> input.copyTo(out) }
+        }
+        true
+    } catch (_: Exception) {
+        false
+    }
+}
