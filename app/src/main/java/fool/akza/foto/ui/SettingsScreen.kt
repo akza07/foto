@@ -218,6 +218,19 @@ private fun SettingsRoot(
                 }
             }
 
+            // ── Behavior ─────────────────────────────────────────────
+            item { SettingsSectionHeader(title = stringResource(R.string.section_behavior), topPadding = 16.dp) }
+            item {
+                SettingsGroup {
+                    SettingsToggleRow(
+                        title = stringResource(R.string.behavior_confirm_delete_title),
+                        subtitle = stringResource(R.string.behavior_confirm_delete_subtitle),
+                        checked = settings.confirmBeforeDelete,
+                        onCheckedChange = { SettingsRepository.setConfirmBeforeDelete(it) },
+                    )
+                }
+            }
+
             // ── Library ──────────────────────────────────────────────
             item { SettingsSectionHeader(title = stringResource(R.string.section_library), topPadding = 16.dp) }
             item {

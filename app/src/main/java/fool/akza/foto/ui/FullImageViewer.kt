@@ -220,6 +220,8 @@ fun FullImageViewer(
     onCrop: () -> Unit,
     loopVideos: Boolean = false,
     pendingRemoval: MediaItem? = null,
+    /** A file delete has been accepted but has not yet completed. */
+    deleteInProgress: Boolean = false,
     onRemovalAnimationEnd: () -> Unit = {},
     /** URI to animate the pager back to after an Undo restore. */
     restoreUri: android.net.Uri? = null,
@@ -464,13 +466,17 @@ fun FullImageViewer(
     val onRadialAction: (ViewerAction) -> Unit = { action ->
         currentItem?.let { item ->
             when (action) {
-                ViewerAction.Delete -> onDelete(item)
+                ViewerAction.Delete -> if (!deleteInProgress) onDelete(item)
                 ViewerAction.Info -> onInfo(item)
                 ViewerAction.Share -> onShare(item)
                 ViewerAction.Crop -> onCrop()
             }
         }
     }
+    // The long-press pointer-input coroutine outlives page recompositions when
+    // adjacent pages are both images. Read the current callback when the finger
+    // lifts so a radial action always applies to the page being viewed now.
+    val latestOnRadialAction = rememberUpdatedState(onRadialAction)
 
     Box(
         modifier = Modifier
@@ -562,7 +568,7 @@ fun FullImageViewer(
                         )
                         radialPresent = false
                     }
-                    action?.let { onRadialAction(it) }
+                    action?.let { latestOnRadialAction.value(it) }
                 }
             },
     ) {
@@ -610,7 +616,8 @@ fun FullImageViewer(
                     !currentPageZoomed &&
                     !multiTouchActive &&
                     !radialPresent &&
-                    !removing,
+                    !removing &&
+                    !deleteInProgress,
                 // Stable page identity: lets the pager remap a page to its new
                 // index when a delete shrinks the list, instead of flashing the
                 // wrong item during the commit.
@@ -640,7 +647,7 @@ fun FullImageViewer(
                                 if (page == currentIndex) videoPlaying = playing
                             },
                             onLongPress = { drawerVisible = true },
-                            onDelete = { onDelete(item) },
+                            onDelete = { if (!deleteInProgress) onDelete(item) },
                             // Live entry/exit progress (0 = tile, 1 = fullscreen) so
                             // the video page morphs the tile's cropped poster into the
                             // fitted player and back on close. Must stay live on exit
@@ -792,7 +799,7 @@ fun FullImageViewer(
                     onCloseDrawer = { drawerVisible = false },
                     onDelete = {
                         drawerVisible = false
-                        onDelete(currentItem)
+                        if (!deleteInProgress) onDelete(currentItem)
                     },
                     onShare = {
                         drawerVisible = false

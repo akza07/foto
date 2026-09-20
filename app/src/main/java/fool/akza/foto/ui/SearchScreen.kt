@@ -43,6 +43,7 @@ import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -50,6 +51,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import fool.akza.foto.R
 import fool.akza.foto.data.MediaItem
+import fool.akza.foto.ui.theme.AmoledBlack
 import fool.akza.foto.ui.theme.TextMuted
 import fool.akza.foto.ui.theme.TextPrimary
 
@@ -97,6 +99,7 @@ fun SearchScreen(
     val unknownDateLabel = stringResource(R.string.search_unknown_date)
 
     FrostedHeaderScaffold(
+        background = AmoledBlack,
         header = {
             // Header: back arrow + inline query field.
             Row(
@@ -162,12 +165,28 @@ fun SearchScreen(
         when {
             query.isBlank() -> {
                 Box(modifier = contentModifier, contentAlignment = Alignment.Center) {
-                    Text(stringResource(R.string.search_hint), color = TextMuted, fontSize = 14.sp)
+                    Text(
+                        text = stringResource(R.string.search_hint),
+                        color = TextMuted,
+                        fontSize = 14.sp,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 24.dp),
+                    )
                 }
             }
             results.isEmpty() -> {
                 Box(modifier = contentModifier, contentAlignment = Alignment.Center) {
-                    Text(stringResource(R.string.search_no_results), color = TextMuted, fontSize = 14.sp)
+                    Text(
+                        text = stringResource(R.string.search_no_results),
+                        color = TextMuted,
+                        fontSize = 14.sp,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 24.dp),
+                    )
                 }
             }
             else -> {
@@ -183,6 +202,17 @@ fun SearchScreen(
                     horizontalArrangement = Arrangement.spacedBy(SearchGridSpacing),
                     verticalArrangement = Arrangement.spacedBy(SearchGridSpacing),
                 ) {
+                    item(
+                        key = "search-scope",
+                        span = { GridItemSpan(maxLineSpan) },
+                    ) {
+                        Text(
+                            text = stringResource(R.string.search_scope),
+                            color = TextMuted,
+                            fontSize = 13.sp,
+                            modifier = Modifier.padding(start = 4.dp, top = 4.dp),
+                        )
+                    }
                     // Group hits by month so long result sets stay navigable.
                     results
                         .groupBy { monthLabel(it.dateAdded, unknownDateLabel) }

@@ -178,6 +178,11 @@ fun GalleryScreen(
     // contains it so the pager can animate to the neighbor; the actual list
     // mutation happens in commitViewerRemoval once the slide ends.
     var pendingViewerRemoval by remember { mutableStateOf<MediaItem?>(null) }
+    // The viewer item whose delete request is copying to trash or awaiting
+    // system consent. This starts as soon as Delete is confirmed, rather than
+    // after the asynchronous file operation completes, so the pager cannot
+    // move away from the item that the request targets.
+    var viewerDeleteInFlightUri by remember { mutableStateOf<Uri?>(null) }
     // The viewer item removed by the pending delete, with its list index, so an
     // Undo can slide the pager back to it (the reverse of the delete slide).
     var viewerUndo by remember { mutableStateOf<ViewerUndo?>(null) }
@@ -472,6 +477,9 @@ fun GalleryScreen(
     // Removes deleted items from the visible content + viewer and reloads.
     val removeDeletedBatch = { deletedItems: List<MediaItem> ->
         val deletedUris = deletedItems.map { it.uri }.toSet()
+        if (viewerDeleteInFlightUri in deletedUris) {
+            viewerDeleteInFlightUri = null
+        }
         val deletedPaths = deletedItems.mapNotNull { it.canonicalPath() }.toSet()
         removedUris = removedUris + deletedUris
         removedPaths = removedPaths + deletedPaths
@@ -558,6 +566,7 @@ fun GalleryScreen(
 
     // Tells the user a delete did not complete (these paths used to be silent).
     val reportDeleteFailure: () -> Unit = {
+        viewerDeleteInFlightUri = null
         toastKey += 1
         toastMessage = UiText.Res(R.string.error_delete)
     }
@@ -739,7 +748,13 @@ fun GalleryScreen(
         }
     }
 
-    val requestDelete = { item: MediaItem -> trashAndDelete(listOf(item)) }
+    val requestDelete = { item: MediaItem ->
+        // This is only used by the full viewer. Lock it before the coroutine
+        // copies bytes or asks Android for delete consent, so its current page
+        // cannot diverge from the item being deleted.
+        viewerDeleteInFlightUri = item.uri
+        trashAndDelete(listOf(item))
+    }
 
     // ── Selection resolution ────────────────────────────────────────────────
     // Expands the current selection into a flat list of MediaItems: selected
@@ -1014,6 +1029,7 @@ fun GalleryScreen(
                 initialIndex = viewerIndex.coerceIn(0, viewing.lastIndex),
                 sourceRect = viewerExitRect,
                 pendingRemoval = pendingViewerRemoval,
+                deleteInProgress = viewerDeleteInFlightUri != null,
                 onRemovalAnimationEnd = commitViewerRemoval,
                 restoreUri = viewerRestoreUri,
                 onRestored = { viewerRestoreUri = null },
@@ -1021,7 +1037,7 @@ fun GalleryScreen(
                 onPageChanged = { viewerIndex = it },
                 onDelete = {
                     // Ignore further deletes while a slide-out is already pending.
-                    if (pendingViewerRemoval == null) {
+                    if (pendingViewerRemoval == null && viewerDeleteInFlightUri == null) {
                         if (appSettings.confirmBeforeDelete) {
                             pendingDeleteItem = it
                         } else {
