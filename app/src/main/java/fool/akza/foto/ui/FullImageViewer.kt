@@ -269,6 +269,8 @@ fun FullImageViewer(
     // Entry/exit progress: 0 = scaled to source tile, 1 = full screen.
     val progress = remember { Animatable(0f) }
     var leaving by remember { mutableStateOf(false) }
+    var exitSourceRect by remember { mutableStateOf<Rect?>(null) }
+    val transitionRect = exitSourceRect ?: sourceRect
     // True while a deferred delete is sliding the pager to the neighbour. Gates
     // user input so a manual swipe can't fight the programmatic scroll.
     var removing by remember { mutableStateOf(false) }
@@ -278,7 +280,7 @@ fun FullImageViewer(
     // after) the first layout pass reports a non-zero size. With no source rect
     // (e.g. opened from a share intent) the viewer starts settled.
     var containerSize by remember { mutableStateOf(IntSize.Zero) }
-    val animateFromSource = sourceRect != Rect.Zero
+    val animateFromSource = transitionRect != Rect.Zero
     LaunchedEffect(containerSize) {
         if (containerSize != IntSize.Zero && !leaving) {
             if (animateFromSource) {
@@ -339,15 +341,11 @@ fun FullImageViewer(
 
     val close = {
         if (!leaving) {
+            exitSourceRect = sourceRect
             leaving = true
-            if (!animateFromSource) {
-                // No tile to shrink back into: dismiss immediately.
+            scope.launch {
+                progress.animateTo(0f, tween(240, easing = FastOutSlowInEasing))
                 onDismiss()
-            } else {
-                scope.launch {
-                    progress.animateTo(0f, tween(240, easing = FastOutSlowInEasing))
-                    onDismiss()
-                }
             }
         }
     }
@@ -575,8 +573,8 @@ fun FullImageViewer(
         // Scale-in from the tapped tile.
         val containerW = containerSize.width.toFloat().coerceAtLeast(1f)
         val containerH = containerSize.height.toFloat().coerceAtLeast(1f)
-        val fromScaleX = sourceRect.width.toFloat() / containerW
-        val fromScaleY = sourceRect.height.toFloat() / containerH
+        val fromScaleX = if (animateFromSource) transitionRect.width / containerW else 0.94f
+        val fromScaleY = if (animateFromSource) transitionRect.height / containerH else 0.94f
 
         // The tile has 12dp rounded corners; as the pager shrinks back to it, grow
         // the clip radius so the transition lands flush on the rounded thumbnail.
@@ -605,9 +603,13 @@ fun FullImageViewer(
                     .graphicsLayer {
                         scaleX = lerp(fromScaleX, 1f, p)
                         scaleY = lerp(fromScaleY, 1f, p)
-                        translationX = lerp(sourceRect.center.x - containerW / 2f, 0f, p)
-                        translationY = lerp(sourceRect.center.y - containerH / 2f, 0f, p)
-                        alpha = 1f
+                        translationX = if (animateFromSource) {
+                            lerp(transitionRect.center.x - containerW / 2f, 0f, p)
+                        } else 0f
+                        translationY = if (animateFromSource) {
+                            lerp(transitionRect.center.y - containerH / 2f, 0f, p)
+                        } else 0f
+                        alpha = if (animateFromSource) 1f else p
                     },
                 // Video pages lock pager swiping while playing; paused (or image
                 // pages) allow it. Zoom, multi-touch, and an in-flight delete
@@ -655,7 +657,7 @@ fun FullImageViewer(
                             // as the only transform, so the tile's square crop did not
                             // line up.
                             entryProgress = { progress.value },
-                            sourceRect = sourceRect,
+                            sourceRect = transitionRect,
                             containerSize = containerSize,
                             modifier = Modifier.fillMaxSize(),
                         )
@@ -674,7 +676,7 @@ fun FullImageViewer(
                 } else {
                     ZoomableImage(
                         item = item,
-                        sourceRect = sourceRect,
+                        sourceRect = transitionRect,
                         onZoomedChange = { zoomed -> currentPageZoomed = zoomed },
                         // Skip the release that resolved a long-press radial action.
                         onTap = { if (!radialActive) toggleImageControls() },

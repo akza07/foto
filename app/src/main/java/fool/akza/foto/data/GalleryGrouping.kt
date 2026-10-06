@@ -105,8 +105,108 @@ internal fun buildFolders(
         }
         .sortedWith(folderComparator(sort))
 
-    return GalleryContent(folders = folders, looseItems = loose.sortedWith(itemComparator(sort)))
+    return GalleryContent(
+        folders = folders,
+        looseItems = loose.sortedWith(itemComparator(sort)),
+        allItems = items.sortedWith(itemComparator(sort)),
+    )
 }
+
+/** A directory in the browsable hierarchy. [items] contains all media below it. */
+data class GalleryDirectory(
+    val folder: MediaFolder,
+    val children: List<GalleryDirectory>,
+    val directItems: List<MediaItem>,
+    val items: List<MediaItem>,
+)
+
+data class GalleryHierarchy(
+    val directories: List<GalleryDirectory>,
+    val rootItems: List<MediaItem>,
+)
+
+/** Builds a media-backed directory tree, keeping files at their immediate parent. */
+internal fun buildDirectoryHierarchy(
+    items: List<MediaItem>,
+    sort: MediaSort,
+    selectedRoots: List<String> = emptyList(),
+    storageDirName: String = "Storage",
+): GalleryHierarchy {
+    class MutableDirectory(val path: String, val name: String) {
+        val children = linkedMapOf<String, MutableDirectory>()
+        val directItems = mutableListOf<MediaItem>()
+    }
+    val roots = linkedMapOf<String, MutableDirectory>()
+    val rootItems = mutableListOf<MediaItem>()
+    // If both a parent and child were granted, display the parent once and
+    // keep the child at its natural position in that hierarchy.
+    val allRoots = selectedRoots.map { it.trim('/') }.distinctBy { it.lowercase() }
+    val normalizedRoots = allRoots.filterNot { candidate ->
+        allRoots.any { other ->
+            other != candidate && (
+                other.isEmpty() && candidate.isNotEmpty() ||
+                    other.isNotEmpty() && other.length < candidate.length &&
+                    candidate.startsWith("$other/", ignoreCase = true)
+                )
+        }
+    }
+    val configuredRoots = if (normalizedRoots.isEmpty()) emptyList() else normalizedRoots
+    val configuredNodes = configuredRoots.associate { root ->
+        val name = root.substringAfterLast('/').ifBlank { storageDirName }
+        root.lowercase() to MutableDirectory(root, name)
+    }
+    if (configuredNodes.isNotEmpty()) roots.putAll(configuredNodes)
+
+    for (item in items) {
+        val path = item.canonicalDirPath()?.trim('/').orEmpty()
+        val configuredRoot = configuredRoots
+            .filter { root -> root.isEmpty() || path.equals(root, ignoreCase = true) ||
+                path.startsWith("$root/", ignoreCase = true) }
+            .maxByOrNull { it.length }
+        if (configuredNodes.isNotEmpty() && configuredRoot == null) continue
+
+        val configuredNode = configuredRoot?.let { configuredNodes[it.lowercase()] }
+        val relativePath = if (configuredRoot == null) path else path
+            .removePrefixIgnoreCase(configuredRoot)
+            .trim('/')
+        if (relativePath.isBlank()) {
+            if (configuredNode == null) rootItems += item else configuredNode.directItems += item
+            continue
+        }
+        var level = configuredNode?.children ?: roots
+        var parent: MutableDirectory? = null
+        var accumulated = configuredRoot.orEmpty()
+        for (part in relativePath.split('/').filter(String::isNotBlank)) {
+            accumulated = if (accumulated.isEmpty()) part else "$accumulated/$part"
+            val node = level.getOrPut(part.lowercase()) { MutableDirectory(accumulated, part) }
+            parent = node
+            level = node.children
+        }
+        parent?.directItems?.add(item) ?: run { rootItems += item }
+    }
+    fun freeze(node: MutableDirectory): GalleryDirectory {
+        val children = node.children.values.map(::freeze).sortedWith { a, b ->
+            folderComparator(sort).compare(a.folder, b.folder)
+        }
+        val direct = node.directItems.sortedWith(itemComparator(sort))
+        val descendants = (direct + children.flatMap { it.items }).sortedWith(itemComparator(sort))
+        val folder = MediaFolder(
+            bucketId = node.path,
+            name = node.name,
+            count = descendants.size,
+            previews = descendants.take(3),
+            dateAdded = descendants.firstOrNull()?.dateAdded ?: 0L,
+        )
+        return GalleryDirectory(folder, children, direct, descendants)
+    }
+    val directories = roots.values.map(::freeze).filter { it.items.isNotEmpty() }.sortedWith { a, b ->
+        folderComparator(sort).compare(a.folder, b.folder)
+    }
+    return GalleryHierarchy(directories, rootItems.sortedWith(itemComparator(sort)))
+}
+
+private fun String.removePrefixIgnoreCase(prefix: String): String =
+    if (startsWith(prefix, ignoreCase = true)) substring(prefix.length) else this
 
 /**
  * Applies the Content Discovery settings. Framework-free predicate so it can be

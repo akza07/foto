@@ -1,16 +1,3 @@
-## graphify
-
-This project has a knowledge graph at graphify-out/ with god nodes, community structure, and cross-file relationships.
-
-When the user types `/graphify`, use the installed graphify skill or instructions before doing anything else.
-
-Rules:
-- For codebase questions, first run `graphify query "<question>"` when graphify-out/graph.json exists. Use `graphify path "<A>" "<B>"` for relationships and `graphify explain "<concept>"` for focused concepts. These return a scoped subgraph, usually much smaller than GRAPH_REPORT.md or raw grep output.
-- Dirty graphify-out/ files are expected after hooks or incremental updates; dirty graph files are not a reason to skip graphify. Only skip graphify if the task is about stale or incorrect graph output, or the user explicitly says not to use it.
-- If graphify-out/wiki/index.md exists, use it for broad navigation instead of raw source browsing.
-- Read graphify-out/GRAPH_REPORT.md only for broad architecture review or when query/path/explain do not surface enough context.
-- After modifying code, run `graphify update .` to keep the graph current (AST-only, no API cost).
-
 ## Workspace Permissions & Capabilities
 
 - **Project Access**: Full read, write, and directory listing permissions are granted for this project directory (`/home/akza/Projects/phooto`) and all its subdirectories.
@@ -22,3 +9,19 @@ If task is completed, then produce an output to `apk-output/foto-arm64-android16
 Then perform `cp apk-output/foto-arm64-android16-release.apk /media/XYZ/DiffusionArt/foto-arm64-android16-release.apk` for the system to copy the file to the device.
 
 - **App identity**: application ID `fool.akza.foto`, launcher name `Foto`.
+
+## Run in the Android emulator
+
+The installed `Pixel_10a` AVD uses an x86_64 Android image with arm64-v8a compatibility.
+Build and launch the debug app with:
+
+```bash
+emulator -avd Pixel_10a -no-snapshot
+./gradlew :app:assembleDebug
+adb wait-for-device
+adb install -r app/build/outputs/apk/debug/app-debug.apk
+adb shell monkey -p fool.akza.foto 1
+```
+
+If the emulator is already running, skip the `emulator` command. The `adb` commands
+require the ADB server to be able to bind to its local port.

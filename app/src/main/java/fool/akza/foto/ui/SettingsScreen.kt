@@ -39,6 +39,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -85,6 +86,7 @@ fun SettingsScreen(onBack: () -> Unit, onSettingsChanged: () -> Unit) {
     val settings by SettingsRepository.settings.collectAsState()
     var showFolders by remember { mutableStateOf(false) }
     var showTrash by remember { mutableStateOf(false) }
+    var trashRefreshKey by remember { mutableIntStateOf(0) }
 
     Box(
         modifier = Modifier
@@ -97,6 +99,7 @@ fun SettingsScreen(onBack: () -> Unit, onSettingsChanged: () -> Unit) {
             onSettingsChanged = onSettingsChanged,
             onManageFolders = { showFolders = true },
             onOpenTrash = { showTrash = true },
+            trashRefreshKey = trashRefreshKey,
         )
 
         AnimatedVisibility(
@@ -117,8 +120,14 @@ fun SettingsScreen(onBack: () -> Unit, onSettingsChanged: () -> Unit) {
             exit = slideOutHorizontally(targetOffsetX = { it }) + fadeOut(),
         ) {
             TrashScreen(
-                onBack = { showTrash = false },
-                onChanged = onSettingsChanged,
+                onBack = {
+                    showTrash = false
+                    trashRefreshKey += 1
+                },
+                onChanged = {
+                    onSettingsChanged()
+                    trashRefreshKey += 1
+                },
             )
         }
     }
@@ -131,6 +140,7 @@ private fun SettingsRoot(
     onSettingsChanged: () -> Unit,
     onManageFolders: () -> Unit,
     onOpenTrash: () -> Unit,
+    trashRefreshKey: Int,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -149,16 +159,21 @@ private fun SettingsRoot(
     var trashBytes by remember { mutableStateOf(0L) }
 
     suspend fun refreshTrash() {
-        withContext(Dispatchers.IO) {
-            trashCount = TrashStore.count(context)
-            trashBytes = TrashStore.sizeBytes(context)
+        val summary = withContext(Dispatchers.IO) {
+            TrashStore.count(context) to TrashStore.sizeBytes(context)
         }
+        trashCount = summary.first
+        trashBytes = summary.second
+    }
+
+    LaunchedEffect(trashRefreshKey) {
+        if (cacheBytes == null) {
+            cacheBytes = with(Dispatchers.IO) { ThumbCache.totalCacheBytes() }
+        }
+        refreshTrash()
     }
 
     LaunchedEffect(Unit) {
-        cacheBytes = with(Dispatchers.IO) { ThumbCache.totalCacheBytes() }
-        refreshTrash()
-        // Keep the trash summary current while Settings stays open.
         GalleryEvents.reload.collect { refreshTrash() }
     }
 

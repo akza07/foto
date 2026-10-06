@@ -16,18 +16,22 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.DeleteSweep
 import androidx.compose.material.icons.outlined.Restore
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -72,6 +76,7 @@ fun TrashScreen(onBack: () -> Unit, onChanged: () -> Unit) {
     val scope = rememberCoroutineScope()
     var entries by remember { mutableStateOf<List<TrashEntry>?>(null) }
     var showEmptyConfirm by remember { mutableStateOf(false) }
+    var clearing by remember { mutableStateOf(false) }
 
     BackHandler { onBack() }
 
@@ -88,19 +93,52 @@ fun TrashScreen(onBack: () -> Unit, onChanged: () -> Unit) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .statusBarsPadding()
+                    .height(56.dp)
                     .padding(horizontal = 4.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                SettingsHeader(title = stringResource(R.string.storage_trash_title), onBack = onBack)
-                IconButton(
-                    onClick = { showEmptyConfirm = true },
-                    enabled = list.isNotEmpty(),
-                ) {
+                IconButton(onClick = onBack) {
                     Icon(
-                        imageVector = Icons.Outlined.DeleteSweep,
-                        contentDescription = stringResource(R.string.storage_empty_trash_title),
-                        tint = if (list.isEmpty()) TextMuted else TextPrimary,
+                        imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
+                        contentDescription = stringResource(R.string.action_back),
+                        tint = TextPrimary,
                     )
+                }
+                Text(
+                    text = stringResource(R.string.storage_trash_title),
+                    color = TextPrimary,
+                    fontSize = 22.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.weight(1f),
+                )
+                TextButton(
+                    onClick = { showEmptyConfirm = true },
+                    enabled = list.isNotEmpty() && !clearing,
+                ) {
+                    if (clearing) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(16.dp),
+                            color = TextPrimary,
+                            strokeWidth = 2.dp,
+                        )
+                        Text(
+                            text = stringResource(R.string.storage_emptying_trash),
+                            color = TextPrimary,
+                            modifier = Modifier.padding(start = 8.dp),
+                        )
+                    } else {
+                        Icon(
+                            imageVector = Icons.Outlined.DeleteSweep,
+                            contentDescription = null,
+                            tint = if (list.isEmpty()) TextMuted else TextPrimary,
+                        )
+                        Text(
+                            text = stringResource(R.string.action_empty),
+                            color = if (list.isEmpty()) TextMuted else TextPrimary,
+                            modifier = Modifier.padding(start = 4.dp),
+                        )
+                    }
                 }
             }
         },
@@ -171,8 +209,10 @@ fun TrashScreen(onBack: () -> Unit, onChanged: () -> Unit) {
             onConfirm = {
                 showEmptyConfirm = false
                 scope.launch {
+                    clearing = true
                     withContext(Dispatchers.IO) { TrashStore.clear(context) }
-                    entries = emptyList()
+                    entries = withContext(Dispatchers.IO) { TrashStore.list(context) }
+                    clearing = false
                     onChanged()
                 }
             },

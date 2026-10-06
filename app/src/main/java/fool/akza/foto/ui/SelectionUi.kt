@@ -39,6 +39,7 @@ import androidx.compose.ui.unit.sp
 import fool.akza.foto.R
 import fool.akza.foto.data.MediaFolder
 import fool.akza.foto.data.MediaItem
+import fool.akza.foto.data.GalleryDirectory
 import fool.akza.foto.ui.theme.AmoledBlack
 import fool.akza.foto.ui.theme.Border
 import fool.akza.foto.ui.theme.Surface as SurfaceColor
@@ -50,10 +51,11 @@ data class SelectionState(
     val active: Boolean = false,
     val selected: List<MediaItem> = emptyList(),
     val selectedFolders: List<MediaFolder> = emptyList(),
+    val selectedDirectories: List<GalleryDirectory> = emptyList(),
 )
 
 /** Number of selection units (folders count as 1 each, loose items as 1 each). */
-val SelectionState.size: Int get() = selected.size + selectedFolders.size
+val SelectionState.size: Int get() = selected.size + selectedFolders.size + selectedDirectories.size
 
 /** Floating bottom action bar shown in selection mode with the bulk actions. */
 @Composable

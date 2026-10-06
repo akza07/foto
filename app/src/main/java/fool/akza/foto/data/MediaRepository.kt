@@ -14,6 +14,7 @@ import kotlinx.coroutines.withContext
 data class GalleryContent(
     val folders: List<MediaFolder>,
     val looseItems: List<MediaItem>,
+    val allItems: List<MediaItem> = emptyList(),
 )
 
 data class MediaInfo(
@@ -342,7 +343,7 @@ object MediaRepository {
      * Resolves a persisted SAF tree URI to a MediaStore relative path (e.g. "DCIM/").
      * Returns null if it can't be resolved.
      */
-    private fun treeUriToRelativePath(context: Context, treeUri: String): String? {
+    internal fun treeUriToRelativePath(context: Context, treeUri: String): String? {
         return try {
             val uri = Uri.parse(treeUri)
             val docId = DocumentsContract.getTreeDocumentId(uri)

@@ -9,7 +9,6 @@ import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -73,6 +72,7 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
@@ -85,6 +85,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import fool.akza.foto.AppLog
 import fool.akza.foto.data.GalleryContent
+import fool.akza.foto.data.GalleryDirectory
 import fool.akza.foto.data.DeleteAttempt
 import fool.akza.foto.data.DeleteResult
 import fool.akza.foto.data.GalleryEvents
@@ -97,6 +98,7 @@ import fool.akza.foto.data.SettingsRepository
 import fool.akza.foto.data.TrashEntry
 import fool.akza.foto.data.TrashStore
 import fool.akza.foto.data.canonicalPath
+import fool.akza.foto.data.buildDirectoryHierarchy
 import fool.akza.foto.data.previewStamp
 import fool.akza.foto.data.thumbnails.ThumbCache
 import fool.akza.foto.ui.theme.AmoledBlack
@@ -125,6 +127,9 @@ private val ActionBarHeightDp = 96.dp
 
 /** A viewer item removed by a pending delete, with its index for a slide-back Undo. */
 private data class ViewerUndo(val item: MediaItem, val index: Int)
+
+/** The source tile for one level of directory navigation. */
+private data class DirectoryLevel(val path: String, val sourceRect: Rect)
 
 // Transition timings.
 private const val ForwardDurationMs = 320
@@ -165,15 +170,17 @@ fun GalleryScreen(
     onOpenUriHandled: () -> Unit = {},
 ) {
     val context = LocalContext.current
+    val rootView = LocalView.current
     SettingsRepository.init(context)
     val appSettings by SettingsRepository.settings.collectAsState()
     var content by remember { mutableStateOf<GalleryContent?>(null) }
     var openFolder by remember { mutableStateOf<MediaFolder?>(null) }
-    var openSourceRect by remember { mutableStateOf(Rect.Zero) }
+    var directoryStack by remember { mutableStateOf<List<DirectoryLevel>>(emptyList()) }
     var closing by remember { mutableStateOf(false) }
     var viewerItems by remember { mutableStateOf<List<MediaItem>?>(null) }
     var viewerIndex by remember { mutableStateOf(0) }
     var viewerSourceRect by remember { mutableStateOf(Rect.Zero) }
+    var viewerOpenerUri by remember { mutableStateOf<Uri?>(null) }
     // Item awaiting the viewer's delete slide-out. While set, viewerItems still
     // contains it so the pager can animate to the neighbor; the actual list
     // mutation happens in commitViewerRemoval once the slide ends.
@@ -189,11 +196,6 @@ fun GalleryScreen(
     // Set when the pager should animate back to a restored item.
     var viewerRestoreUri by remember { mutableStateOf<android.net.Uri?>(null) }
     var infoItem by remember { mutableStateOf<MediaItem?>(null) }
-    var albumReloadKey by remember { mutableStateOf(0) }
-    // Contents of the open album. Hoisted out of AlbumGrid so a delete can drop
-    // the item from the visible list without waiting for a re-query.
-    var albumItems by remember { mutableStateOf<List<MediaItem>?>(null) }
-    var albumItemsBucket by remember { mutableStateOf<String?>(null) }
     // URIs this session has deleted. MediaStore can keep serving the row for a
     // while after the file is gone (SAF deletes especially), which would otherwise
     // resurrect the item in folder covers/counts on the next reload — so every
@@ -233,6 +235,7 @@ fun GalleryScreen(
             removedUris.isEmpty() && removedPaths.isEmpty() -> c
             else -> c.copy(
                 looseItems = c.looseItems.filterNot { it.isSuppressed(removedUris, removedPaths) },
+                allItems = c.allItems.filterNot { it.isSuppressed(removedUris, removedPaths) },
                 folders = c.folders.map { folder ->
                     val kept = folder.previews.filterNot {
                         it.isSuppressed(removedUris, removedPaths)
@@ -241,6 +244,39 @@ fun GalleryScreen(
                 },
             )
         }
+    }
+    val hierarchy = remember(
+        visibleContent,
+        appSettings.sortOrder,
+        appSettings.requireExplicit,
+        appSettings.selectedTreeUris,
+    ) {
+        val selectedRoots = if (appSettings.requireExplicit) {
+            appSettings.selectedTreeUris.mapNotNull { treeUri ->
+                MediaRepository.treeUriToRelativePath(context, treeUri)
+            }
+        } else emptyList()
+        buildDirectoryHierarchy(
+            visibleContent?.allItems.orEmpty(),
+            appSettings.sortOrder,
+            selectedRoots,
+            context.getString(R.string.folder_storage),
+        )
+    }
+    fun findDirectory(path: String, dirs: List<GalleryDirectory> = hierarchy.directories): GalleryDirectory? {
+        for (directory in dirs) {
+            if (directory.folder.bucketId == path) return directory
+            findDirectory(path, directory.children)?.let { return it }
+        }
+        return null
+    }
+    val rootGalleryContent = remember(hierarchy, visibleContent) {
+        if (visibleContent == null) return@remember null
+        GalleryContent(
+            folders = hierarchy.directories.map { it.folder },
+            looseItems = hierarchy.rootItems,
+            allItems = visibleContent?.allItems.orEmpty(),
+        )
     }
 
     LaunchedEffect(reloadKey) {
@@ -255,15 +291,6 @@ fun GalleryScreen(
             AppLog.w("delete: reload re-queued $leaked suppressed item(s)")
         }
         content = loaded
-    }
-
-    // Album contents are owned here (not inside AlbumGrid) so a delete can drop
-    // the item from the visible list immediately, without waiting on a re-query.
-    LaunchedEffect(openFolder?.bucketId, albumReloadKey) {
-        val folder = openFolder ?: return@LaunchedEffect
-        val loaded = MediaRepository.loadBucket(context, folder, removedUris, removedPaths)
-        albumItems = loaded
-        albumItemsBucket = folder.bucketId
     }
 
     val reload = { reloadKey += 1 }
@@ -300,29 +327,27 @@ fun GalleryScreen(
         ThumbCache.enqueueAllIfMissing(loaded.take(CACHE_WARM_CAP))
     }
 
-    val doClose = {
-        openFolder = null
-        openSourceRect = Rect.Zero
-        closing = false
-    }
-
     val closeFolder = {
         if (openFolder != null && !closing) {
             closing = true
         }
     }
 
-    // Wait for the reverse animation to finish, then actually swap.
+    // The parent stays mounted behind the current level until the reverse
+    // animation lands on the tile that opened it.
     LaunchedEffect(closing) {
         if (closing) {
-            delay(ReverseDurationMs.toLong() + 100L)
-            doClose()
+            delay(ReverseDurationMs.toLong() + 24L)
+            directoryStack = directoryStack.dropLast(1)
+            openFolder = directoryStack.lastOrNull()?.path?.let(::findDirectory)?.folder
+            closing = false
         }
     }
 
     val closeViewer = {
         viewerItems = null
         viewerSourceRect = Rect.Zero
+        viewerOpenerUri = null
         pendingViewerRemoval = null
     }
 
@@ -330,6 +355,7 @@ fun GalleryScreen(
         viewerItems = list
         viewerIndex = index
         viewerSourceRect = rect
+        viewerOpenerUri = list.getOrNull(index)?.uri
         pendingViewerRemoval = null
     }
 
@@ -356,6 +382,7 @@ fun GalleryScreen(
     val isSelecting = selection.active
     val selectionList = selection.selected
     val selectedFolders = selection.selectedFolders
+    val selectedDirectories = selection.selectedDirectories
     val selectedCount = selection.size
 
     val toggleSelect = { item: MediaItem ->
@@ -374,17 +401,16 @@ fun GalleryScreen(
     }
 
     val toggleSelectFolder = { folder: MediaFolder ->
+        val directory = findDirectory(folder.bucketId)
         selection = if (selection.active) {
-            selection.copy(
-                selectedFolders = if (folder in selectedFolders) {
-                    selectedFolders - folder
-                } else {
-                    selectedFolders + folder
-                },
-            )
+            if (directory != null) selection.copy(
+                selectedDirectories = if (selectedDirectories.any { it.folder.bucketId == folder.bucketId }) {
+                    selectedDirectories.filterNot { it.folder.bucketId == folder.bucketId }
+                } else selectedDirectories + directory,
+            ) else selection.copy(selectedFolders = selectedFolders + folder)
         } else {
-            // Entering selection mode starts with exactly this folder.
-            SelectionState(active = true, selectedFolders = listOf(folder))
+            if (directory != null) SelectionState(active = true, selectedDirectories = listOf(directory))
+            else SelectionState(active = true, selectedFolders = listOf(folder))
         }
     }
 
@@ -522,8 +548,6 @@ fun GalleryScreen(
         }
         // Drop it from the visible album immediately; the reload refreshes the
         // rest (order, counts) once the provider query returns.
-        albumItems = albumItems?.filterNot { it.isSuppressed(deletedUris, deletedPaths) }
-        albumReloadKey += 1
         reload()
     }
 
@@ -669,7 +693,6 @@ fun GalleryScreen(
                 viewerUndo?.let { restoreViewerItem(it) }
                 viewerUndo = null
                 // The open album owns its own list; refresh it too.
-                albumReloadKey += 1
                 reload()
                 toastKey += 1
                 toastMessage = UiText.Res(R.string.restored)
@@ -763,6 +786,9 @@ fun GalleryScreen(
     val resolveSelectionItems: suspend () -> List<MediaItem> = {
         buildList {
             addAll(selectionList)
+            selectedDirectories.forEach { directory ->
+                addAll(findDirectory(directory.folder.bucketId)?.items ?: directory.items)
+            }
             for (folder in selectedFolders) {
                 addAll(MediaRepository.loadBucket(context, folder))
             }
@@ -920,37 +946,46 @@ fun GalleryScreen(
     // land — the "after" state is the real top-level view, never a swap-in.
     Box(modifier = modifier.fillMaxSize()) {
         MainGalleryGrid(
-            content = visibleContent,
+            content = rootGalleryContent,
             onFolderClick = { folder, rect ->
-                openFolder = folder
-                openSourceRect = rect
+                if (directoryStack.isEmpty()) {
+                    openFolder = folder
+                    directoryStack = listOf(DirectoryLevel(folder.bucketId, rect))
+                }
             },
-            onItemClick = { list, index, rect -> openViewer(list, index, rect) },
-            onSettingsClick = { showSettings = true },
-            onSearchClick = { showSearch = true },
+            onItemClick = { list, index, rect ->
+                if (directoryStack.isEmpty()) openViewer(list, index, rect)
+            },
+            onSettingsClick = { if (directoryStack.isEmpty()) showSettings = true },
+            onSearchClick = { if (directoryStack.isEmpty()) showSearch = true },
             minTileSize = appSettings.gridSize.minTileDp.dp,
             selection = selection,
-            onToggleSelect = toggleSelect,
-            onLongSelect = toggleSelect,
-            onToggleFolder = toggleSelectFolder,
-            onLongSelectFolder = toggleSelectFolder,
+            onToggleSelect = { if (directoryStack.isEmpty()) toggleSelect(it) },
+            onLongSelect = { if (directoryStack.isEmpty()) toggleSelect(it) },
+            onToggleFolder = { if (directoryStack.isEmpty()) toggleSelectFolder(it) },
+            onLongSelectFolder = { if (directoryStack.isEmpty()) toggleSelectFolder(it) },
             onSelectAll = {
                 val loose = visibleContent?.looseItems.orEmpty()
-                val folders = visibleContent?.folders.orEmpty()
+                val folders = rootGalleryContent?.folders.orEmpty()
                 val allSelected = selection.selected.toSet() == loose.toSet() &&
-                    selection.selectedFolders.toSet() == folders.toSet()
+                    selection.selectedDirectories.map { it.folder.bucketId }.toSet() == folders.map { it.bucketId }.toSet()
                 if (selection.active && allSelected && (loose.isNotEmpty() || folders.isNotEmpty())) {
                     // Already all selected: deselect everything.
                     SelectionState(active = true)
                 } else {
-                    SelectionState(active = true, selected = loose, selectedFolders = folders)
+                    SelectionState(
+                        active = true,
+                        selected = loose,
+                        selectedDirectories = hierarchy.directories,
+                    )
                 }
             },
             onExitSelection = clearSelection,
             onTilePositioned = registerTileRect,
             onTileDisposed = unregisterTileRect,
             // Skip the (expensive) blur while an opaque screen covers the root.
-            frostEnabled = (openFolder == null || closing) && viewerItems == null &&
+            frostEnabled = (directoryStack.isEmpty() || directoryStack.size == 1 && closing) &&
+                viewerItems == null &&
                 !showSettings && !showSearch,
         )
 
@@ -987,43 +1022,66 @@ fun GalleryScreen(
             )
         }
 
-        val currentFolder = openFolder
-        if (currentFolder != null) {
-            AlbumGrid(
-                folder = currentFolder,
-                sourceRect = openSourceRect,
-                reverse = closing,
-                onBack = closeFolder,
-                onItemClick = { list, index, rect -> openViewer(list, index, rect) },
-                items = if (albumItemsBucket == currentFolder.bucketId) albumItems else null,
-                minTileSize = appSettings.gridSize.minTileDp.dp,
-                selection = selection,
-                onToggleSelect = toggleSelect,
-                onLongSelect = toggleSelect,
-                onSelectAll = { items ->
-                    selection = if (selection.active && items.isNotEmpty() &&
-                        selection.selected.toSet() == items.toSet()
-                    ) {
-                        // Already all selected: deselect everything.
-                        SelectionState(active = true)
-                    } else {
-                        SelectionState(active = true, selected = items)
-                    }
-                },
-                onExitSelection = clearSelection,
-                onTilePositioned = registerTileRect,
-                onTileDisposed = unregisterTileRect,
-            )
+        directoryStack.forEachIndexed { levelIndex, level ->
+            val directory = findDirectory(level.path) ?: return@forEachIndexed
+            val isTopLevel = levelIndex == directoryStack.lastIndex
+            key(level.path) {
+                AlbumGrid(
+                    folder = directory.folder,
+                    childDirectories = directory.children,
+                    onDirectoryClick = { child, rect ->
+                        if (isTopLevel && !closing) {
+                            directoryStack = directoryStack + DirectoryLevel(child.folder.bucketId, rect)
+                            openFolder = child.folder
+                        }
+                    },
+                    sourceRect = level.sourceRect,
+                    reverse = isTopLevel && closing,
+                    onBack = { if (isTopLevel) closeFolder() },
+                    onItemClick = { list, index, rect ->
+                        if (isTopLevel && !closing) openViewer(list, index, rect)
+                    },
+                    items = directory.directItems,
+                    onToggleFolder = { if (isTopLevel) toggleSelectFolder(it) },
+                    minTileSize = appSettings.gridSize.minTileDp.dp,
+                    selection = selection,
+                    onToggleSelect = { if (isTopLevel) toggleSelect(it) },
+                    onLongSelect = { if (isTopLevel) toggleSelect(it) },
+                    onSelectAll = { items ->
+                        if (isTopLevel) {
+                            selection = if (selection.active && items.isNotEmpty() &&
+                                selection.selected.toSet() == items.toSet()
+                            ) {
+                                SelectionState(active = true)
+                            } else {
+                                SelectionState(active = true, selected = items)
+                            }
+                        }
+                    },
+                    onExitSelection = { if (isTopLevel) clearSelection() },
+                    onTilePositioned = registerTileRect,
+                    onTileDisposed = unregisterTileRect,
+                )
+            }
         }
 
         val viewing = viewerItems
         if (viewing != null && viewing.isNotEmpty()) {
-            // Morph out to the tile of the page currently being viewed — which can
-            // differ from the one first opened after swiping or a delete — falling
-            // back to the opener's rect when that tile isn't composed.
+            // Only morph back to the tile for the page actually being viewed.
+            // A page reached by swiping may have no composed tile in the grid;
+            // in that case the viewer fades out instead of flying to its opener.
             val currentViewerUri =
                 viewing.getOrNull(viewerIndex.coerceIn(0, viewing.lastIndex))?.uri
-            val viewerExitRect = currentViewerUri?.let { tileRects[it] } ?: viewerSourceRect
+            val visibleTileRect = currentViewerUri?.let { tileRects[it] }?.takeIf { rect ->
+                rect.right > 0f && rect.bottom > 0f &&
+                    rect.left < rootView.width.toFloat() &&
+                    rect.top < rootView.height.toFloat()
+            }
+            val viewerExitRect = visibleTileRect ?: if (currentViewerUri == viewerOpenerUri) {
+                viewerSourceRect
+            } else {
+                Rect.Zero
+            }
             FullImageViewer(
                 items = viewing,
                 initialIndex = viewerIndex.coerceIn(0, viewing.lastIndex),
@@ -1323,10 +1381,13 @@ private fun MainGalleryGrid(
 @Composable
 private fun AlbumGrid(
     folder: MediaFolder,
+    childDirectories: List<GalleryDirectory>,
+    onDirectoryClick: (GalleryDirectory, Rect) -> Unit,
     sourceRect: Rect,
     reverse: Boolean,
     onBack: () -> Unit,
     onItemClick: (List<MediaItem>, Int, Rect) -> Unit,
+    onToggleFolder: (MediaFolder) -> Unit,
     items: List<MediaItem>?,
     minTileSize: Dp,
     selection: SelectionState,
@@ -1338,12 +1399,6 @@ private fun AlbumGrid(
     onTileDisposed: (Uri) -> Unit,
 ) {
     val density = LocalDensity.current
-
-    // Fade the whole album out on reverse so the root Albums view shows through.
-    val albumAlpha by animateFloatAsState(
-        targetValue = if (reverse) 0f else 1f,
-        animationSpec = tween(240, easing = FastOutSlowInEasing),
-    )
 
     // One shared phase drives every tile: 1f = settled expanded grid, 0f = collapsed
     // into the folder stack. Tiles derive their pose from it, so scrolling/recomposing
@@ -1371,14 +1426,18 @@ private fun AlbumGrid(
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(AmoledBlack.copy(alpha = albumAlpha)),
+            // Reveal the actual parent during expansion and collapse. The whole
+            // child fades near the end of reverse so its stacked tiles hand off
+            // cleanly to the parent folder cover.
+            .graphicsLayer { alpha = if (reverse) phase.value else 1f }
+            .background(AmoledBlack.copy(alpha = phase.value)),
     ) {
         // The grid fills the whole screen; the header overlays it (Box) so content
         // scrolls underneath the frosted bar.
         Box(modifier = Modifier.fillMaxSize()) {
             val hazeState = rememberHazeState()
 
-            if (displayItems.isEmpty()) {
+            if (displayItems.isEmpty() && childDirectories.isEmpty()) {
                 Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     Text(text = stringResource(R.string.no_items), color = TextMuted, fontSize = 14.sp)
                 }
@@ -1402,6 +1461,33 @@ private fun AlbumGrid(
                     horizontalArrangement = Arrangement.spacedBy(GridSpacing),
                     verticalArrangement = Arrangement.spacedBy(GridSpacing),
                 ) {
+                    items(childDirectories, key = { "directory:${it.folder.bucketId}" }) { child ->
+                        val selected = selection.selectedDirectories.any {
+                            it.folder.bucketId == child.folder.bucketId
+                        }
+                        if (animate) {
+                            FlyInFolderTile(
+                                folder = child.folder,
+                                index = childDirectories.indexOf(child),
+                                source = sourceRect,
+                                phase = phase,
+                                selection = selection,
+                                isSelected = selected,
+                                onToggleSelect = onToggleFolder,
+                                onLongSelect = onToggleFolder,
+                                onClick = { rect -> onDirectoryClick(child, rect) },
+                            )
+                        } else {
+                            FolderTile(
+                                folder = child.folder,
+                                selection = selection,
+                                isSelectedOverride = selected,
+                                onToggleSelect = onToggleFolder,
+                                onLongSelect = onToggleFolder,
+                                onClick = { rect -> onDirectoryClick(child, rect) },
+                            )
+                        }
+                    }
                     itemsIndexed(
                         displayItems,
                         key = { _, item -> "album:${item.uri}" },
@@ -1409,7 +1495,7 @@ private fun AlbumGrid(
                         if (animate) {
                             FlyInTile(
                                 item = item,
-                                index = index,
+                                index = index + childDirectories.size,
                                 source = sourceRect,
                                 phase = phase,
                                 selection = selection,
@@ -1518,22 +1604,67 @@ private fun AlbumGrid(
 }
 
 @Composable
+private fun FlyInFolderTile(
+    folder: MediaFolder,
+    index: Int,
+    source: Rect,
+    phase: Animatable<Float, *>,
+    selection: SelectionState,
+    isSelected: Boolean,
+    onToggleSelect: (MediaFolder) -> Unit,
+    onLongSelect: (MediaFolder) -> Unit,
+    onClick: (Rect) -> Unit,
+) {
+    val density = LocalDensity.current
+    var targetRect by remember { mutableStateOf(Rect.Zero) }
+    val (offsetX, offsetY) = collapsedOffsetDp(index)
+    val offsetXPx = with(density) { offsetX.dp.toPx() }
+    val offsetYPx = with(density) { offsetY.dp.toPx() }
+    val stagger = ((index.toFloat() / StaggerCap).coerceIn(0f, 1f)) * MaxStagger
+
+    FolderTile(
+        folder = folder,
+        onClick = onClick,
+        selection = selection,
+        isSelectedOverride = isSelected,
+        onToggleSelect = onToggleSelect,
+        onLongSelect = onLongSelect,
+        modifier = Modifier
+            .onGloballyPositioned { coordinates ->
+                if (targetRect == Rect.Zero || phase.value < 1f) {
+                    targetRect = coordinates.boundsInWindow()
+                }
+            }
+            .graphicsLayer {
+                val p = ((phase.value - stagger) / (1f - stagger)).coerceIn(0f, 1f)
+                translationX = (source.left + offsetXPx - targetRect.left) * (1f - p)
+                translationY = (source.top + offsetYPx - targetRect.top) * (1f - p)
+                alpha = if (targetRect == Rect.Zero) 0f else p
+            },
+    )
+}
+
+@Composable
 private fun FolderTile(
     folder: MediaFolder,
     onClick: (Rect) -> Unit,
+    modifier: Modifier = Modifier,
     selection: SelectionState = SelectionState(),
+    isSelectedOverride: Boolean? = null,
     onToggleSelect: (MediaFolder) -> Unit = {},
     onLongSelect: (MediaFolder) -> Unit = {},
 ) {
     var stackRect by remember { mutableStateOf(Rect.Zero) }
     val isSelecting = selection.active
-    val isSelected = folder in selection.selectedFolders
+    val isSelected = isSelectedOverride ?: (folder in selection.selectedFolders ||
+        selection.selectedDirectories.any { it.folder.bucketId == folder.bucketId })
     val haptics = LocalHapticFeedback.current
     val a11yLabel = folder.name + ", " +
         pluralStringResource(R.plurals.item_count, folder.count, folder.count)
 
     Column(
         modifier = Modifier
+            .then(modifier)
             .fillMaxWidth()
             .semantics {
                 contentDescription = a11yLabel
@@ -1767,6 +1898,14 @@ private fun StackLayer(item: MediaItem?, modifier: Modifier, scrim: Float) {
                 VideoPosterThumb(item = item, modifier = thumbModifier)
             } else {
                 Thumb(item = item, modifier = thumbModifier)
+            }
+            if (item.isVideo) {
+                VideoBadge(
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(8.dp)
+                        .zIndex(1f),
+                )
             }
         } else {
             // No cover to show: lifted zinc surface + broken-image glyph so the
