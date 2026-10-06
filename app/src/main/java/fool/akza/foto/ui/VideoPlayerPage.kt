@@ -27,7 +27,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.VolumeOff
 import androidx.compose.material.icons.automirrored.rounded.VolumeUp
-import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PlayArrow
@@ -78,7 +77,6 @@ import fool.akza.foto.R
 import fool.akza.foto.data.MediaItem
 import fool.akza.foto.ui.theme.AmoledBlack
 import fool.akza.foto.ui.theme.Border
-import fool.akza.foto.ui.theme.DeleteRed
 import fool.akza.foto.ui.theme.TextMuted
 import fool.akza.foto.ui.theme.TextPrimary
 import kotlinx.coroutines.Job
@@ -110,7 +108,7 @@ private val PlaybackSpeeds = listOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 2f)
  * - Swipe up/down gestures are handled by the host viewer (sheet / dismiss),
  *   so this page owns no vertical-drag detector and the bottom pill never
  *   triggers navigation.
- * - Bottom: floating pill with play, times, seeker, mute, speed (0.5×–2×), and delete.
+ * - Bottom: floating pill with play, times, seeker, mute, and speed (0.5×–2×).
  * - Controls auto-hide after 3 s while playing; paused keeps them visible.
  * - [onPlayingChanged] hoists play state so the host pager can lock swiping
  *   while the video plays (swiping navigates only while paused).
@@ -125,7 +123,6 @@ fun VideoPlayerPage(
     onControlsVisibilityChanged: (Boolean) -> Unit = {},
     onPlayingChanged: (Boolean) -> Unit = {},
     onLongPress: () -> Unit = {},
-    onDelete: () -> Unit = {},
     entryProgress: () -> Float = { 1f },
     sourceRect: Rect = Rect.Zero,
     containerSize: IntSize = IntSize.Zero,
@@ -559,26 +556,6 @@ fun VideoPlayerPage(
                                         )
                                     }
                                 }
-                            }
-                            Box(
-                                modifier = Modifier
-                                    .size(40.dp)
-                                    .clip(CircleShape)
-                                    .clickable(
-                                        interactionSource = remember { MutableInteractionSource() },
-                                        indication = null,
-                                    ) {
-                                        showControls()
-                                        onDelete()
-                                    },
-                                contentAlignment = Alignment.Center,
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Outlined.Delete,
-                                    contentDescription = stringResource(R.string.action_delete),
-                                    tint = DeleteRed,
-                                    modifier = Modifier.size(20.dp),
-                                )
                             }
                         }
                     }

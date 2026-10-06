@@ -649,7 +649,6 @@ fun FullImageViewer(
                                 if (page == currentIndex) videoPlaying = playing
                             },
                             onLongPress = { drawerVisible = true },
-                            onDelete = { if (!deleteInProgress) onDelete(item) },
                             // Live entry/exit progress (0 = tile, 1 = fullscreen) so
                             // the video page morphs the tile's cropped poster into the
                             // fitted player and back on close. Must stay live on exit
