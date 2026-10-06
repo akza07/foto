@@ -202,7 +202,8 @@ internal suspend fun PointerInputScope.detectVerticalSwipe(
  *   swiping is locked while the video plays — pause first to navigate.
  * - Images: double-tap zoom, pinch zoom/pan. While two fingers are down,
  *   single-finger gestures yield to pinch-zoom.
- * - Long-press / swipe up (images + videos): action sheet from the bottom.
+ * - Long-press (images + videos): radial action wheel at the finger;
+ *   videos offer Delete/Info/Share (no Crop). Swipe up: bottom action sheet.
  * - Swipe down (at 1x / settled video): dismisses.
  * - Counter pill (top-left): current/total.
  * - Back button (top-left): dismisses.
@@ -461,20 +462,32 @@ fun FullImageViewer(
     val p = progress.value
 
     // Maps a radial-menu choice onto the viewer's action callbacks.
+    // Videos have no Crop sector, so a stale Crop hover on a video page is a no-op.
     val onRadialAction: (ViewerAction) -> Unit = { action ->
         currentItem?.let { item ->
             when (action) {
                 ViewerAction.Delete -> if (!deleteInProgress) onDelete(item)
                 ViewerAction.Info -> onInfo(item)
                 ViewerAction.Share -> onShare(item)
-                ViewerAction.Crop -> onCrop()
+                ViewerAction.Crop -> if (!item.isVideo) onCrop()
             }
         }
     }
     // The long-press pointer-input coroutine outlives page recompositions when
-    // adjacent pages are both images. Read the current callback when the finger
+    // adjacent pages share a media type. Read the current callback when the finger
     // lifts so a radial action always applies to the page being viewed now.
     val latestOnRadialAction = rememberUpdatedState(onRadialAction)
+    // Sectors offered by the wheel: videos drop Crop (Delete stays on top).
+    val radialActions = remember(currentPageIsVideo) {
+        if (currentPageIsVideo) {
+            listOf(ViewerAction.Delete, ViewerAction.Info, ViewerAction.Share)
+        } else {
+            ViewerAction.entries
+        }
+    }
+    val latestRadialActions = rememberUpdatedState(radialActions)
+    val latestIsVideo = rememberUpdatedState(currentPageIsVideo)
+    val latestPlayback = rememberUpdatedState(playback)
 
     Box(
         modifier = Modifier
@@ -513,17 +526,24 @@ fun FullImageViewer(
                     )
                 }
             }
-            // Long-press anywhere (images) summons the radial menu at the finger;
+            // Long-press anywhere summons the radial menu at the finger;
             // keep holding and slide to a sector, release to run it. The same
-            // gesture resolves everything in one motion.
-            .pointerInput(currentPageIsVideo, drawerVisible, leaving, multiTouchActive, removing) {
-                if (currentPageIsVideo || drawerVisible || leaving || multiTouchActive || removing) {
+            // gesture resolves everything in one motion. The video page no
+            // longer owns a long-press of its own, so this detector serves
+            // images and videos alike; opening the wheel pauses video so the
+            // action applies to a frozen frame (no auto-resume).
+            .pointerInput(drawerVisible, leaving, multiTouchActive, removing) {
+                if (drawerVisible || leaving || multiTouchActive || removing) {
                     return@pointerInput
                 }
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false)
                     val longPress = awaitLongPressOrCancellation(down.id) ?: return@awaitEachGesture
                     haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                    // Freeze the sector set for this gesture: a swipe across a
+                    // page boundary mid-press must not remap the wheel under it.
+                    val openActions = latestRadialActions.value.toList()
+                    if (latestIsVideo.value) latestPlayback.value?.player?.pause()
                     radialCenter = clampRadialCenter(longPress.position, containerSize, density)
                     radialHovered = null
                     radialActive = true
@@ -544,7 +564,7 @@ fun FullImageViewer(
                         val change = event.changes.firstOrNull { it.id == down.id } ?: break
                         last = change.position
                         if (!change.pressed) break
-                        val hovered = radialActionAt(last, radialCenter, density)
+                        val hovered = radialActionAt(last, radialCenter, density, openActions)
                         if (hovered != radialHovered) {
                             if (hovered != null) {
                                 haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
@@ -556,6 +576,10 @@ fun FullImageViewer(
                     val action = radialHovered
                     radialHovered = null
                     radialActive = false
+                    // Serialize: let the wheel spring closed BEFORE the action's
+                    // UI (e.g. the delete ConfirmDialog) appears. Firing it
+                    // immediately hard-cuts the dialog in over the collapsing
+                    // wheel, which reads as a visual jump between two languages.
                     scope.launch {
                         radialProgress.animateTo(
                             0f,
@@ -565,8 +589,8 @@ fun FullImageViewer(
                             ),
                         )
                         radialPresent = false
+                        action?.let { latestOnRadialAction.value(it) }
                     }
-                    action?.let { latestOnRadialAction.value(it) }
                 }
             },
     ) {
@@ -648,7 +672,7 @@ fun FullImageViewer(
                             onPlayingChanged = { playing ->
                                 if (page == currentIndex) videoPlaying = playing
                             },
-                            onLongPress = { drawerVisible = true },
+                            wheelOpen = radialPresent && currentPageIsVideo,
                             // Live entry/exit progress (0 = tile, 1 = fullscreen) so
                             // the video page morphs the tile's cropped poster into the
                             // fitted player and back on close. Must stay live on exit
@@ -777,14 +801,15 @@ fun FullImageViewer(
             }
         }
 
-        // Long-press radial menu (images only).
-        if (!currentPageIsVideo && radialPresent) {
+        // Long-press radial menu: 4 sectors on images, Delete/Info/Share on video.
+        if (radialPresent) {
             ViewerActionWheel(
                 center = radialCenter,
                 hovered = radialHovered,
                 containerSize = containerSize,
                 density = density,
                 progress = radialProgress.value,
+                actions = radialActions,
             )
         }
 

@@ -1,5 +1,10 @@
 package fool.akza.foto.ui
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.scaleIn
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -15,6 +20,11 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -46,21 +56,36 @@ internal fun ConfirmDialog(
     onConfirm: () -> Unit,
     onDismiss: () -> Unit,
 ) {
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(AmoledBlack.copy(alpha = 0.7f))
-            .clickable(onClick = onDismiss, indication = null, interactionSource = null),
-        contentAlignment = Alignment.Center,
+    // Bloom in with the same scale+fade language as the wheel, so a confirm
+    // following a radial action reads as a continuation rather than a pop-up.
+    var entered by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) { entered = true }
+    AnimatedVisibility(
+        visible = entered,
+        enter = fadeIn(tween(180)),
     ) {
-        Surface(
+        Box(
             modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 32.dp),
-            shape = RoundedCornerShape(16.dp),
-            color = ThemeSurface,
-            shadowElevation = 0.dp,
+                .fillMaxSize()
+                .background(AmoledBlack.copy(alpha = 0.7f))
+                .clickable(onClick = onDismiss, indication = null, interactionSource = null),
+            contentAlignment = Alignment.Center,
         ) {
+            AnimatedVisibility(
+                visible = entered,
+                enter = scaleIn(
+                    initialScale = 0.92f,
+                    animationSpec = tween(240, easing = FastOutSlowInEasing),
+                ) + fadeIn(tween(180)),
+            ) {
+                Surface(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 32.dp),
+                    shape = RoundedCornerShape(16.dp),
+                    color = ThemeSurface,
+                    shadowElevation = 0.dp,
+                ) {
             Column(modifier = Modifier.padding(24.dp)) {
                 Text(
                     text = title,
@@ -135,10 +160,12 @@ internal fun ConfirmDialog(
                                 fontSize = 14.sp,
                                 fontWeight = FontWeight.SemiBold,
                             )
-                        }
-                    }
-                }
-            }
-        }
-    }
+                        } // Confirm button Box
+                    } // Confirm button Surface
+                } // Button Row
+            } // Content Column
+                } // Card Surface
+            } // Card scale-in
+        } // Scrim Box
+    } // Outer fade-in
 }

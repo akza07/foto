@@ -1095,8 +1095,10 @@ fun GalleryScreen(
                 onPageChanged = { viewerIndex = it },
                 onDelete = {
                     // Ignore further deletes while a slide-out is already pending.
+                    // Video deletes always confirm: the wheel's Delete sector is
+                    // easy to land on mid-gesture, so the setting never skips it.
                     if (pendingViewerRemoval == null && viewerDeleteInFlightUri == null) {
-                        if (appSettings.confirmBeforeDelete) {
+                        if (appSettings.confirmBeforeDelete || it.isVideo) {
                             pendingDeleteItem = it
                         } else {
                             requestDelete(it)

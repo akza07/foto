@@ -54,8 +54,6 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.platform.LocalHapticFeedback
-import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -104,7 +102,7 @@ private val PlaybackSpeeds = listOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 2f)
  *
  * Minimal modern HUD:
  * - Single tap toggles play/pause, double-tap left/right seeks ±10 s,
- *   long-press opens the action sheet (same as images).
+ *   long-press is owned by the host viewer (radial action wheel).
  * - Swipe up/down gestures are handled by the host viewer (sheet / dismiss),
  *   so this page owns no vertical-drag detector and the bottom pill never
  *   triggers navigation.
@@ -122,7 +120,8 @@ fun VideoPlayerPage(
     contentReady: () -> Boolean,
     onControlsVisibilityChanged: (Boolean) -> Unit = {},
     onPlayingChanged: (Boolean) -> Unit = {},
-    onLongPress: () -> Unit = {},
+    /** True while the host viewer's radial wheel is open: the HUD hides behind it. */
+    wheelOpen: Boolean = false,
     entryProgress: () -> Float = { 1f },
     sourceRect: Rect = Rect.Zero,
     containerSize: IntSize = IntSize.Zero,
@@ -243,6 +242,9 @@ fun VideoPlayerPage(
         if (controlsVisible) controlsAlpha.snapTo(1f) else controlsAlpha.animateTo(0f, tween(200))
     }
     LaunchedEffect(Unit) { showControls() }
+    // The host wheel owns long-press now: tuck the pill away behind it so the
+    // wheel is the only control surface. Controls return on the next tap.
+    LaunchedEffect(wheelOpen) { if (wheelOpen) hideControlsNow() }
 
     // ---- Entry morph (tile crop -> fitted surface) ----
     // The grid tile shows the poster CROPPED to a square, while the player
@@ -355,20 +357,17 @@ fun VideoPlayerPage(
         // pill buttons can never also trigger the full-screen single-tap. The
         // video surface remains full-bleed underneath. Vertical swipes are
         // handled by the host viewer (up = actions sheet, down = dismiss).
+        // Gesture area: tap toggles controls, double-tap seeks ±10 s.
+        // Long-press belongs to the host viewer (radial wheel), so this
+        // detector deliberately has no onLongPress: the press falls through
+        // to the host even though this layer is on top.
         Column(modifier = Modifier.fillMaxSize()) {
-            // Gesture area: tap play/pause, double-tap seek ±10 s, long-press sheet.
-            val haptics = LocalHapticFeedback.current
             Box(
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxWidth()
                     .pointerInput(Unit) {
                         detectTapGestures(
-                            onLongPress = {
-                                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                                showControls()
-                                onLongPress()
-                            },
                             onDoubleTap = { offset ->
                                 showControls()
                                 if (offset.x < size.width / 2f) {

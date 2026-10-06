@@ -102,8 +102,15 @@ internal fun clampRadialCenter(press: Offset, containerSize: IntSize, density: D
     )
 }
 
-/** The action under [position] for a wheel centred at [center], or null to cancel. */
-internal fun radialActionAt(position: Offset, center: Offset, density: Density): ViewerAction? {
+/** The action under [position] for a wheel centred at [center], or null to cancel.
+ * [actions] sets the sectors; Delete stays at the top when it leads the list. */
+internal fun radialActionAt(
+    position: Offset,
+    center: Offset,
+    density: Density,
+    actions: List<ViewerAction> = ViewerAction.entries,
+): ViewerAction? {
+    if (actions.isEmpty()) return null
     val d = position - center
     val dist = d.getDistance()
     val outer = wheelOuterPx(density)
@@ -111,7 +118,8 @@ internal fun radialActionAt(position: Offset, center: Offset, density: Density):
     if (dist < cancel || dist > outer) return null
     val deg = atan2(d.y.toDouble(), d.x.toDouble()) * 180.0 / Math.PI
     val norm = ((deg.toFloat() + 90f) % 360f + 360f) % 360f
-    return ViewerAction.entries[(norm / 90f).roundToInt() % ViewerAction.entries.size]
+    val sector = 360f / actions.size
+    return actions[(norm / sector).roundToInt() % actions.size]
 }
 
 /**
@@ -125,19 +133,21 @@ internal fun ViewerActionWheel(
     containerSize: IntSize,
     density: Density,
     progress: Float,
+    actions: List<ViewerAction> = ViewerAction.entries,
     modifier: Modifier = Modifier,
 ) {
-    if (containerSize == IntSize.Zero) return
+    if (containerSize == IntSize.Zero || actions.isEmpty()) return
 
     val p = progress.coerceIn(0f, 1.2f)
     val outer = with(density) { (WheelRadius * p).toPx() }
     val hub = with(density) { (HubRadius * p).toPx() }
+    val sector = 360f / actions.size
     val iconRadius = outer * IconRadiusFraction
     val iconBacking = IconSize + 10.dp
     val iconHalf = with(density) { (iconBacking / 2).toPx() }
     val columnHalf = with(density) { SectorColumnWidth.toPx() } / 2f
     val rim = with(density) { 1.dp.toPx() }
-    val hoveredIndex = hovered?.let { ViewerAction.entries.indexOf(it) } ?: -1
+    val hoveredIndex = hovered?.let { actions.indexOf(it) } ?: -1
 
     Box(
         modifier = modifier
@@ -162,13 +172,13 @@ internal fun ViewerActionWheel(
 
             // Highlighted wedge.
             if (hoveredIndex >= 0) {
-                val start = -135f + hoveredIndex * 90f
+                val start = -90f - sector / 2f + hoveredIndex * sector
                 val wedge = Path().apply {
                     moveTo(center.x, center.y)
                     arcTo(
                         Rect(center.x - outer, center.y - outer, center.x + outer, center.y + outer),
                         start,
-                        90f,
+                        sector,
                         false,
                     )
                     close()
@@ -184,8 +194,8 @@ internal fun ViewerActionWheel(
             }
 
             // Sector dividers.
-            for (i in 0 until ViewerAction.entries.size) {
-                val a = Math.toRadians((-135f + i * 90f).toDouble())
+            for (i in actions.indices) {
+                val a = Math.toRadians((-90.0 - sector / 2.0 + i * sector).toDouble())
                 drawLine(
                     color = SpokeColor,
                     start = Offset(
@@ -224,8 +234,8 @@ internal fun ViewerActionWheel(
         }
 
         // Icons + labels.
-        ViewerAction.entries.forEachIndexed { index, action ->
-            val a = Math.toRadians((-90f + index * 90f).toDouble())
+        actions.forEachIndexed { index, action ->
+            val a = Math.toRadians((-90.0 + index * sector).toDouble())
             val ix = center.x + (cos(a) * iconRadius).toFloat()
             val iy = center.y + (sin(a) * iconRadius).toFloat()
             val selected = hovered == action
