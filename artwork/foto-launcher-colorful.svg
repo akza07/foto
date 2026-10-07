@@ -1,0 +1,191 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="100%" height="100%">
+  <defs>
+    <!-- Vibrant Radiant Glow Backing -->
+    <radialGradient id="auroraGlow" cx="50%" cy="30%" r="80%">
+      <stop offset="0%" stop-color="#8B5CF6"/>
+      <stop offset="45%" stop-color="#EC4899"/>
+      <stop offset="75%" stop-color="#F97316"/>
+      <stop offset="100%" stop-color="#06B6D4"/>
+    </radialGradient>
+
+    <!-- Base Squircle Gradient (Rich, multi-tone iridescent glassmorphic canvas) -->
+    <linearGradient id="squircleBg" x1="15%" y1="10%" x2="85%" y2="90%">
+      <stop offset="0%" stop-color="#1E1B4B"/>
+      <stop offset="30%" stop-color="#311042"/>
+      <stop offset="70%" stop-color="#18182E"/>
+      <stop offset="100%" stop-color="#090A15"/>
+    </linearGradient>
+
+    <!-- Adaptive Dual-Theme Border Gradient (Glow + high-contrast edge for light & dark wallpapers) -->
+    <linearGradient id="edgeBorderGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FFFFFF" stop-opacity="0.85"/>
+      <stop offset="35%" stop-color="#F472B6" stop-opacity="0.7"/>
+      <stop offset="70%" stop-color="#818CF8" stop-opacity="0.6"/>
+      <stop offset="100%" stop-color="#38BDF8" stop-opacity="0.9"/>
+    </linearGradient>
+
+    <!-- Outer Drop Shadow for light background pop -->
+    <filter id="appShadow" x="-20%" y="-20%" width="150%" height="150%">
+      <feDropShadow dx="0" dy="24" stdDeviation="28" flood-color="#050510" flood-opacity="0.38"/>
+      <feDropShadow dx="0" dy="8" stdDeviation="12" flood-color="#4C1D95" flood-opacity="0.25"/>
+    </filter>
+
+    <!-- Inner Card Shadow -->
+    <filter id="cardShadow1" x="-30%" y="-30%" width="160%" height="160%">
+      <feDropShadow dx="0" dy="16" stdDeviation="18" flood-color="#000000" flood-opacity="0.45"/>
+    </filter>
+    <filter id="cardShadow2" x="-30%" y="-30%" width="160%" height="160%">
+      <feDropShadow dx="0" dy="22" stdDeviation="24" flood-color="#020617" flood-opacity="0.6"/>
+    </filter>
+
+    <!-- Stack Card 1: Sunset Rose & Coral -->
+    <linearGradient id="card1Grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#F43F5E"/>
+      <stop offset="50%" stop-color="#FB7185"/>
+      <stop offset="100%" stop-color="#FDA4AF"/>
+    </linearGradient>
+
+    <!-- Stack Card 2: Electric Indigo & Violet Glow -->
+    <linearGradient id="card2Grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#6366F1"/>
+      <stop offset="60%" stop-color="#8B5CF6"/>
+      <stop offset="100%" stop-color="#A855F7"/>
+    </linearGradient>
+
+    <!-- Front Hero Card Frame: Crisp Ceramic White with Prism Sheen -->
+    <linearGradient id="frontCardGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FFFFFF"/>
+      <stop offset="70%" stop-color="#F8FAFC"/>
+      <stop offset="100%" stop-color="#F1F5F9"/>
+    </linearGradient>
+
+    <!-- Inner Photo Canvas Gradient: Dynamic Sunset Twilight -->
+    <linearGradient id="photoSkyGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#1E1B4B"/>
+      <stop offset="35%" stop-color="#4C1D95"/>
+      <stop offset="65%" stop-color="#BE185D"/>
+      <stop offset="90%" stop-color="#FB923C"/>
+      <stop offset="100%" stop-color="#FDE047"/>
+    </linearGradient>
+
+    <!-- Mountain Layer 1 (Distant Purple Mist) -->
+    <linearGradient id="mtnGradFar" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#C084FC" stop-opacity="0.8"/>
+      <stop offset="100%" stop-color="#7E22CE" stop-opacity="0.95"/>
+    </linearGradient>
+
+    <!-- Mountain Layer 2 (Geometric Vibrant Foreground) -->
+    <linearGradient id="mtnGradFrontLeft" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#06B6D4"/>
+      <stop offset="60%" stop-color="#0284C7"/>
+      <stop offset="100%" stop-color="#1E3A8A"/>
+    </linearGradient>
+    <linearGradient id="mtnGradFrontRight" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#38BDF8"/>
+      <stop offset="100%" stop-color="#0369A1"/>
+    </linearGradient>
+
+    <!-- Golden Radiant Aperture / Sun -->
+    <radialGradient id="sunGlowGrad" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#FFFFFF"/>
+      <stop offset="40%" stop-color="#FEF08A"/>
+      <stop offset="75%" stop-color="#F59E0B"/>
+      <stop offset="100%" stop-color="#EA580C"/>
+    </radialGradient>
+
+    <!-- Intense Sun Aura Filter -->
+    <filter id="sunAura" x="-60%" y="-60%" width="220%" height="220%">
+      <feGaussianBlur stdDeviation="10" result="glow"/>
+      <feMerge>
+        <feMergeNode in="glow"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+
+    <!-- Optical Lens Ring Gradient -->
+    <linearGradient id="lensRingGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#38BDF8"/>
+      <stop offset="35%" stop-color="#A855F7"/>
+      <stop offset="70%" stop-color="#EC4899"/>
+      <stop offset="100%" stop-color="#F59E0B"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Base App Squircle Group with Shadow for Light & Dark Adaptability -->
+  <g filter="url(#appShadow)">
+    <!-- Primary Squircle Container -->
+    <rect x="24" y="24" width="464" height="464" rx="108" fill="url(#squircleBg)"/>
+
+    <!-- Ambient Internal Prismatic Backlight -->
+    <path d="M 24 132 C 24 72 72 24 132 24 L 380 24 C 440 24 488 72 488 132 L 488 280 C 380 220 280 340 120 280 C 60 258 24 200 24 132 Z"
+          fill="url(#auroraGlow)" opacity="0.38" />
+
+    <!-- Dual-Theme Edge Definition Stroke (ensures separation against pure black or pure white system wallpapers) -->
+    <rect x="24" y="24" width="464" height="464" rx="108" fill="none" stroke="url(#edgeBorderGrad)" stroke-width="2.5"/>
+    <rect x="26.5" y="26.5" width="459" height="459" rx="105.5" fill="none" stroke="#000000" stroke-opacity="0.4" stroke-width="1.5"/>
+  </g>
+
+  <!-- 3D Photo-Deck Collection: Deep Colorful Layers -->
+
+  <!-- Card Layer 3 (Deep Rose / Coral Stack - Tilted Left) -->
+  <g filter="url(#cardShadow1)" transform="rotate(-10 236 244)">
+    <rect x="146" y="94" width="220" height="252" rx="26" fill="url(#card1Grad)"/>
+    <rect x="146" y="94" width="220" height="252" rx="26" fill="none" stroke="#FFFFFF" stroke-opacity="0.45" stroke-width="1.5"/>
+  </g>
+
+  <!-- Card Layer 2 (Electric Violet / Indigo Stack - Tilted Right) -->
+  <g filter="url(#cardShadow1)" transform="rotate(9 292 232)">
+    <rect x="180" y="100" width="226" height="256" rx="28" fill="url(#card2Grad)"/>
+    <rect x="180" y="100" width="226" height="256" rx="28" fill="none" stroke="#FFFFFF" stroke-opacity="0.5" stroke-width="1.5"/>
+  </g>
+
+  <!-- Card Layer 1: Hero Front Card (Crisp Ceramic White Polaroid with Vibrant Landscape Window) -->
+  <g filter="url(#cardShadow2)">
+    <!-- White Card Shell -->
+    <rect x="110" y="128" width="252" height="284" rx="30" fill="url(#frontCardGrad)"/>
+    <rect x="110" y="128" width="252" height="284" rx="30" fill="none" stroke="#FFFFFF" stroke-width="2"/>
+    <rect x="110" y="128" width="252" height="284" rx="30" fill="none" stroke="#E2E8F0" stroke-width="1"/>
+
+    <!-- Inner Photo Viewport with Rich Sunset & Mountain Artwork -->
+    <g clip-path="url(#photoViewportClip)">
+      <clipPath id="photoViewportClip">
+        <rect x="128" y="146" width="216" height="214" rx="20"/>
+      </clipPath>
+
+      <!-- Vibrant Sunset Twilight Sky -->
+      <rect x="128" y="146" width="216" height="214" fill="url(#photoSkyGrad)"/>
+
+      <!-- Glowing Golden Celestial Sun / Camera Aperture -->
+      <circle cx="282" cy="204" r="28" fill="url(#sunGlowGrad)" filter="url(#sunAura)"/>
+      <circle cx="282" cy="204" r="20" fill="url(#sunGlowGrad)"/>
+      <circle cx="282" cy="204" r="24" fill="none" stroke="#FFFFFF" stroke-width="1.8" stroke-opacity="0.9"/>
+
+      <!-- Background Distant Mountain Peaks -->
+      <path d="M 128 322 L 188 252 L 238 304 L 308 220 L 344 266 L 344 360 L 128 360 Z" fill="url(#mtnGradFar)"/>
+
+      <!-- Primary Left Foreground Mountain Peak (Cyan & Deep Sapphire) -->
+      <path d="M 128 360 L 148 316 L 218 228 L 272 360 Z" fill="url(#mtnGradFrontLeft)"/>
+
+      <!-- Primary Right Peak Facet (Brilliant Sky Blue) -->
+      <path d="M 218 228 L 272 360 L 344 360 L 344 286 L 298 252 Z" fill="url(#mtnGradFrontRight)"/>
+
+      <!-- Stylized Snow / Ridge Highlight Facet -->
+      <path d="M 218 228 L 218 360" stroke="#FFFFFF" stroke-width="2.5" stroke-linecap="round" opacity="0.6"/>
+      <polygon points="218,228 206,256 218,268 234,250" fill="#FFFFFF" opacity="0.8"/>
+
+      <!-- Subtle Viewport Glass Specular Glare -->
+      <path d="M 128 146 L 260 146 L 128 278 Z" fill="#FFFFFF" opacity="0.12"/>
+    </g>
+
+    <!-- Inner Viewport Inset Stroke -->
+    <rect x="128" y="146" width="216" height="214" rx="20" fill="none" stroke="#0F172A" stroke-opacity="0.15" stroke-width="1.5"/>
+
+    <!-- Bottom Polaroid Accent: Spectrum Prismatic Lens Indicator -->
+    <g transform="translate(236, 384)">
+      <!-- Spectral Color Ring -->
+      <circle cx="0" cy="0" r="9" fill="url(#lensRingGrad)"/>
+      <circle cx="0" cy="0" r="5" fill="#FFFFFF"/>
+      <circle cx="0" cy="0" r="2.5" fill="#475569"/>
+    </g>
+  </g>
+</svg>

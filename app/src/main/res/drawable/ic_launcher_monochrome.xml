@@ -4,17 +4,22 @@
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    <path
-        android:fillColor="#FFFFFFFF"
-        android:pathData="M40,27h33c4.4,0 8,3.6 8,8v32c0,4.4 -3.6,8 -8,8h-3V43c0,-4.4 -3.6,-8 -8,-8H32c0,-4.4 3.6,-8 8,-8z" />
+    <!-- Peeking back card (unrotated so its window cutout aligns with the front). -->
     <path
         android:fillColor="#FFFFFFFF"
         android:fillType="evenOdd"
-        android:pathData="M33,34h30c4.4,0 8,3.6 8,8v31c0,4.4 -3.6,8 -8,8H33c-4.4,0 -8,-3.6 -8,-8V42c0,-4.4 3.6,-8 8,-8z M34,40c-1.7,0 -3,1.3 -3,3v29c0,1.7 1.3,3 3,3h28c1.7,0 3,-1.3 3,-3V43c0,-1.7 -1.3,-3 -3,-3z" />
+        android:pathData="M43.9,21.1 h35.9 a5.9,5.9 0 0 1 5.9,5.9 v42.2 a5.9,5.9 0 0 1 -5.9,5.9 H43.9 a5.9,5.9 0 0 1 -5.9,-5.9 V27 a5.9,5.9 0 0 1 5.9,-5.9 z M31.2,30.8 h37.2 a4.2,4.2 0 0 1 4.2,4.2 v36.7 a4.2,4.2 0 0 1 -4.2,4.2 H31.2 a4.2,4.2 0 0 1 -4.2,-4.2 V35 a4.2,4.2 0 0 1 4.2,-4.2 z" />
+    <!-- Front polaroid frame + photo window + lens-dot hole. -->
     <path
         android:fillColor="#FFFFFFFF"
-        android:pathData="M55,49a4,4 0,1 0,8 0a4,4 0,1 0,-8 0" />
+        android:fillType="evenOdd"
+        android:pathData="M29.3,27 h40.9 a6.3,6.3 0 0 1 6.3,6.3 v47.3 a6.3,6.3 0 0 1 -6.3,6.3 H29.3 a6.3,6.3 0 0 1 -6.3,-6.3 V33.3 a6.3,6.3 0 0 1 6.3,-6.3 z M31.2,30.8 h37.2 a4.2,4.2 0 0 1 4.2,4.2 v36.7 a4.2,4.2 0 0 1 -4.2,4.2 H31.2 a4.2,4.2 0 0 1 -4.2,-4.2 V35 a4.2,4.2 0 0 1 4.2,-4.2 z M47.3,81.5 a2.5,2.5 0 1 0 5,0 a2.5,2.5 0 1 0 -5,0" />
+    <!-- Sun. -->
     <path
         android:fillColor="#FFFFFFFF"
-        android:pathData="M31,68l11,-13 10,11 6,-7 7,9v4c0,1.7 -1.3,3 -3,3H34c-1.7,0 -3,-1.3 -3,-3z" />
+        android:pathData="M55.3,43 a4.2,4.2 0 1 0 8.4,0 a4.2,4.2 0 1 0 -8.4,0" />
+    <!-- Mountains. -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M27.5,75.4 L27.5,67.9 L39.7,53.2 L50.2,64.1 L65,46.4 L72.1,56.6 L72.1,75.4 Z" />
 </vector>
