@@ -73,8 +73,9 @@ fun deleteConsentSender(context: Context, items: List<MediaItem>): android.conte
 
 object MediaRepository {
 
-    // Bounds for recursive SAF tree browsing to keep load times sane.
-    private const val MaxSafItems = 2000
+    // Bound for recursive SAF tree browsing to keep load times sane.
+    // Note: there is intentionally no item-count cap here — truncating the
+    // scan would silently drop photos/videos from the albums view.
     private const val MaxSafDepth = 12
 
     private val MediaProjection = arrayOf(
@@ -211,7 +212,6 @@ object MediaRepository {
         stack.add(Triple(rootDocId, rootName, 0))
 
         while (stack.isNotEmpty()) {
-            if (items.size >= MaxSafItems) break
             val (parentId, parentName, depth) = stack.removeLast()
             if (depth > MaxSafDepth) continue
 
@@ -239,7 +239,6 @@ object MediaRepository {
                 val sizeCol = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_SIZE)
                 val childNames = mutableListOf<String>()
                 while (cursor.moveToNext()) {
-                    if (items.size >= MaxSafItems) break
                     val docId = cursor.getString(idCol)
                     val name = cursor.getString(nameCol)
                     val mime = cursor.getString(mimeCol)
