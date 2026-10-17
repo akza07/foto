@@ -1,25 +1,33 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  Foto adaptive-icon monochrome (themed) layer.
+
+  Source of truth: artwork/foto-launcher-monochrome.svg
+  The system tints this single-colour silhouette; the card is dropped so the
+  glyph reads cleanly at small sizes.
+-->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
     android:height="108dp"
-    android:viewportWidth="108"
-    android:viewportHeight="108">
-    <!-- Peeking back card (unrotated so its window cutout aligns with the front). -->
+    android:viewportWidth="512"
+    android:viewportHeight="512">
+    <!-- Photo frame -->
     <path
-        android:fillColor="#FFFFFFFF"
-        android:fillType="evenOdd"
-        android:pathData="M43.9,21.1 h35.9 a5.9,5.9 0 0 1 5.9,5.9 v42.2 a5.9,5.9 0 0 1 -5.9,5.9 H43.9 a5.9,5.9 0 0 1 -5.9,-5.9 V27 a5.9,5.9 0 0 1 5.9,-5.9 z M31.2,30.8 h37.2 a4.2,4.2 0 0 1 4.2,4.2 v36.7 a4.2,4.2 0 0 1 -4.2,4.2 H31.2 a4.2,4.2 0 0 1 -4.2,-4.2 V35 a4.2,4.2 0 0 1 4.2,-4.2 z" />
-    <!-- Front polaroid frame + photo window + lens-dot hole. -->
+        android:fillColor="#00000000"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="27"
+        android:strokeLineJoin="round"
+        android:pathData="M224,170 H288 A54,54 0 0 1 342,224 V288 A54,54 0 0 1 288,342 H224 A54,54 0 0 1 170,288 V224 A54,54 0 0 1 224,170 Z" />
+    <!-- Sun -->
     <path
-        android:fillColor="#FFFFFFFF"
-        android:fillType="evenOdd"
-        android:pathData="M29.3,27 h40.9 a6.3,6.3 0 0 1 6.3,6.3 v47.3 a6.3,6.3 0 0 1 -6.3,6.3 H29.3 a6.3,6.3 0 0 1 -6.3,-6.3 V33.3 a6.3,6.3 0 0 1 6.3,-6.3 z M31.2,30.8 h37.2 a4.2,4.2 0 0 1 4.2,4.2 v36.7 a4.2,4.2 0 0 1 -4.2,4.2 H31.2 a4.2,4.2 0 0 1 -4.2,-4.2 V35 a4.2,4.2 0 0 1 4.2,-4.2 z M47.3,81.5 a2.5,2.5 0 1 0 5,0 a2.5,2.5 0 1 0 -5,0" />
-    <!-- Sun. -->
+        android:fillColor="#FFFFFF"
+        android:pathData="M201,214 a15,15 0 1 0 30,0 a15,15 0 1 0 -30,0 Z" />
+    <!-- Peaks -->
     <path
-        android:fillColor="#FFFFFFFF"
-        android:pathData="M55.3,43 a4.2,4.2 0 1 0 8.4,0 a4.2,4.2 0 1 0 -8.4,0" />
-    <!-- Mountains. -->
-    <path
-        android:fillColor="#FFFFFFFF"
-        android:pathData="M27.5,75.4 L27.5,67.9 L39.7,53.2 L50.2,64.1 L65,46.4 L72.1,56.6 L72.1,75.4 Z" />
+        android:fillColor="#FFFFFF"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="14"
+        android:strokeLineJoin="round"
+        android:strokeLineCap="round"
+        android:pathData="M205,306 L246,263 L272,289 L297,266 L307,283 L307,306 Z" />
 </vector>

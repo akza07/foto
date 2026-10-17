@@ -108,9 +108,10 @@ No custom font family; system default with Material3 defaults. Exact usages:
 
 ### 3.5 Launcher icon
 
-- Adaptive icon (`mipmap-anydpi`) + monochrome variant; raster mipmaps per density; source SVGs in `artwork/` (`foto-launcher-colorful.svg`, `foto-launcher-monochrome.svg`; older zinc sources retained as `foto-launcher.svg`).
-- Full-color icon (512 viewBox): dark iridescent squircle (`#1E1B4B`→`#090A15` with aurora glow + gradient edge stroke) holding a 3D photo-deck — rose and violet tilted back cards behind a white polaroid hero card with a sunset/mountain photo viewport and a spectral lens-dot accent.
-- Monochrome (themed) icon (108 viewBox, all-white): same composition simplified — peeking back card, polaroid frame with photo-window cutout, sun dot, mountain polygon, lens-dot hole on the chin.
+- Adaptive icon (`mipmap-anydpi`: `ic_launcher.xml` / `ic_launcher_round.xml`) built from three **vector** layers — `ic_launcher_background` (flat `#09090B`), `ic_launcher_foreground`, `ic_launcher_monochrome` — plus raster mipmaps per density for legacy launchers. Sources in `artwork/`: `foto-launcher.svg` (full squircle), `foto-launcher-round.svg` (full circle), `foto-launcher-foreground.svg` (layer), `foto-launcher-monochrome.svg` (themed layer). All four share one 512-unit geometry.
+- Flat, zinc/shadcn, no gradients: a near-black squircle (`#09090B`, `#3F3F46` hairline) holding a single rounded zinc card (`#18181B` fill, `#27272A` hairline, ~29% corner radius) with a white `#FAFAFA` photo glyph inside it — rounded frame, sun dot, rounded mountain peaks.
+- Foreground artwork stays within the 66dp safe zone of the 108dp layer, so no launcher mask clips the card; ~52% of the layer's width.
+- Monochrome (themed) icon: the same glyph alone (frame + sun + peaks), all-white, tinted by the system; the card is dropped for a cleaner silhouette at small sizes.
 
 ---
 

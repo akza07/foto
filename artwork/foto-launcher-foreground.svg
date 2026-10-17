@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!-- Foto launcher — adaptive-icon foreground. 512-unit space drawn into the
+       108dp layer; all artwork sits inside the 66dp safe zone. -->
+  <rect x="123" y="123" width="266" height="266" rx="77" fill="#18181B" stroke="#27272A" stroke-width="4"/>
+  <rect x="170" y="170" width="172" height="172" rx="54" fill="none" stroke="#FAFAFA" stroke-width="27" stroke-linejoin="round"/>
+  <path d="M201,214 a15,15 0 1,0 30,0 a15,15 0 1,0 -30,0 Z" fill="#FAFAFA"/>
+  <path d="M205 306 L246 263 L272 289 L297 266 L307 283 L307 306 Z" fill="#FAFAFA" stroke="#FAFAFA" stroke-width="14" stroke-linejoin="round" stroke-linecap="round"/>
+</svg>

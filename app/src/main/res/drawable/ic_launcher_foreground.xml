@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Foto adaptive-icon foreground.
+
+  Source of truth: artwork/foto-launcher-foreground.svg
+  Drawn in the 512-unit space of that SVG; the layer is 108dp, so the artwork
+  stays inside the 66dp safe zone and survives every launcher mask.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="512"
+    android:viewportHeight="512">
+    <!-- Zinc card (zinc-900 surface, zinc-800 hairline) -->
+    <path
+        android:fillColor="#18181B"
+        android:strokeColor="#27272A"
+        android:strokeWidth="4"
+        android:pathData="M200,123 H312 A77,77 0 0 1 389,200 V312 A77,77 0 0 1 312,389 H200 A77,77 0 0 1 123,312 V200 A77,77 0 0 1 200,123 Z" />
+    <!-- Photo frame -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FAFAFA"
+        android:strokeWidth="27"
+        android:strokeLineJoin="round"
+        android:pathData="M224,170 H288 A54,54 0 0 1 342,224 V288 A54,54 0 0 1 288,342 H224 A54,54 0 0 1 170,288 V224 A54,54 0 0 1 224,170 Z" />
+    <!-- Sun -->
+    <path
+        android:fillColor="#FAFAFA"
+        android:pathData="M201,214 a15,15 0 1 0 30,0 a15,15 0 1 0 -30,0 Z" />
+    <!-- Peaks -->
+    <path
+        android:fillColor="#FAFAFA"
+        android:strokeColor="#FAFAFA"
+        android:strokeWidth="14"
+        android:strokeLineJoin="round"
+        android:strokeLineCap="round"
+        android:pathData="M205,306 L246,263 L272,289 L297,266 L307,283 L307,306 Z" />
+</vector>
