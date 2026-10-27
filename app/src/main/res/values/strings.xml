@@ -201,7 +201,7 @@
     <string name="tutorial_actions_title">Actions in one motion</string>
     <string name="tutorial_actions_body">Long-press anywhere, slide to Delete, Info, Share or Crop, then release to run it.</string>
     <string name="tutorial_safety_title">Select and stay safe</string>
-    <string name="tutorial_safety_body">Long-press a tile to select several, then delete, copy, move or share. Deletes go to the trash — undo right away, or empty it from Settings.</string>
+    <string name="tutorial_safety_body">Long-press a tile to enter selection mode, then glide your finger across tiles to select many in one motion. Delete, copy, move or share them; deletes go to the trash — undo right away, or empty it from Settings.</string>
     <string name="tutorial_skip">Skip</string>
     <string name="tutorial_next">Next</string>
     <string name="tutorial_start">Get started</string>

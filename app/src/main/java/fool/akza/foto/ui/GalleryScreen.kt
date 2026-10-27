@@ -14,6 +14,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -35,6 +36,7 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -60,6 +62,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
@@ -70,6 +73,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.PointerInputChange
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.layout.boundsInWindow
@@ -415,6 +421,30 @@ fun GalleryScreen(
                     selectedDirectories.filterNot { it.folder.bucketId == folder.bucketId }
                 } else selectedDirectories + directory,
             ) else selection.copy(selectedFolders = selectedFolders + folder)
+        } else {
+            if (directory != null) SelectionState(active = true, selectedDirectories = listOf(directory))
+            else SelectionState(active = true, selectedFolders = listOf(folder))
+        }
+    }
+
+    // Glide selection: adds an item/folder/directory to the current selection
+    // without toggling already-selected entries off (used while dragging).
+    val glideSelectItem = { item: MediaItem ->
+        selection = if (selection.active) {
+            if (item in selection.selected) selection else selection.copy(selected = selection.selected + item)
+        } else {
+            SelectionState(active = true, selected = listOf(item))
+        }
+    }
+    val glideSelectFolder = { folder: MediaFolder ->
+        val directory = findDirectory(folder.bucketId)
+        selection = if (selection.active) {
+            if (directory != null) {
+                if (selectedDirectories.any { it.folder.bucketId == folder.bucketId }) selection
+                else selection.copy(selectedDirectories = selectedDirectories + directory)
+            } else {
+                if (folder in selectedFolders) selection else selection.copy(selectedFolders = selectedFolders + folder)
+            }
         } else {
             if (directory != null) SelectionState(active = true, selectedDirectories = listOf(directory))
             else SelectionState(active = true, selectedFolders = listOf(folder))
@@ -994,6 +1024,8 @@ fun GalleryScreen(
             onExitSelection = clearSelection,
             onTilePositioned = registerTileRect,
             onTileDisposed = unregisterTileRect,
+            onGlideSelectItem = glideSelectItem,
+            onGlideSelectFolder = glideSelectFolder,
             // Skip the (expensive) blur while an opaque screen covers the root.
             frostEnabled = (directoryStack.isEmpty() || directoryStack.size == 1 && closing) &&
                 viewerItems == null &&
@@ -1072,6 +1104,9 @@ fun GalleryScreen(
                     onExitSelection = { if (isTopLevel) clearSelection() },
                     onTilePositioned = registerTileRect,
                     onTileDisposed = unregisterTileRect,
+                    onGlideSelectItem = glideSelectItem,
+                    onGlideSelectFolder = glideSelectFolder,
+                    onGlideSelectDirectory = { dir -> glideSelectFolder(dir.folder) },
                     sortOrder = appSettings.sortOrder,
                     gridSize = appSettings.gridSize,
                     onSortOrderChange = { SettingsRepository.setSortOrder(it) },
@@ -1256,11 +1291,20 @@ private fun MainGalleryGrid(
     onTilePositioned: (Uri, Rect) -> Unit,
     onTileDisposed: (Uri) -> Unit,
     frostEnabled: Boolean = true,
+    onGlideSelectItem: (MediaItem) -> Unit = {},
+    onGlideSelectFolder: (MediaFolder) -> Unit = {},
+    onGlideSelectDirectory: (GalleryDirectory) -> Unit = {},
     sortOrder: MediaSort = MediaSort.DATE_NEWEST,
     gridSize: GridSize = GridSize.MEDIUM,
     onSortOrderChange: (MediaSort) -> Unit = {},
     onGridSizeChange: (GridSize) -> Unit = {},
 ) {
+    val gridState = rememberLazyGridState()
+    val currentContent by rememberUpdatedState(content)
+    val currentSelection by rememberUpdatedState(selection)
+    val glideSelectItemState by rememberUpdatedState(onGlideSelectItem)
+    val glideSelectFolderState by rememberUpdatedState(onGlideSelectFolder)
+
     // The grid fills the whole screen and the header overlays it, so content
     // scrolls underneath the frosted bar (same treatment as the album view).
     FrostedHeaderScaffold(
@@ -1420,8 +1464,17 @@ private fun MainGalleryGrid(
             }
             else -> {
                 LazyVerticalGrid(
+                    state = gridState,
                     columns = GridCells.Adaptive(minSize = minTileSize),
-                    modifier = gridModifier,
+                    modifier = gridModifier.pointerInput(Unit) {
+                        detectDragGesturesAfterLongPress(
+                            onDragStart = { offset -> glideSelectAt(gridState, currentContent, offset, glideSelectItemState, glideSelectFolderState) },
+                            onDrag = { change: PointerInputChange, _: Offset ->
+                                change.consume()
+                                glideSelectAt(gridState, currentContent, change.position, glideSelectItemState, glideSelectFolderState)
+                            },
+                        )
+                    },
                     contentPadding = PaddingValues(
                         start = 12.dp,
                         top = statusBarTop + AppBarHeight + 12.dp,
@@ -1487,11 +1540,19 @@ private fun AlbumGrid(
     onTilePositioned: (Uri, Rect) -> Unit,
     onTileDisposed: (Uri) -> Unit,
     sortOrder: MediaSort = MediaSort.DATE_NEWEST,
+    onGlideSelectItem: (MediaItem) -> Unit = {},
+    onGlideSelectFolder: (MediaFolder) -> Unit = {},
+    onGlideSelectDirectory: (GalleryDirectory) -> Unit = {},
     gridSize: GridSize = GridSize.MEDIUM,
     onSortOrderChange: (MediaSort) -> Unit = {},
     onGridSizeChange: (GridSize) -> Unit = {},
 ) {
     val density = LocalDensity.current
+    val gridState = rememberLazyGridState()
+    val currentSelection by rememberUpdatedState(selection)
+    val glideSelectItemState by rememberUpdatedState(onGlideSelectItem)
+    val glideSelectFolderState by rememberUpdatedState(onGlideSelectFolder)
+    val glideSelectDirectoryState by rememberUpdatedState(onGlideSelectDirectory)
 
     // One shared phase drives every tile: 1f = settled expanded grid, 0f = collapsed
     // into the folder stack. Tiles derive their pose from it, so scrolling/recomposing
@@ -1536,10 +1597,38 @@ private fun AlbumGrid(
                 }
             } else {
                 LazyVerticalGrid(
+                    state = gridState,
                     columns = GridCells.Adaptive(minSize = minTileSize),
                     modifier = Modifier
                         .fillMaxSize()
-                        .hazeSource(state = hazeState),
+                        .hazeSource(state = hazeState)
+                        .pointerInput(Unit) {
+                            detectDragGesturesAfterLongPress(
+                                onDragStart = { offset ->
+                                    glideSelectAtAlbum(
+                                        gridState = gridState,
+                                        childDirectories = childDirectories,
+                                        displayItems = displayItems,
+                                        offset = offset,
+                                        glideSelectItem = glideSelectItemState,
+                                        glideSelectFolder = glideSelectFolderState,
+                                        glideSelectDirectory = glideSelectDirectoryState,
+                                    )
+                                },
+                                onDrag = { change: PointerInputChange, _: Offset ->
+                                    change.consume()
+                                    glideSelectAtAlbum(
+                                        gridState = gridState,
+                                        childDirectories = childDirectories,
+                                        displayItems = displayItems,
+                                        offset = change.position,
+                                        glideSelectItem = glideSelectItemState,
+                                        glideSelectFolder = glideSelectFolderState,
+                                        glideSelectDirectory = glideSelectDirectoryState,
+                                    )
+                                },
+                            )
+                        },
                     contentPadding = PaddingValues(
                         start = 12.dp,
                         top = 56.dp + 12.dp + WindowInsets.statusBars.asPaddingValues().calculateTopPadding(),
@@ -2202,6 +2291,62 @@ private fun FlyInTile(
                     .fillMaxSize()
                     .background(AmoledBlack.copy(alpha = 0.4f)),
             )
+        }
+    }
+}
+
+private fun glideSelectAt(
+    gridState: androidx.compose.foundation.lazy.grid.LazyGridState,
+    content: GalleryContent?,
+    offset: Offset,
+    glideSelectItem: (MediaItem) -> Unit,
+    glideSelectFolder: (MediaFolder) -> Unit,
+) {
+    val info = gridState.layoutInfo.visibleItemsInfo.firstOrNull { itemInfo ->
+        val left = itemInfo.offset.x
+        val top = itemInfo.offset.y
+        val right = left + itemInfo.size.width
+        val bottom = top + itemInfo.size.height
+        offset.x.toInt() in left..right && offset.y.toInt() in top..bottom
+    } ?: return
+    val key = info.key?.toString() ?: return
+    when {
+        key.startsWith("folder:") -> {
+            val bucketId = key.removePrefix("folder:")
+            content?.folders?.firstOrNull { it.bucketId == bucketId }?.let(glideSelectFolder)
+        }
+        key.startsWith("item:") -> {
+            val uriStr = key.removePrefix("item:")
+            content?.looseItems?.firstOrNull { it.uri.toString() == uriStr }?.let(glideSelectItem)
+        }
+    }
+}
+
+private fun glideSelectAtAlbum(
+    gridState: androidx.compose.foundation.lazy.grid.LazyGridState,
+    childDirectories: List<GalleryDirectory>,
+    displayItems: List<MediaItem>,
+    offset: Offset,
+    glideSelectItem: (MediaItem) -> Unit,
+    glideSelectFolder: (MediaFolder) -> Unit,
+    glideSelectDirectory: (GalleryDirectory) -> Unit,
+) {
+    val info = gridState.layoutInfo.visibleItemsInfo.firstOrNull { itemInfo ->
+        val left = itemInfo.offset.x
+        val top = itemInfo.offset.y
+        val right = left + itemInfo.size.width
+        val bottom = top + itemInfo.size.height
+        offset.x.toInt() in left..right && offset.y.toInt() in top..bottom
+    } ?: return
+    val key = info.key?.toString() ?: return
+    when {
+        key.startsWith("directory:") -> {
+            val bucketId = key.removePrefix("directory:")
+            childDirectories.firstOrNull { it.folder.bucketId == bucketId }?.let(glideSelectDirectory)
+        }
+        key.startsWith("album:") -> {
+            val uriStr = key.removePrefix("album:")
+            displayItems.firstOrNull { it.uri.toString() == uriStr }?.let(glideSelectItem)
         }
     }
 }
