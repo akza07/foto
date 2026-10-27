@@ -18,7 +18,7 @@ enum class MediaSort(@StringRes val labelRes: Int) {
 
 /** Thumbnail grid density: the minimum tile width in dp. */
 enum class GridSize(@StringRes val labelRes: Int, val minTileDp: Int) {
-    SMALL(R.string.grid_small, 88),
+    SMALL(R.string.grid_small, 80),
     MEDIUM(R.string.grid_medium, 112),
     LARGE(R.string.grid_large, 144),
 }

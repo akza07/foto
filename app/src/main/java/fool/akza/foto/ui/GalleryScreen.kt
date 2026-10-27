@@ -44,11 +44,16 @@ import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.SelectAll
 import androidx.compose.material.icons.outlined.Search
+import androidx.compose.material.icons.outlined.FilterList
 import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -95,6 +100,8 @@ import fool.akza.foto.data.MediaFolder
 import fool.akza.foto.data.MediaItem
 import fool.akza.foto.data.MediaRepository
 import fool.akza.foto.data.SettingsRepository
+import fool.akza.foto.data.MediaSort
+import fool.akza.foto.data.GridSize
 import fool.akza.foto.data.TrashEntry
 import fool.akza.foto.data.TrashStore
 import fool.akza.foto.data.canonicalPath
@@ -959,6 +966,10 @@ fun GalleryScreen(
             onSettingsClick = { if (directoryStack.isEmpty()) showSettings = true },
             onSearchClick = { if (directoryStack.isEmpty()) showSearch = true },
             minTileSize = appSettings.gridSize.minTileDp.dp,
+            sortOrder = appSettings.sortOrder,
+            gridSize = appSettings.gridSize,
+            onSortOrderChange = { SettingsRepository.setSortOrder(it) },
+            onGridSizeChange = { SettingsRepository.setGridSize(it) },
             selection = selection,
             onToggleSelect = { if (directoryStack.isEmpty()) toggleSelect(it) },
             onLongSelect = { if (directoryStack.isEmpty()) toggleSelect(it) },
@@ -1061,6 +1072,10 @@ fun GalleryScreen(
                     onExitSelection = { if (isTopLevel) clearSelection() },
                     onTilePositioned = registerTileRect,
                     onTileDisposed = unregisterTileRect,
+                    sortOrder = appSettings.sortOrder,
+                    gridSize = appSettings.gridSize,
+                    onSortOrderChange = { SettingsRepository.setSortOrder(it) },
+                    onGridSizeChange = { SettingsRepository.setGridSize(it) },
                 )
             }
         }
@@ -1241,6 +1256,10 @@ private fun MainGalleryGrid(
     onTilePositioned: (Uri, Rect) -> Unit,
     onTileDisposed: (Uri) -> Unit,
     frostEnabled: Boolean = true,
+    sortOrder: MediaSort = MediaSort.DATE_NEWEST,
+    gridSize: GridSize = GridSize.MEDIUM,
+    onSortOrderChange: (MediaSort) -> Unit = {},
+    onGridSizeChange: (GridSize) -> Unit = {},
 ) {
     // The grid fills the whole screen and the header overlays it, so content
     // scrolls underneath the frosted bar (same treatment as the album view).
@@ -1289,6 +1308,73 @@ private fun MainGalleryGrid(
                         letterSpacing = (-0.5).sp,
                         modifier = Modifier.weight(1f),
                     )
+                    var showFilterMenu by remember { mutableStateOf(false) }
+                    Box {
+                        IconButton(onClick = { showFilterMenu = true }) {
+                            Icon(
+                                imageVector = Icons.Outlined.FilterList,
+                                contentDescription = stringResource(R.string.action_filter),
+                                tint = TextPrimary,
+                                modifier = Modifier.width(24.dp),
+                            )
+                        }
+                        DropdownMenu(
+                            expanded = showFilterMenu,
+                            onDismissRequest = { showFilterMenu = false },
+                        ) {
+                            Text(
+                                text = stringResource(R.string.display_sort_title),
+                                color = TextMuted,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                            )
+                            MediaSort.entries.forEach { sort ->
+                                DropdownMenuItem(
+                                    text = { Text(stringResource(sort.labelRes), color = TextPrimary) },
+                                    onClick = {
+                                        onSortOrderChange(sort)
+                                        showFilterMenu = false
+                                    },
+                                    trailingIcon = {
+                                        if (sort == sortOrder) {
+                                            Icon(
+                                                imageVector = Icons.Rounded.Check,
+                                                contentDescription = null,
+                                                tint = TextPrimary,
+                                            )
+                                        }
+                                    },
+                                )
+                            }
+                            HorizontalDivider()
+                            Text(
+                                text = stringResource(R.string.display_grid_title),
+                                color = TextMuted,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                            )
+                            GridSize.entries.forEach { size ->
+                                DropdownMenuItem(
+                                    text = { Text(stringResource(size.labelRes), color = TextPrimary) },
+                                    onClick = {
+                                        onGridSizeChange(size)
+                                        showFilterMenu = false
+                                    },
+                                    trailingIcon = {
+                                        if (size == gridSize) {
+                                            Icon(
+                                                imageVector = Icons.Rounded.Check,
+                                                contentDescription = null,
+                                                tint = TextPrimary,
+                                            )
+                                        }
+                                    },
+                                )
+                            }
+                        }
+                    }
                     IconButton(onClick = onSearchClick) {
                         Icon(
                             imageVector = Icons.Outlined.Search,
@@ -1357,6 +1443,7 @@ private fun MainGalleryGrid(
                             onToggleSelect = onToggleFolder,
                             onLongSelect = onLongSelectFolder,
                             onClick = { rect -> onFolderClick(folder, rect) },
+                            modifier = Modifier.animateItem(fadeInSpec = null, fadeOutSpec = null),
                         )
                     }
                     items(current.looseItems, key = { "item:${it.uri}" }) { item ->
@@ -1399,6 +1486,10 @@ private fun AlbumGrid(
     onExitSelection: () -> Unit,
     onTilePositioned: (Uri, Rect) -> Unit,
     onTileDisposed: (Uri) -> Unit,
+    sortOrder: MediaSort = MediaSort.DATE_NEWEST,
+    gridSize: GridSize = GridSize.MEDIUM,
+    onSortOrderChange: (MediaSort) -> Unit = {},
+    onGridSizeChange: (GridSize) -> Unit = {},
 ) {
     val density = LocalDensity.current
 
@@ -1478,6 +1569,7 @@ private fun AlbumGrid(
                                 onToggleSelect = onToggleFolder,
                                 onLongSelect = onToggleFolder,
                                 onClick = { rect -> onDirectoryClick(child, rect) },
+                                modifier = Modifier.animateItem(fadeInSpec = null, fadeOutSpec = null),
                             )
                         } else {
                             FolderTile(
@@ -1487,6 +1579,7 @@ private fun AlbumGrid(
                                 onToggleSelect = onToggleFolder,
                                 onLongSelect = onToggleFolder,
                                 onClick = { rect -> onDirectoryClick(child, rect) },
+                                modifier = Modifier.animateItem(fadeInSpec = null, fadeOutSpec = null),
                             )
                         }
                     }
@@ -1599,6 +1692,66 @@ private fun AlbumGrid(
                             maxLines = 1,
                         )
                     }
+                    Spacer(Modifier.weight(1f))
+                    var showFilterMenu by remember { mutableStateOf(false) }
+                    Box {
+                        IconButton(onClick = { showFilterMenu = true }) {
+                            Icon(
+                                imageVector = Icons.Outlined.FilterList,
+                                contentDescription = stringResource(R.string.action_filter),
+                                tint = TextPrimary,
+                                modifier = Modifier.width(24.dp),
+                            )
+                        }
+                        DropdownMenu(
+                            expanded = showFilterMenu,
+                            onDismissRequest = { showFilterMenu = false },
+                        ) {
+                            Text(
+                                text = stringResource(R.string.display_sort_title),
+                                color = TextMuted,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                            )
+                            MediaSort.entries.forEach { sort ->
+                                DropdownMenuItem(
+                                    text = { Text(stringResource(sort.labelRes), color = TextPrimary) },
+                                    onClick = {
+                                        onSortOrderChange(sort)
+                                        showFilterMenu = false
+                                    },
+                                    trailingIcon = {
+                                        if (sort == sortOrder) {
+                                            Icon(Icons.Rounded.Check, contentDescription = null, tint = TextPrimary)
+                                        }
+                                    },
+                                )
+                            }
+                            HorizontalDivider()
+                            Text(
+                                text = stringResource(R.string.display_grid_title),
+                                color = TextMuted,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                            )
+                            GridSize.entries.forEach { size ->
+                                DropdownMenuItem(
+                                    text = { Text(stringResource(size.labelRes), color = TextPrimary) },
+                                    onClick = {
+                                        onGridSizeChange(size)
+                                        showFilterMenu = false
+                                    },
+                                    trailingIcon = {
+                                        if (size == gridSize) {
+                                            Icon(Icons.Rounded.Check, contentDescription = null, tint = TextPrimary)
+                                        }
+                                    },
+                                )
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -1616,6 +1769,7 @@ private fun FlyInFolderTile(
     onToggleSelect: (MediaFolder) -> Unit,
     onLongSelect: (MediaFolder) -> Unit,
     onClick: (Rect) -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     val density = LocalDensity.current
     var targetRect by remember { mutableStateOf(Rect.Zero) }
@@ -1631,7 +1785,7 @@ private fun FlyInFolderTile(
         isSelectedOverride = isSelected,
         onToggleSelect = onToggleSelect,
         onLongSelect = onLongSelect,
-        modifier = Modifier
+        modifier = modifier
             .onGloballyPositioned { coordinates ->
                 if (targetRect == Rect.Zero || phase.value < 1f) {
                     targetRect = coordinates.boundsInWindow()

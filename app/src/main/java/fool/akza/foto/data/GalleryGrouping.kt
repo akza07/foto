@@ -96,7 +96,7 @@ internal fun buildFolders(
                 bucketId = dir,
                 name = dir.substringAfterLast("/").ifBlank { storageDirName },
                 count = bucket.size,
-                previews = sorted.take(3),
+                previews = bucket.sortedByDescending { it.latestTimestamp() }.take(3),
                 dateAdded = sorted.first().dateAdded,
                 safTreeUri = safTrees[key],
                 safDocId = safDocIds[key],
@@ -194,7 +194,7 @@ internal fun buildDirectoryHierarchy(
             bucketId = node.path,
             name = node.name,
             count = descendants.size,
-            previews = descendants.take(3),
+            previews = descendants.sortedByDescending { it.latestTimestamp() }.take(3),
             dateAdded = descendants.firstOrNull()?.dateAdded ?: 0L,
         )
         return GalleryDirectory(folder, children, direct, descendants)
@@ -263,6 +263,12 @@ internal fun isUnderNoMedia(dir: String?, markers: Set<String>): Boolean {
     if (dir == null) return false
     return markers.any { m -> m.isEmpty() || dir == m || dir.startsWith("$m/") }
 }
+
+
+/** Latest activity timestamp for a media item: whichever of added/modified is newer. */
+internal fun MediaItem.latestTimestamp(): Long =
+    if (dateAdded >= lastModified) dateAdded else lastModified
+
 
 /** Ordering for media within a folder. */
 internal fun itemComparator(sort: MediaSort): Comparator<MediaItem> = when (sort) {
