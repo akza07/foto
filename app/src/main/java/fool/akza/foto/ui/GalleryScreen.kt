@@ -3,6 +3,8 @@ package fool.akza.foto.ui
 import android.net.Uri
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.togetherWith
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
@@ -1032,7 +1034,7 @@ fun GalleryScreen(
                 !showSettings && !showSearch,
         )
 
-        AnimatedVisibility(
+        androidx.compose.animation.AnimatedVisibility(
             visible = showSettings,
             enter = slideInHorizontally(initialOffsetX = { it }) + fadeIn(),
             exit = slideOutHorizontally(targetOffsetX = { it }) + fadeOut(),
@@ -1050,7 +1052,7 @@ fun GalleryScreen(
             )
         }
 
-        AnimatedVisibility(
+        androidx.compose.animation.AnimatedVisibility(
             visible = showSearch,
             enter = slideInHorizontally(initialOffsetX = { it }) + fadeIn(),
             exit = slideOutHorizontally(targetOffsetX = { it }) + fadeOut(),
@@ -1320,7 +1322,11 @@ private fun MainGalleryGrid(
                     .padding(horizontal = 20.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                if (selection.active) {
+                AnimatedContent(
+                    targetState = selection.active,
+                    transitionSpec = { fadeIn(tween(180)) togetherWith fadeOut(tween(180)) },
+                ) { isSelecting ->
+                if (isSelecting) {
                     IconButton(onClick = onExitSelection) {
                         Icon(
                             imageVector = Icons.Outlined.Close,
@@ -1435,6 +1441,7 @@ private fun MainGalleryGrid(
                             modifier = Modifier.width(24.dp),
                         )
                     }
+                }
                 }
             }
         },
@@ -1940,16 +1947,23 @@ private fun FolderTile(
                 modifier = Modifier.onGloballyPositioned { stackRect = it.boundsInWindow() },
             )
             // Selection badge (top-left), shown in selection mode; reflects state.
-            if (isSelecting) {
-                SelectionBadge(
-                    selected = isSelected,
-                    modifier = Modifier
-                        .align(Alignment.TopStart)
-                        .padding(8.dp)
-                        .zIndex(2f),
-                )
+            androidx.compose.animation.AnimatedVisibility(
+                visible = isSelecting,
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .padding(8.dp)
+                    .zIndex(2f),
+                enter = fadeIn(tween(150)),
+                exit = fadeOut(tween(150)),
+            ) {
+                SelectionBadge(selected = isSelected)
             }
-            if (isSelecting && !isSelected) {
+            androidx.compose.animation.AnimatedVisibility(
+                visible = isSelecting && !isSelected,
+                modifier = Modifier.fillMaxSize(),
+                enter = fadeIn(tween(150)),
+                exit = fadeOut(tween(150)),
+            ) {
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
@@ -2107,17 +2121,24 @@ internal fun ImageTile(
             )
         }
         // Selection badge (top-left), shown in selection mode; reflects state.
-        if (isSelecting) {
-            SelectionBadge(
-                selected = isSelected,
-                modifier = Modifier
-                    .align(Alignment.TopStart)
-                    .padding(8.dp)
-                    .zIndex(2f),
-            )
+        androidx.compose.animation.AnimatedVisibility(
+            visible = isSelecting,
+            modifier = Modifier
+                .align(Alignment.TopStart)
+                .padding(8.dp)
+                .zIndex(2f),
+            enter = fadeIn(tween(150)),
+            exit = fadeOut(tween(150)),
+        ) {
+            SelectionBadge(selected = isSelected)
         }
         // Dimmed overlay when selection mode is active but this item isn't chosen.
-        if (isSelecting && !isSelected) {
+        androidx.compose.animation.AnimatedVisibility(
+            visible = isSelecting && !isSelected,
+            modifier = Modifier.fillMaxSize(),
+            enter = fadeIn(tween(150)),
+            exit = fadeOut(tween(150)),
+        ) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
