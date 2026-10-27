@@ -61,16 +61,6 @@ fun mediaCollectionUri(isVideo: Boolean, id: Long): Uri {
     return ContentUris.withAppendedId(collection, id)
 }
 
-/** Consent sender that permanently deletes [items] (API 30+), or null. */
-fun deleteConsentSender(context: Context, items: List<MediaItem>): android.content.IntentSender? {
-    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return null
-    val uris = items.filter { it.id != 0L }.map { mediaCollectionUri(it.isVideo, it.id) }
-    if (uris.isEmpty()) return null
-    return runCatching {
-        MediaStore.createDeleteRequest(context.contentResolver, uris).intentSender
-    }.getOrNull()
-}
-
 object MediaRepository {
 
     // Bound for recursive SAF tree browsing to keep load times sane.

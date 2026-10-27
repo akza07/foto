@@ -41,6 +41,7 @@
     <string name="storage_emptying_trash">Emptying…</string>
     <string name="storage_checking_trash">Checking…</string>
     <string name="storage_trash_empty">Trash is empty</string>
+    <string name="storage_trash_unsupported">Android trash needs Android 11 or newer</string>
     <plurals name="trash_summary">
         <item quantity="one">%1$d · %2$s</item>
         <item quantity="other">%1$d · %2$s</item>
@@ -158,8 +159,8 @@
     <string name="error_copy">Couldn\'t copy</string>
     <string name="error_move">Couldn\'t move</string>
     <string name="moved_partial">Moved %1$d, copied %2$d (couldn\'t remove original)</string>
-    <string name="delete_confirm_message_trash">It will be moved to the trash, where you can undo right away.</string>
-    <string name="delete_confirm_message_undoable">You can undo this right after deleting.</string>
+    <string name="delete_confirm_message_trash">It will be moved to the Android trash, where you can undo right away.</string>
+    <string name="delete_confirm_message_undoable">These files will be deleted permanently.</string>
     <string name="delete_confirm_photo">Delete this photo?</string>
     <string name="delete_confirm_video">Delete this video?</string>
     <plurals name="item_count">

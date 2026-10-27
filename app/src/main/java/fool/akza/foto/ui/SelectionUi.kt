@@ -57,6 +57,16 @@ data class SelectionState(
 /** Number of selection units (folders count as 1 each, loose items as 1 each). */
 val SelectionState.size: Int get() = selected.size + selectedFolders.size + selectedDirectories.size
 
+/**
+ * Number of media items the selection resolves to: a picked album or parent
+ * directory contributes everything it contains, so the count in the app bar
+ * matches what a delete/copy/share will actually act on.
+ */
+val SelectionState.itemCount: Int
+    get() = selected.size +
+        selectedFolders.sumOf { it.count } +
+        selectedDirectories.sumOf { it.folder.count }
+
 /** Floating bottom action bar shown in selection mode with the bulk actions. */
 @Composable
 internal fun SelectionActionBar(

@@ -7,16 +7,21 @@ import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.togetherWith
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.combinedClickable
-import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.awaitLongPressOrCancellation
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -76,8 +81,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.input.pointer.PointerInputChange
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.layout.boundsInWindow
@@ -108,10 +114,10 @@ import fool.akza.foto.data.MediaFolder
 import fool.akza.foto.data.MediaItem
 import fool.akza.foto.data.MediaRepository
 import fool.akza.foto.data.SettingsRepository
+import fool.akza.foto.data.SystemTrash
+import fool.akza.foto.data.mediaCollectionUri
 import fool.akza.foto.data.MediaSort
 import fool.akza.foto.data.GridSize
-import fool.akza.foto.data.TrashEntry
-import fool.akza.foto.data.TrashStore
 import fool.akza.foto.data.canonicalPath
 import fool.akza.foto.data.buildDirectoryHierarchy
 import fool.akza.foto.data.previewStamp
@@ -177,6 +183,14 @@ private fun collapsedOffsetDp(index: Int): Pair<Float, Float> = when (index) {
  */
 private fun MediaItem.isSuppressed(uris: Set<Uri>, paths: Set<String>): Boolean =
     uri in uris || (canonicalPath()?.let { it in paths } == true)
+
+/**
+ * URI the platform's trash/delete requests accept. MediaStore requests only
+ * accept URIs from the item-specific collections (Images/Video), never the
+ * generic Files collection, and SAF documents are not MediaStore rows at all.
+ */
+private fun MediaItem.trashRequestUri(): Uri =
+    if (safTreeUri == null && id != 0L) mediaCollectionUri(isVideo, id) else uri
 
 @Composable
 fun GalleryScreen(
@@ -430,15 +444,26 @@ fun GalleryScreen(
     }
 
     // Glide selection: adds an item/folder/directory to the current selection
-    // without toggling already-selected entries off (used while dragging).
+    // without toggling already-selected entries off (used while dragging), and
+    // ticks the haptics engine once per newly covered tile so the gesture is felt
+    // rather than only seen.
+    val glideHaptics = LocalHapticFeedback.current
+    val glideTick = { before: Int ->
+        if (selection.itemCount > before) {
+            glideHaptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+        }
+    }
     val glideSelectItem = { item: MediaItem ->
+        val before = selection.itemCount
         selection = if (selection.active) {
             if (item in selection.selected) selection else selection.copy(selected = selection.selected + item)
         } else {
             SelectionState(active = true, selected = listOf(item))
         }
+        glideTick(before)
     }
     val glideSelectFolder = { folder: MediaFolder ->
+        val before = selection.itemCount
         val directory = findDirectory(folder.bucketId)
         selection = if (selection.active) {
             if (directory != null) {
@@ -451,6 +476,7 @@ fun GalleryScreen(
             if (directory != null) SelectionState(active = true, selectedDirectories = listOf(directory))
             else SelectionState(active = true, selectedFolders = listOf(folder))
         }
+        glideTick(before)
     }
 
     // BackHandler: selection mode owns the back button.
@@ -519,21 +545,20 @@ fun GalleryScreen(
         }
     }
 
-    // ── Delete: move into Foto's own trash ────────────────────────────────
-    // A deleted file is first copied into the app-private trash ([TrashStore]),
-    // then its original is removed. Deletes are isolated from Android's system
-    // trash: the Undo bar and the Trash screen only ever touch our copies.
+    // ── Delete: Android's system trash ─────────────────────────────────────
+    // MediaStore items go through the platform trash (API 30+): the provider
+    // flips the row's trashed state instead of this app copying every byte, so
+    // a delete costs a round-trip rather than a full file copy — and the file
+    // is still recoverable from the system trash even if Foto is uninstalled.
+    // SAF documents have no trash, so they are deleted outright.
     val scope = rememberCoroutineScope()
-    // MediaStore items whose original still needs a system delete consent.
+    // Batches waiting on the consent dialog opened by [consentLauncher].
+    var pendingTrashItems by remember { mutableStateOf<List<MediaItem>>(emptyList()) }
+    var pendingRestoreItems by remember { mutableStateOf<List<MediaItem>>(emptyList()) }
+    // API 29 has no system trash; its consent is per item (RecoverableSecurityException).
     var pendingDeleteItems by remember { mutableStateOf<List<MediaItem>>(emptyList()) }
-    var pendingDeleteEntries by remember {
-        mutableStateOf<Map<android.net.Uri, TrashEntry>>(emptyMap())
-    }
-    // True when the in-flight consent covers the whole batch (API 30+); false for
-    // API 29's per-item RecoverableSecurityException flow.
-    var consentCoversAll by remember { mutableStateOf(false) }
-    // Trash entries the Undo bar can restore.
-    var undoTrashEntries by remember { mutableStateOf<List<TrashEntry>?>(null) }
+    // Items the Undo bar can put back into the library.
+    var undoItems by remember { mutableStateOf<List<MediaItem>?>(null) }
     var undoKey by remember { mutableStateOf(0) }
     // Sentinel consumed by the LaunchedEffect below to launch the next API 29
     // consent dialog without the launcher referencing itself.
@@ -590,41 +615,24 @@ fun GalleryScreen(
         reload()
     }
 
-    // Lifts this session's delete suppression for restored items. TrashStore
-    // restores to the same canonical path (and a new MediaStore URI), so the
-    // path-based suppression would otherwise hide the restored file forever.
-    val clearSuppression: (List<TrashEntry>) -> Unit = { entries ->
-        val uris = entries.mapNotNull { entry ->
-            runCatching { Uri.parse(entry.originalUri) }.getOrNull()
-        }.toSet()
-        val paths = entries.mapNotNull { entry ->
-            entry.relativePath?.let { rel ->
-                (rel.trimEnd('/') + "/" + entry.name).lowercase()
-            }
-        }.toSet()
+    // Lifts this session's delete suppression. A trashed item keeps its URI and
+    // path, so the suppression would otherwise hide the restored file forever.
+    val clearSuppression: (List<MediaItem>) -> Unit = { items ->
+        val uris = items.map { it.uri }.toSet()
+        val paths = items.mapNotNull { it.canonicalPath() }.toSet()
         if (uris.isNotEmpty()) removedUris = removedUris - uris
         if (paths.isNotEmpty()) removedPaths = removedPaths - paths
     }
 
-    // Arms the Undo bar with the entries whose originals were removed.
-    val finishTrashDelete: (Map<android.net.Uri, TrashEntry>, List<MediaItem>) -> Unit =
-        { entries, deletedItems ->
-            removeDeletedBatch(deletedItems)
-            val deletedUris = deletedItems.map { it.uri }.toSet()
-            val restored = entries.filterKeys { it in deletedUris }.values.toList()
-            if (restored.isNotEmpty()) {
-                undoTrashEntries = restored
-                undoKey += 1
-            }
+    // Puts restored items back: lifts suppression, slides the viewer back to the
+    // item it was showing, and reloads so counts and covers catch up.
+    val finishRestore: (List<MediaItem>) -> Unit = { items ->
+        clearSuppression(items)
+        viewerUndo?.let { undo ->
+            if (items.any { it.uri == undo.item.uri }) restoreViewerItem(undo)
         }
-
-    // Drops trash copies we made for a delete that didn't go through.
-    val rollbackTrash: (Map<android.net.Uri, TrashEntry>) -> Unit = { entries ->
-        scope.launch {
-            withContext(Dispatchers.IO) {
-                entries.values.forEach { TrashStore.remove(context, it) }
-            }
-        }
+        viewerUndo = null
+        reload()
     }
 
     // Tells the user a delete did not complete (these paths used to be silent).
@@ -634,13 +642,10 @@ fun GalleryScreen(
         toastMessage = UiText.Res(R.string.error_delete)
     }
 
-    // API 29 drives MediaStore deletes through a per-item consent dialog. Walk
-    // [queue] calling MediaRepository.delete: direct deletes are recorded,
-    // failures roll back their trash copy, and the first item the system wants
-    // the user to approve arms the launcher. A successful direct delete must be
-    // recorded — treating it as "no consent path" would drop the file and stop
-    // the batch.
-    suspend fun runApi29Deletes(queue: List<MediaItem>, entries: Map<Uri, TrashEntry>) {
+    // API 29 only: MediaStore requires a per-item RecoverableSecurityException
+    // consent, and there is no trash to fall back on. Walk [queue] deleting
+    // directly; the first item that needs approval arms the launcher.
+    suspend fun runApi29Deletes(queue: List<MediaItem>) {
         var sender: IntentSender? = null
         val round = driveDeleteQueue(queue) { item ->
             when (val result = MediaRepository.delete(context, item)) {
@@ -653,22 +658,17 @@ fun GalleryScreen(
             }
         }
         if (round.failed.isNotEmpty()) {
-            round.failed.forEach { item ->
-                entries[item.uri]?.let { rollbackTrash(mapOf(item.uri to it)) }
-            }
             reportDeleteFailure()
         }
         if (round.deleted.isNotEmpty()) {
-            finishTrashDelete(entries, round.deleted)
+            removeDeletedBatch(round.deleted)
         }
         val pendingSender = sender
         if (pendingSender != null) {
             pendingDeleteItems = round.pending
-            pendingDeleteEntries = entries
             nextConsentLaunch = androidx.activity.result.IntentSenderRequest.Builder(pendingSender).build()
         } else {
             pendingDeleteItems = emptyList()
-            pendingDeleteEntries = emptyMap()
             clearSelection()
         }
     }
@@ -676,37 +676,38 @@ fun GalleryScreen(
     val consentLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartIntentSenderForResult()
     ) { result ->
-        val queue = pendingDeleteItems
-        val entries = pendingDeleteEntries
-        val ok = result.resultCode == android.app.Activity.RESULT_OK
-        if (queue.isEmpty()) {
-            clearSelection()
-            return@rememberLauncherForActivityResult
-        }
-        if (!ok) {
-            // Denied: drop only the copies still waiting on this consent. Copies
-            // for items already deleted before the prompt must be preserved.
-            val pending = entries.filterKeys { uri -> queue.any { it.uri == uri } }
-            pendingDeleteItems = emptyList()
-            pendingDeleteEntries = emptyMap()
-            rollbackTrash(pending)
-            reportDeleteFailure()
-            clearSelection()
-            return@rememberLauncherForActivityResult
-        }
-        if (consentCoversAll) {
-            // API 30+: the system already deleted the whole batch.
-            pendingDeleteItems = emptyList()
-            pendingDeleteEntries = emptyMap()
-            scope.launch {
-                finishTrashDelete(entries, queue)
+        val trashing = pendingTrashItems
+        val restoring = pendingRestoreItems
+        val api29 = pendingDeleteItems
+        pendingTrashItems = emptyList()
+        pendingRestoreItems = emptyList()
+        pendingDeleteItems = emptyList()
+        val approved = result.resultCode == android.app.Activity.RESULT_OK
+        if (!approved) {
+            viewerDeleteInFlightUri = null
+            if (trashing.isNotEmpty() || api29.isNotEmpty()) {
+                reportDeleteFailure()
                 clearSelection()
             }
-        } else {
+            return@rememberLauncherForActivityResult
+        }
+        when {
+            // The provider has already moved these into the system trash.
+            trashing.isNotEmpty() -> {
+                removeDeletedBatch(trashing)
+                undoItems = trashing
+                undoKey += 1
+                clearSelection()
+            }
+            // Restore: the provider has untrashed them in place.
+            restoring.isNotEmpty() -> {
+                finishRestore(restoring)
+                toastKey += 1
+                toastMessage = UiText.Res(R.string.restored)
+            }
             // API 29: the consent applied to the item at the head of the queue.
-            // Continue through the remaining items; the next one that still
-            // needs consent re-arms the launcher.
-            scope.launch { runApi29Deletes(queue, entries) }
+            api29.isNotEmpty() -> scope.launch { runApi29Deletes(api29) }
+            else -> clearSelection()
         }
     }
 
@@ -717,105 +718,80 @@ fun GalleryScreen(
         }
     }
 
-    // Restores the last deleted items from Foto's trash.
+    // Undo puts the last trashed batch back through the system (API 30+).
     val undoTrash: () -> Unit = {
-        val entries = undoTrashEntries
-        if (entries != null) {
-            undoTrashEntries = null
+        val items = undoItems
+        if (items != null) {
+            undoItems = null
             scope.launch {
-                withContext(Dispatchers.IO) {
-                    entries.forEach { TrashStore.restore(context, it) }
+                val sender = SystemTrash.restoreRequest(context, items.map { it.trashRequestUri() })
+                if (sender != null) {
+                    pendingRestoreItems = items
+                    consentLauncher.launch(
+                        androidx.activity.result.IntentSenderRequest.Builder(sender).build(),
+                    )
+                } else {
+                    viewerUndo = null
                 }
-                // Let the restored items reappear before reloading.
-                clearSuppression(entries)
-                // Slide the viewer back to the restored item, if it was deleted there.
-                viewerUndo?.let { restoreViewerItem(it) }
-                viewerUndo = null
-                // The open album owns its own list; refresh it too.
-                reload()
-                toastKey += 1
-                toastMessage = UiText.Res(R.string.restored)
             }
         }
     }
 
     // ── Delete ──────────────────────────────────────────────────────────────
-    // Copies each item into the app-private trash, then removes its original.
-    // MediaStore items on API 30+ also need a one-shot system delete consent for
-    // the originals; that consent is what the launcher above resolves.
+    // MediaStore items go to the system trash (no copy, no per-item query);
+    // SAF documents are removed outright because the platform has no trash for
+    // them. Nothing here touches the UI thread.
     val trashAndDelete: (List<MediaItem>) -> Unit = { items ->
-        scope.launch {
-            // 1. Copy the bytes into our trash first, so nothing is lost.
-            val entries: Map<android.net.Uri, TrashEntry> = withContext(Dispatchers.IO) {
-                items.mapNotNull { item -> TrashStore.add(context, item)?.let { item.uri to it } }
-                    .toMap()
+        if (items.isEmpty()) {
+            clearSelection()
+        } else scope.launch {
+            val saf = items.filter { android.provider.DocumentsContract.isDocumentUri(context, it.uri) }
+            val media = items.filterNot { android.provider.DocumentsContract.isDocumentUri(context, it.uri) }
+            if (saf.isNotEmpty()) {
+                val deleted = withContext(Dispatchers.IO) {
+                    saf.filter { MediaRepository.delete(context, it) == DeleteResult.Deleted }
+                }
+                if (deleted.isNotEmpty()) removeDeletedBatch(deleted)
+                if (deleted.size != saf.size) reportDeleteFailure()
             }
-            val trashed = items.filter { entries.containsKey(it.uri) }
-            if (trashed.isEmpty()) {
-                toastKey += 1
-                toastMessage = UiText.Res(R.string.error_delete)
+            if (media.isEmpty()) {
+                clearSelection()
                 return@launch
             }
-
-            // 2. Remove the originals.
-            val saf = trashed.filter { android.provider.DocumentsContract.isDocumentUri(context, it.uri) }
-            val media = trashed.filterNot { it in saf }
-            val deleted = mutableSetOf<android.net.Uri>()
-            saf.forEach { item ->
-                if (MediaRepository.delete(context, item) == DeleteResult.Deleted) deleted += item.uri
-            }
-            val needsConsent = mutableListOf<MediaItem>()
-            media.forEach { item ->
-                when (MediaRepository.delete(context, item)) {
-                    DeleteResult.Deleted -> deleted += item.uri
-                    is DeleteResult.Consent, DeleteResult.Failed -> needsConsent += item
-                }
-            }
-
-            if (deleted.isNotEmpty()) {
-                finishTrashDelete(entries, trashed.filter { it.uri in deleted })
-            }
-
-            if (needsConsent.isEmpty()) {
-                // Nothing pending: drop copies whose original couldn't be removed,
-                // and surface the failure instead of silently doing nothing.
-                val unresolved = entries.filterKeys { it !in deleted }
-                if (unresolved.isNotEmpty()) {
-                    rollbackTrash(unresolved)
-                    reportDeleteFailure()
-                }
-                clearSelection()
-            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                val sender = fool.akza.foto.data.deleteConsentSender(context, needsConsent)
+            if (SystemTrash.supported) {
+                // One system prompt covers the whole batch; the provider does
+                // the work, so large videos trash as fast as small photos.
+                val sender = SystemTrash.trashRequest(context, media.map { it.trashRequestUri() })
                 if (sender != null) {
-                    pendingDeleteItems = needsConsent
-                    pendingDeleteEntries = entries
-                    consentCoversAll = true
+                    pendingTrashItems = media
                     consentLauncher.launch(
                         androidx.activity.result.IntentSenderRequest.Builder(sender).build(),
                     )
                 } else {
-                    rollbackTrash(entries.filterKeys { it in needsConsent.map { m -> m.uri } })
                     reportDeleteFailure()
                     clearSelection()
                 }
             } else {
-                // API 29: per-item RecoverableSecurityException consent. The
-                // driver deletes what it can, records those, and arms the
-                // launcher for the first item that still needs consent.
-                pendingDeleteEntries = entries
-                consentCoversAll = false
-                runApi29Deletes(needsConsent, entries)
+                runApi29Deletes(media)
             }
         }
     }
-
     val requestDelete = { item: MediaItem ->
-        // This is only used by the full viewer. Lock it before the coroutine
-        // copies bytes or asks Android for delete consent, so its current page
-        // cannot diverge from the item being deleted.
+        // This is only used by the full viewer. Lock it before the delete starts
+        // so its current page cannot diverge from the item being deleted.
         viewerDeleteInFlightUri = item.uri
         trashAndDelete(listOf(item))
+    }
+
+    // True when the in-app confirm dialog adds information the system won't.
+    // The provider's trash prompt already lists the files and asks for approval,
+    // so asking twice only makes a delete feel slow; a permanent delete (SAF
+    // documents, or a device without the system trash) still needs our dialog.
+    val needsAppConfirm: (List<MediaItem>) -> Boolean = { items ->
+        appSettings.confirmBeforeDelete && items.any { item ->
+            !SystemTrash.supported ||
+                android.provider.DocumentsContract.isDocumentUri(context, item.uri)
+        }
     }
 
     // ── Selection resolution ────────────────────────────────────────────────
@@ -1004,9 +980,7 @@ fun GalleryScreen(
             onGridSizeChange = { SettingsRepository.setGridSize(it) },
             selection = selection,
             onToggleSelect = { if (directoryStack.isEmpty()) toggleSelect(it) },
-            onLongSelect = { if (directoryStack.isEmpty()) toggleSelect(it) },
             onToggleFolder = { if (directoryStack.isEmpty()) toggleSelectFolder(it) },
-            onLongSelectFolder = { if (directoryStack.isEmpty()) toggleSelectFolder(it) },
             onSelectAll = {
                 val loose = visibleContent?.looseItems.orEmpty()
                 val folders = rootGalleryContent?.folders.orEmpty()
@@ -1091,7 +1065,6 @@ fun GalleryScreen(
                     minTileSize = appSettings.gridSize.minTileDp.dp,
                     selection = selection,
                     onToggleSelect = { if (isTopLevel) toggleSelect(it) },
-                    onLongSelect = { if (isTopLevel) toggleSelect(it) },
                     onSelectAll = { items ->
                         if (isTopLevel) {
                             selection = if (selection.active && items.isNotEmpty() &&
@@ -1150,7 +1123,7 @@ fun GalleryScreen(
                     // Video deletes always confirm: the wheel's Delete sector is
                     // easy to land on mid-gesture, so the setting never skips it.
                     if (pendingViewerRemoval == null && viewerDeleteInFlightUri == null) {
-                        if (appSettings.confirmBeforeDelete || it.isVideo) {
+                        if (it.isVideo || needsAppConfirm(listOf(it))) {
                             pendingDeleteItem = it
                         } else {
                             requestDelete(it)
@@ -1188,16 +1161,21 @@ fun GalleryScreen(
         }
 
         // Multi-select action bar + selection mode state.
-        if (isSelecting) {
+        AnimatedVisibility(
+            visible = isSelecting,
+            enter = slideInVertically(tween(220)) { it / 2 } + fadeIn(tween(160)),
+            exit = slideOutVertically(tween(160)) { it / 2 } + fadeOut(tween(120)),
+            modifier = Modifier.align(Alignment.BottomCenter),
+        ) {
             SelectionActionBar(
-                count = selectedCount,
+                count = selection.itemCount,
                 onClose = clearSelection,
                 onDelete = {
                     if (selectedCount > 0) {
                         batchDeleteScope.launch {
                             val items = resolveSelectionItems()
                             if (items.isNotEmpty()) {
-                                if (appSettings.confirmBeforeDelete) {
+                                if (needsAppConfirm(items)) {
                                     pendingBatchDelete = items
                                 } else {
                                     requestBatchDelete(items)
@@ -1210,7 +1188,6 @@ fun GalleryScreen(
                 onCopy = launchCopy,
                 onMove = launchMove,
                 onShare = shareSelection,
-                modifier = Modifier.align(Alignment.BottomCenter),
             )
         }
 
@@ -1248,12 +1225,12 @@ fun GalleryScreen(
             Toast(message = message.resolve(), key = toastKey, onDismiss = { toastMessage = null })
         }
 
-        if (undoTrashEntries != null) {
+        if (undoItems != null) {
             UndoBar(
                 key = undoKey,
                 onUndo = undoTrash,
                 onDismiss = {
-                    undoTrashEntries = null
+                    undoItems = null
                     viewerUndo = null
                 },
             )
@@ -1275,6 +1252,162 @@ fun GalleryScreen(
     }
 }
 
+/** Top bar while items are selected: close, live count, select-all. */
+@Composable
+private fun SelectionHeader(
+    count: Int,
+    onExitSelection: () -> Unit,
+    onSelectAll: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier = modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        IconButton(onClick = onExitSelection) {
+            Icon(
+                imageVector = Icons.Outlined.Close,
+                contentDescription = stringResource(R.string.selection_exit),
+                tint = TextPrimary,
+            )
+        }
+        Spacer(Modifier.width(4.dp))
+        Text(
+            text = pluralStringResource(R.plurals.selection_count, count, count),
+            color = TextPrimary,
+            fontSize = 16.sp,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+        )
+        IconButton(onClick = onSelectAll) {
+            Icon(
+                imageVector = Icons.Outlined.SelectAll,
+                contentDescription = stringResource(R.string.select_all),
+                tint = TextPrimary,
+            )
+        }
+    }
+}
+
+/** Top bar while browsing: title plus filter/sort, search and settings. */
+@Composable
+private fun AlbumsHeader(
+    sortOrder: MediaSort,
+    gridSize: GridSize,
+    onSortOrderChange: (MediaSort) -> Unit,
+    onGridSizeChange: (GridSize) -> Unit,
+    onSearchClick: () -> Unit,
+    onSettingsClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier = modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = stringResource(R.string.albums),
+            color = TextPrimary,
+            fontSize = 28.sp,
+            fontWeight = FontWeight.SemiBold,
+            letterSpacing = (-0.5).sp,
+            maxLines = 1,
+            modifier = Modifier.weight(1f),
+        )
+        FilterMenuButton(
+            sortOrder = sortOrder,
+            gridSize = gridSize,
+            onSortOrderChange = onSortOrderChange,
+            onGridSizeChange = onGridSizeChange,
+        )
+        IconButton(onClick = onSearchClick) {
+            Icon(
+                imageVector = Icons.Outlined.Search,
+                contentDescription = stringResource(R.string.action_search),
+                tint = TextPrimary,
+                modifier = Modifier.width(24.dp),
+            )
+        }
+        IconButton(onClick = onSettingsClick) {
+            Icon(
+                imageVector = Icons.Outlined.Settings,
+                contentDescription = stringResource(R.string.action_settings),
+                tint = TextPrimary,
+                modifier = Modifier.width(24.dp),
+            )
+        }
+    }
+}
+
+/** Filter icon + dropdown shared by the Albums and album headers. */
+@Composable
+private fun FilterMenuButton(
+    sortOrder: MediaSort,
+    gridSize: GridSize,
+    onSortOrderChange: (MediaSort) -> Unit,
+    onGridSizeChange: (GridSize) -> Unit,
+) {
+    var showMenu by remember { mutableStateOf(false) }
+    Box {
+        IconButton(onClick = { showMenu = true }) {
+            Icon(
+                imageVector = Icons.Outlined.FilterList,
+                contentDescription = stringResource(R.string.action_filter),
+                tint = TextPrimary,
+                modifier = Modifier.width(24.dp),
+            )
+        }
+        DropdownMenu(
+            expanded = showMenu,
+            onDismissRequest = { showMenu = false },
+        ) {
+            MenuSectionLabel(stringResource(R.string.display_sort_title))
+            MediaSort.entries.forEach { sort ->
+                DropdownMenuItem(
+                    text = { Text(stringResource(sort.labelRes), color = TextPrimary) },
+                    onClick = {
+                        onSortOrderChange(sort)
+                        showMenu = false
+                    },
+                    trailingIcon = {
+                        if (sort == sortOrder) {
+                            Icon(Icons.Rounded.Check, contentDescription = null, tint = TextPrimary)
+                        }
+                    },
+                )
+            }
+            HorizontalDivider()
+            MenuSectionLabel(stringResource(R.string.display_grid_title))
+            GridSize.entries.forEach { size ->
+                DropdownMenuItem(
+                    text = { Text(stringResource(size.labelRes), color = TextPrimary) },
+                    onClick = {
+                        onGridSizeChange(size)
+                        showMenu = false
+                    },
+                    trailingIcon = {
+                        if (size == gridSize) {
+                            Icon(Icons.Rounded.Check, contentDescription = null, tint = TextPrimary)
+                        }
+                    },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun MenuSectionLabel(text: String) {
+    Text(
+        text = text,
+        color = TextMuted,
+        fontSize = 12.sp,
+        fontWeight = FontWeight.SemiBold,
+        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+    )
+}
+
 @Composable
 private fun MainGalleryGrid(
     content: GalleryContent?,
@@ -1285,9 +1418,7 @@ private fun MainGalleryGrid(
     minTileSize: Dp,
     selection: SelectionState,
     onToggleSelect: (MediaItem) -> Unit,
-    onLongSelect: (MediaItem) -> Unit,
     onToggleFolder: (MediaFolder) -> Unit,
-    onLongSelectFolder: (MediaFolder) -> Unit,
     onSelectAll: () -> Unit,
     onExitSelection: () -> Unit,
     onTilePositioned: (Uri, Rect) -> Unit,
@@ -1303,9 +1434,27 @@ private fun MainGalleryGrid(
 ) {
     val gridState = rememberLazyGridState()
     val currentContent by rememberUpdatedState(content)
-    val currentSelection by rememberUpdatedState(selection)
     val glideSelectItemState by rememberUpdatedState(onGlideSelectItem)
     val glideSelectFolderState by rememberUpdatedState(onGlideSelectFolder)
+    // Window-space bounds of every composed tile, keyed the same way as the
+    // LazyGrid keys. Hit-testing against real bounds keeps glide selection exact
+    // regardless of content padding, scroll offset and grid spacing.
+    val tileBounds = remember { mutableMapOf<String, Rect>() }
+    val haptics = LocalHapticFeedback.current
+    var gridCoordinates by remember { mutableStateOf<LayoutCoordinates?>(null) }
+    val glideAt: (Offset) -> Unit = glideAt@{ position ->
+        val key = hitTestTile(gridCoordinates, tileBounds, position) ?: return@glideAt
+        val content = currentContent ?: return@glideAt
+        when {
+            key.startsWith("folder:") -> content.folders
+                .firstOrNull { "folder:${it.bucketId}" == key }
+                ?.let(glideSelectFolderState)
+            key.startsWith("item:") -> content.looseItems
+                .firstOrNull { "item:${it.uri}" == key }
+                ?.let(glideSelectItemState)
+        }
+    }
+    val glidePosition by rememberUpdatedState(glideAt)
 
     // The grid fills the whole screen and the header overlays it, so content
     // scrolls underneath the frosted bar (same treatment as the album view).
@@ -1322,126 +1471,34 @@ private fun MainGalleryGrid(
                     .padding(horizontal = 20.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
+                // Cross-fades between browse and selection modes. The weight is
+                // on AnimatedContent — not on the children — because its content
+                // is not laid out by the Row itself.
                 AnimatedContent(
                     targetState = selection.active,
-                    transitionSpec = { fadeIn(tween(180)) togetherWith fadeOut(tween(180)) },
+                    modifier = Modifier.weight(1f),
+                    transitionSpec = {
+                        (fadeIn(tween(180)) + slideInHorizontally(tween(220)) { it / 8 }) togetherWith
+                            fadeOut(tween(120))
+                    },
+                    label = "appBarMode",
                 ) { isSelecting ->
-                if (isSelecting) {
-                    IconButton(onClick = onExitSelection) {
-                        Icon(
-                            imageVector = Icons.Outlined.Close,
-                            contentDescription = stringResource(R.string.selection_exit),
-                            tint = TextPrimary,
+                    if (isSelecting) {
+                        SelectionHeader(
+                            count = selection.itemCount,
+                            onExitSelection = onExitSelection,
+                            onSelectAll = onSelectAll,
+                        )
+                    } else {
+                        AlbumsHeader(
+                            sortOrder = sortOrder,
+                            gridSize = gridSize,
+                            onSortOrderChange = onSortOrderChange,
+                            onGridSizeChange = onGridSizeChange,
+                            onSearchClick = onSearchClick,
+                            onSettingsClick = onSettingsClick,
                         )
                     }
-                    Spacer(Modifier.width(4.dp))
-                    Text(
-                        text = pluralStringResource(R.plurals.selection_count, selection.size, selection.size),
-                        color = TextPrimary,
-                        fontSize = 16.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        modifier = Modifier.weight(1f),
-                    )
-                    IconButton(onClick = onSelectAll) {
-                        Icon(
-                            imageVector = Icons.Outlined.SelectAll,
-                            contentDescription = stringResource(R.string.select_all),
-                            tint = TextPrimary,
-                        )
-                    }
-                } else {
-                    Text(
-                        text = stringResource(R.string.albums),
-                        color = TextPrimary,
-                        fontSize = 28.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        letterSpacing = (-0.5).sp,
-                        modifier = Modifier.weight(1f),
-                    )
-                    var showFilterMenu by remember { mutableStateOf(false) }
-                    Box {
-                        IconButton(onClick = { showFilterMenu = true }) {
-                            Icon(
-                                imageVector = Icons.Outlined.FilterList,
-                                contentDescription = stringResource(R.string.action_filter),
-                                tint = TextPrimary,
-                                modifier = Modifier.width(24.dp),
-                            )
-                        }
-                        DropdownMenu(
-                            expanded = showFilterMenu,
-                            onDismissRequest = { showFilterMenu = false },
-                        ) {
-                            Text(
-                                text = stringResource(R.string.display_sort_title),
-                                color = TextMuted,
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-                            )
-                            MediaSort.entries.forEach { sort ->
-                                DropdownMenuItem(
-                                    text = { Text(stringResource(sort.labelRes), color = TextPrimary) },
-                                    onClick = {
-                                        onSortOrderChange(sort)
-                                        showFilterMenu = false
-                                    },
-                                    trailingIcon = {
-                                        if (sort == sortOrder) {
-                                            Icon(
-                                                imageVector = Icons.Rounded.Check,
-                                                contentDescription = null,
-                                                tint = TextPrimary,
-                                            )
-                                        }
-                                    },
-                                )
-                            }
-                            HorizontalDivider()
-                            Text(
-                                text = stringResource(R.string.display_grid_title),
-                                color = TextMuted,
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-                            )
-                            GridSize.entries.forEach { size ->
-                                DropdownMenuItem(
-                                    text = { Text(stringResource(size.labelRes), color = TextPrimary) },
-                                    onClick = {
-                                        onGridSizeChange(size)
-                                        showFilterMenu = false
-                                    },
-                                    trailingIcon = {
-                                        if (size == gridSize) {
-                                            Icon(
-                                                imageVector = Icons.Rounded.Check,
-                                                contentDescription = null,
-                                                tint = TextPrimary,
-                                            )
-                                        }
-                                    },
-                                )
-                            }
-                        }
-                    }
-                    IconButton(onClick = onSearchClick) {
-                        Icon(
-                            imageVector = Icons.Outlined.Search,
-                            contentDescription = stringResource(R.string.action_search),
-                            tint = TextPrimary,
-                            modifier = Modifier.width(24.dp),
-                        )
-                    }
-                    IconButton(onClick = onSettingsClick) {
-                        Icon(
-                            imageVector = Icons.Outlined.Settings,
-                            contentDescription = stringResource(R.string.action_settings),
-                            tint = TextPrimary,
-                            modifier = Modifier.width(24.dp),
-                        )
-                    }
-                }
                 }
             }
         },
@@ -1473,15 +1530,37 @@ private fun MainGalleryGrid(
                 LazyVerticalGrid(
                     state = gridState,
                     columns = GridCells.Adaptive(minSize = minTileSize),
-                    modifier = gridModifier.pointerInput(Unit) {
-                        detectDragGesturesAfterLongPress(
-                            onDragStart = { offset -> glideSelectAt(gridState, currentContent, offset, glideSelectItemState, glideSelectFolderState) },
-                            onDrag = { change: PointerInputChange, _: Offset ->
-                                change.consume()
-                                glideSelectAt(gridState, currentContent, change.position, glideSelectItemState, glideSelectFolderState)
-                            },
-                        )
-                    },
+                    modifier = gridModifier
+                        .onGloballyPositioned { gridCoordinates = it }
+                        .pointerInput(Unit) {
+                            // The grid owns long-press so the gesture is not lost to
+                            // the tile's own click detector: whichever timer fires
+                            // first used to win, so gliding was a race. Here the
+                            // long press selects the tile under the finger and the
+                            // drag that follows keeps adding tiles until release.
+                            awaitEachGesture {
+                                val down = awaitFirstDown(requireUnconsumed = false)
+                                val longPress =
+                                    awaitLongPressOrCancellation(down.id) ?: return@awaitEachGesture
+                                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                glidePosition(longPress.position)
+                                // Keep the gesture for the glide by consuming in the
+                                // Initial pass: the grid's own scroll detector runs
+                                // deeper in the tree (Main pass), so without this a
+                                // fast drag would scroll the grid and cancel us.
+                                var pointerId = longPress.id
+                                while (true) {
+                                    val event = awaitPointerEvent(PointerEventPass.Initial)
+                                    val change = event.changes.firstOrNull { it.id == pointerId }
+                                        ?: event.changes.firstOrNull { it.pressed }
+                                        ?: break
+                                    pointerId = change.id
+                                    if (!change.pressed) break
+                                    change.consume()
+                                    glidePosition(change.position)
+                                }
+                            }
+                        },
                     contentPadding = PaddingValues(
                         start = 12.dp,
                         top = statusBarTop + AppBarHeight + 12.dp,
@@ -1501,9 +1580,9 @@ private fun MainGalleryGrid(
                             folder = folder,
                             selection = selection,
                             onToggleSelect = onToggleFolder,
-                            onLongSelect = onLongSelectFolder,
                             onClick = { rect -> onFolderClick(folder, rect) },
                             modifier = Modifier.animateItem(fadeInSpec = null, fadeOutSpec = null),
+                            onBoundsChanged = { tileBounds["folder:${folder.bucketId}"] = it },
                         )
                     }
                     items(current.looseItems, key = { "item:${it.uri}" }) { item ->
@@ -1511,11 +1590,16 @@ private fun MainGalleryGrid(
                             item = item,
                             selection = selection,
                             onToggleSelect = onToggleSelect,
-                            onLongSelect = onLongSelect,
                             // Deletes reflow the grid instead of jumping.
                             modifier = Modifier.animateItem(fadeInSpec = null, fadeOutSpec = null),
-                            onTilePositioned = onTilePositioned,
-                            onTileDisposed = onTileDisposed,
+                            onTilePositioned = { uri, rect ->
+                                onTilePositioned(uri, rect)
+                                tileBounds["item:$uri"] = rect
+                            },
+                            onTileDisposed = { uri ->
+                                onTileDisposed(uri)
+                                tileBounds.remove("item:$uri")
+                            },
                             onClick = { rect ->
                                 onItemClick(current.looseItems, current.looseItems.indexOf(item), rect)
                             },
@@ -1541,7 +1625,6 @@ private fun AlbumGrid(
     minTileSize: Dp,
     selection: SelectionState,
     onToggleSelect: (MediaItem) -> Unit,
-    onLongSelect: (MediaItem) -> Unit,
     onSelectAll: (List<MediaItem>) -> Unit,
     onExitSelection: () -> Unit,
     onTilePositioned: (Uri, Rect) -> Unit,
@@ -1556,7 +1639,6 @@ private fun AlbumGrid(
 ) {
     val density = LocalDensity.current
     val gridState = rememberLazyGridState()
-    val currentSelection by rememberUpdatedState(selection)
     val glideSelectItemState by rememberUpdatedState(onGlideSelectItem)
     val glideSelectFolderState by rememberUpdatedState(onGlideSelectFolder)
     val glideSelectDirectoryState by rememberUpdatedState(onGlideSelectDirectory)
@@ -1583,6 +1665,22 @@ private fun AlbumGrid(
     // Render the stack previews immediately (same items as the top of the album)
     // so the fly-to-grid animation can start without waiting for the query.
     val displayItems = realItems ?: folder.previews
+    // Window-space tile bounds, keyed like the LazyGrid keys (see MainGalleryGrid).
+    val tileBounds = remember { mutableMapOf<String, Rect>() }
+    val haptics = LocalHapticFeedback.current
+    var gridCoordinates by remember { mutableStateOf<LayoutCoordinates?>(null) }
+    val glideAt: (Offset) -> Unit = glideAt@{ position ->
+        val key = hitTestTile(gridCoordinates, tileBounds, position) ?: return@glideAt
+        when {
+            key.startsWith("directory:") -> childDirectories
+                .firstOrNull { "directory:${it.folder.bucketId}" == key }
+                ?.let(glideSelectDirectoryState)
+            key.startsWith("album:") -> displayItems
+                .firstOrNull { "album:${it.uri}" == key }
+                ?.let(glideSelectItemState)
+        }
+    }
+    val glidePosition by rememberUpdatedState(glideAt)
 
     Column(
         modifier = Modifier
@@ -1609,32 +1707,27 @@ private fun AlbumGrid(
                     modifier = Modifier
                         .fillMaxSize()
                         .hazeSource(state = hazeState)
+                        .onGloballyPositioned { gridCoordinates = it }
                         .pointerInput(Unit) {
-                            detectDragGesturesAfterLongPress(
-                                onDragStart = { offset ->
-                                    glideSelectAtAlbum(
-                                        gridState = gridState,
-                                        childDirectories = childDirectories,
-                                        displayItems = displayItems,
-                                        offset = offset,
-                                        glideSelectItem = glideSelectItemState,
-                                        glideSelectFolder = glideSelectFolderState,
-                                        glideSelectDirectory = glideSelectDirectoryState,
-                                    )
-                                },
-                                onDrag = { change: PointerInputChange, _: Offset ->
+                            // See MainGalleryGrid: one owner for long-press + glide.
+                            awaitEachGesture {
+                                val down = awaitFirstDown(requireUnconsumed = false)
+                                val longPress =
+                                    awaitLongPressOrCancellation(down.id) ?: return@awaitEachGesture
+                                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                glidePosition(longPress.position)
+                                var pointerId = longPress.id
+                                while (true) {
+                                    val event = awaitPointerEvent(PointerEventPass.Initial)
+                                    val change = event.changes.firstOrNull { it.id == pointerId }
+                                        ?: event.changes.firstOrNull { it.pressed }
+                                        ?: break
+                                    pointerId = change.id
+                                    if (!change.pressed) break
                                     change.consume()
-                                    glideSelectAtAlbum(
-                                        gridState = gridState,
-                                        childDirectories = childDirectories,
-                                        displayItems = displayItems,
-                                        offset = change.position,
-                                        glideSelectItem = glideSelectItemState,
-                                        glideSelectFolder = glideSelectFolderState,
-                                        glideSelectDirectory = glideSelectDirectoryState,
-                                    )
-                                },
-                            )
+                                    glidePosition(change.position)
+                                }
+                            }
                         },
                     contentPadding = PaddingValues(
                         start = 12.dp,
@@ -1654,6 +1747,7 @@ private fun AlbumGrid(
                         val selected = selection.selectedDirectories.any {
                             it.folder.bucketId == child.folder.bucketId
                         }
+                        val boundsKey = "directory:${child.folder.bucketId}"
                         if (animate) {
                             FlyInFolderTile(
                                 folder = child.folder,
@@ -1663,9 +1757,9 @@ private fun AlbumGrid(
                                 selection = selection,
                                 isSelected = selected,
                                 onToggleSelect = onToggleFolder,
-                                onLongSelect = onToggleFolder,
                                 onClick = { rect -> onDirectoryClick(child, rect) },
                                 modifier = Modifier.animateItem(fadeInSpec = null, fadeOutSpec = null),
+                                onBoundsChanged = { tileBounds[boundsKey] = it },
                             )
                         } else {
                             FolderTile(
@@ -1673,9 +1767,9 @@ private fun AlbumGrid(
                                 selection = selection,
                                 isSelectedOverride = selected,
                                 onToggleSelect = onToggleFolder,
-                                onLongSelect = onToggleFolder,
                                 onClick = { rect -> onDirectoryClick(child, rect) },
                                 modifier = Modifier.animateItem(fadeInSpec = null, fadeOutSpec = null),
+                                onBoundsChanged = { tileBounds[boundsKey] = it },
                             )
                         }
                     }
@@ -1691,11 +1785,16 @@ private fun AlbumGrid(
                                 phase = phase,
                                 selection = selection,
                                 onToggleSelect = onToggleSelect,
-                                onLongSelect = onLongSelect,
-                                // Deletes reflow the grid instead of jumping.
+                                    // Deletes reflow the grid instead of jumping.
                                 modifier = Modifier.animateItem(fadeInSpec = null, fadeOutSpec = null),
-                                onTilePositioned = onTilePositioned,
-                                onTileDisposed = onTileDisposed,
+                                onTilePositioned = { uri, rect ->
+                                    onTilePositioned(uri, rect)
+                                    tileBounds["album:$uri"] = rect
+                                },
+                                onTileDisposed = { uri ->
+                                    onTileDisposed(uri)
+                                    tileBounds.remove("album:$uri")
+                                },
                                 onClick = { rect -> onItemClick(displayItems, index, rect) },
                             )
                         } else {
@@ -1703,10 +1802,15 @@ private fun AlbumGrid(
                                 item = item,
                                 selection = selection,
                                 onToggleSelect = onToggleSelect,
-                                onLongSelect = onLongSelect,
-                                modifier = Modifier.animateItem(fadeInSpec = null, fadeOutSpec = null),
-                                onTilePositioned = onTilePositioned,
-                                onTileDisposed = onTileDisposed,
+                                    modifier = Modifier.animateItem(fadeInSpec = null, fadeOutSpec = null),
+                                onTilePositioned = { uri, rect ->
+                                    onTilePositioned(uri, rect)
+                                    tileBounds["album:$uri"] = rect
+                                },
+                                onTileDisposed = { uri ->
+                                    onTileDisposed(uri)
+                                    tileBounds.remove("album:$uri")
+                                },
                                 onClick = { rect -> onItemClick(displayItems, index, rect) },
                             )
                         }
@@ -1739,113 +1843,62 @@ private fun AlbumGrid(
                     },
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                if (selection.active) {
-                    // Selection mode: the header's back button exits selection.
-                    IconButton(onClick = onExitSelection) {
-                        Icon(
-                            imageVector = Icons.Outlined.Close,
-                            contentDescription = stringResource(R.string.selection_exit),
-                            tint = TextPrimary,
+                AnimatedContent(
+                    targetState = selection.active,
+                    modifier = Modifier.weight(1f),
+                    transitionSpec = {
+                        (fadeIn(tween(180)) + slideInHorizontally(tween(220)) { it / 8 }) togetherWith
+                            fadeOut(tween(120))
+                    },
+                    label = "albumAppBarMode",
+                ) { isSelecting ->
+                    if (isSelecting) {
+                        SelectionHeader(
+                            count = selection.itemCount,
+                            onExitSelection = onExitSelection,
+                            onSelectAll = { onSelectAll(displayItems) },
                         )
-                    }
-                    Spacer(Modifier.width(4.dp))
-                    Text(
-                        text = pluralStringResource(R.plurals.selection_count, selection.selected.size, selection.selected.size),
-                        color = TextPrimary,
-                        fontSize = 16.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        modifier = Modifier.weight(1f),
-                    )
-                    IconButton(onClick = { onSelectAll(displayItems) }) {
-                        Icon(
-                            imageVector = Icons.Outlined.SelectAll,
-                            contentDescription = stringResource(R.string.select_all),
-                            tint = TextPrimary,
-                        )
-                    }
-                } else {
-                    IconButton(onClick = onBack) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
-                            contentDescription = stringResource(R.string.action_back),
-                            tint = TextPrimary,
-                        )
-                    }
-                    Spacer(Modifier.width(4.dp))
-                    Column {
-                        Text(
-                            text = folder.name,
-                            color = TextPrimary,
-                            fontSize = 16.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                        Text(
-                            text = pluralStringResource(R.plurals.item_count, folder.count, folder.count),
-                            color = TextMuted,
-                            fontSize = 12.sp,
-                            maxLines = 1,
-                        )
-                    }
-                    Spacer(Modifier.weight(1f))
-                    var showFilterMenu by remember { mutableStateOf(false) }
-                    Box {
-                        IconButton(onClick = { showFilterMenu = true }) {
-                            Icon(
-                                imageVector = Icons.Outlined.FilterList,
-                                contentDescription = stringResource(R.string.action_filter),
-                                tint = TextPrimary,
-                                modifier = Modifier.width(24.dp),
-                            )
-                        }
-                        DropdownMenu(
-                            expanded = showFilterMenu,
-                            onDismissRequest = { showFilterMenu = false },
+                    } else {
+                        // Its own Row: AnimatedContent's content is not RowScope,
+                        // so the title's weight needs a Row of its own here.
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            Text(
-                                text = stringResource(R.string.display_sort_title),
-                                color = TextMuted,
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-                            )
-                            MediaSort.entries.forEach { sort ->
-                                DropdownMenuItem(
-                                    text = { Text(stringResource(sort.labelRes), color = TextPrimary) },
-                                    onClick = {
-                                        onSortOrderChange(sort)
-                                        showFilterMenu = false
-                                    },
-                                    trailingIcon = {
-                                        if (sort == sortOrder) {
-                                            Icon(Icons.Rounded.Check, contentDescription = null, tint = TextPrimary)
-                                        }
-                                    },
+                            IconButton(onClick = onBack) {
+                                Icon(
+                                    imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
+                                    contentDescription = stringResource(R.string.action_back),
+                                    tint = TextPrimary,
                                 )
                             }
-                            HorizontalDivider()
-                            Text(
-                                text = stringResource(R.string.display_grid_title),
-                                color = TextMuted,
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-                            )
-                            GridSize.entries.forEach { size ->
-                                DropdownMenuItem(
-                                    text = { Text(stringResource(size.labelRes), color = TextPrimary) },
-                                    onClick = {
-                                        onGridSizeChange(size)
-                                        showFilterMenu = false
-                                    },
-                                    trailingIcon = {
-                                        if (size == gridSize) {
-                                            Icon(Icons.Rounded.Check, contentDescription = null, tint = TextPrimary)
-                                        }
-                                    },
+                            Spacer(Modifier.width(4.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = folder.name,
+                                    color = TextPrimary,
+                                    fontSize = 16.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                                Text(
+                                    text = pluralStringResource(
+                                        R.plurals.item_count,
+                                        folder.count,
+                                        folder.count,
+                                    ),
+                                    color = TextMuted,
+                                    fontSize = 12.sp,
+                                    maxLines = 1,
                                 )
                             }
+                            FilterMenuButton(
+                                sortOrder = sortOrder,
+                                gridSize = gridSize,
+                                onSortOrderChange = onSortOrderChange,
+                                onGridSizeChange = onGridSizeChange,
+                            )
                         }
                     }
                 }
@@ -1863,9 +1916,9 @@ private fun FlyInFolderTile(
     selection: SelectionState,
     isSelected: Boolean,
     onToggleSelect: (MediaFolder) -> Unit,
-    onLongSelect: (MediaFolder) -> Unit,
     onClick: (Rect) -> Unit,
     modifier: Modifier = Modifier,
+    onBoundsChanged: (Rect) -> Unit = {},
 ) {
     val density = LocalDensity.current
     var targetRect by remember { mutableStateOf(Rect.Zero) }
@@ -1880,7 +1933,6 @@ private fun FlyInFolderTile(
         selection = selection,
         isSelectedOverride = isSelected,
         onToggleSelect = onToggleSelect,
-        onLongSelect = onLongSelect,
         modifier = modifier
             .onGloballyPositioned { coordinates ->
                 if (targetRect == Rect.Zero || phase.value < 1f) {
@@ -1893,6 +1945,7 @@ private fun FlyInFolderTile(
                 translationY = (source.top + offsetYPx - targetRect.top) * (1f - p)
                 alpha = if (targetRect == Rect.Zero) 0f else p
             },
+        onBoundsChanged = onBoundsChanged,
     )
 }
 
@@ -1904,13 +1957,12 @@ private fun FolderTile(
     selection: SelectionState = SelectionState(),
     isSelectedOverride: Boolean? = null,
     onToggleSelect: (MediaFolder) -> Unit = {},
-    onLongSelect: (MediaFolder) -> Unit = {},
+    onBoundsChanged: (Rect) -> Unit = {},
 ) {
     var stackRect by remember { mutableStateOf(Rect.Zero) }
     val isSelecting = selection.active
     val isSelected = isSelectedOverride ?: (folder in selection.selectedFolders ||
         selection.selectedDirectories.any { it.folder.bucketId == folder.bucketId })
-    val haptics = LocalHapticFeedback.current
     val a11yLabel = folder.name + ", " +
         pluralStringResource(R.plurals.item_count, folder.count, folder.count)
 
@@ -1918,27 +1970,18 @@ private fun FolderTile(
         modifier = Modifier
             .then(modifier)
             .fillMaxWidth()
+            .onGloballyPositioned { onBoundsChanged(it.boundsInWindow()) }
             .semantics {
                 contentDescription = a11yLabel
             }
-            .then(
-                if (isSelecting) {
-                    Modifier.clickable(
-                        interactionSource = remember { MutableInteractionSource() },
-                        indication = null,
-                    ) { onToggleSelect(folder) }
-                } else {
-                    Modifier.combinedClickable(
-                        interactionSource = remember { MutableInteractionSource() },
-                        indication = null,
-                        onClick = { onClick(stackRect) },
-                        onLongClick = {
-                            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                            onLongSelect(folder)
-                        },
-                    )
-                },
-            ),
+            // Tap only: the long press that enters selection lives on the grid,
+            // so a glide is never cancelled by a second long-press detector.
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+            ) {
+                if (isSelecting) onToggleSelect(folder) else onClick(stackRect)
+            },
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         Box {
@@ -1953,8 +1996,8 @@ private fun FolderTile(
                     .align(Alignment.TopStart)
                     .padding(8.dp)
                     .zIndex(2f),
-                enter = fadeIn(tween(150)),
-                exit = fadeOut(tween(150)),
+                enter = fadeIn(tween(120)) + scaleIn(tween(180), initialScale = 0.5f),
+                exit = fadeOut(tween(100)) + scaleOut(tween(120), targetScale = 0.5f),
             ) {
                 SelectionBadge(selected = isSelected)
             }
@@ -2040,7 +2083,6 @@ internal fun ImageTile(
     modifier: Modifier = Modifier,
     selection: SelectionState = SelectionState(),
     onToggleSelect: (MediaItem) -> Unit = {},
-    onLongSelect: (MediaItem) -> Unit = {},
     onTilePositioned: (Uri, Rect) -> Unit = { _, _ -> },
     onTileDisposed: (Uri) -> Unit = {},
 ) {
@@ -2049,7 +2091,6 @@ internal fun ImageTile(
     val coordsRef = remember { arrayOfNulls<androidx.compose.ui.layout.LayoutCoordinates>(1) }
     val isSelecting = selection.active
     val isSelected = item in selection.selected
-    val haptics = LocalHapticFeedback.current
     // Resolved here: the semantics lambda below is not composable.
     val kindLabel = stringResource(if (item.isVideo) R.string.video_badge else R.string.media_photo)
     val selectionSuffix = stringResource(
@@ -2077,24 +2118,17 @@ internal fun ImageTile(
                     if (isSelecting) append(selectionSuffix)
                 }
             }
-            .then(
+            // Tap only: the grid owns long-press + glide selection.
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+            ) {
                 if (isSelecting) {
-                    Modifier.clickable(
-                        interactionSource = remember { MutableInteractionSource() },
-                        indication = null,
-                    ) { onToggleSelect(item) }
+                    onToggleSelect(item)
                 } else {
-                    Modifier.combinedClickable(
-                        interactionSource = remember { MutableInteractionSource() },
-                        indication = null,
-                        onClick = { onClick(coordsRef[0]?.boundsInWindow() ?: Rect.Zero) },
-                        onLongClick = {
-                            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                            onLongSelect(item)
-                        },
-                    )
-                },
-            ),
+                    onClick(coordsRef[0]?.boundsInWindow() ?: Rect.Zero)
+                }
+            },
     ) {
         if (item.isVideo) {
             // Fast poster: MediaStore system thumbnail / private frame cache /
@@ -2127,8 +2161,8 @@ internal fun ImageTile(
                 .align(Alignment.TopStart)
                 .padding(8.dp)
                 .zIndex(2f),
-            enter = fadeIn(tween(150)),
-            exit = fadeOut(tween(150)),
+            enter = fadeIn(tween(120)) + scaleIn(tween(180), initialScale = 0.5f),
+            exit = fadeOut(tween(100)) + scaleOut(tween(120), targetScale = 0.5f),
         ) {
             SelectionBadge(selected = isSelected)
         }
@@ -2192,7 +2226,6 @@ private fun FlyInTile(
     modifier: Modifier = Modifier,
     selection: SelectionState = SelectionState(),
     onToggleSelect: (MediaItem) -> Unit = {},
-    onLongSelect: (MediaItem) -> Unit = {},
     onTilePositioned: (Uri, Rect) -> Unit = { _, _ -> },
     onTileDisposed: (Uri) -> Unit = {},
 ) {
@@ -2213,7 +2246,6 @@ private fun FlyInTile(
 
     val isSelecting = selection.active
     val isSelected = item in selection.selected
-    val haptics = LocalHapticFeedback.current
 
     // Pairs with onTilePositioned so an off-screen tile never leaves a stale rect.
     DisposableEffect(item.uri) {
@@ -2252,24 +2284,17 @@ private fun FlyInTile(
             }
             .clip(TileShape)
             .background(SurfaceColor)
-            .then(
+            // Tap only: the grid owns long-press + glide selection.
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+            ) {
                 if (isSelecting) {
-                    Modifier.clickable(
-                        interactionSource = remember { MutableInteractionSource() },
-                        indication = null,
-                    ) { onToggleSelect(item) }
+                    onToggleSelect(item)
                 } else {
-                    Modifier.combinedClickable(
-                        interactionSource = remember { MutableInteractionSource() },
-                        indication = null,
-                        onClick = { onClick(coordsRef[0]?.boundsInWindow() ?: targetRect) },
-                        onLongClick = {
-                            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                            onLongSelect(item)
-                        },
-                    )
-                },
-            ),
+                    onClick(coordsRef[0]?.boundsInWindow() ?: targetRect)
+                }
+            },
     ) {
         val thumbAlphaMod = Modifier
             .fillMaxSize()
@@ -2316,58 +2341,18 @@ private fun FlyInTile(
     }
 }
 
-private fun glideSelectAt(
-    gridState: androidx.compose.foundation.lazy.grid.LazyGridState,
-    content: GalleryContent?,
-    offset: Offset,
-    glideSelectItem: (MediaItem) -> Unit,
-    glideSelectFolder: (MediaFolder) -> Unit,
-) {
-    val info = gridState.layoutInfo.visibleItemsInfo.firstOrNull { itemInfo ->
-        val left = itemInfo.offset.x
-        val top = itemInfo.offset.y
-        val right = left + itemInfo.size.width
-        val bottom = top + itemInfo.size.height
-        offset.x.toInt() in left..right && offset.y.toInt() in top..bottom
-    } ?: return
-    val key = info.key?.toString() ?: return
-    when {
-        key.startsWith("folder:") -> {
-            val bucketId = key.removePrefix("folder:")
-            content?.folders?.firstOrNull { it.bucketId == bucketId }?.let(glideSelectFolder)
-        }
-        key.startsWith("item:") -> {
-            val uriStr = key.removePrefix("item:")
-            content?.looseItems?.firstOrNull { it.uri.toString() == uriStr }?.let(glideSelectItem)
-        }
-    }
-}
-
-private fun glideSelectAtAlbum(
-    gridState: androidx.compose.foundation.lazy.grid.LazyGridState,
-    childDirectories: List<GalleryDirectory>,
-    displayItems: List<MediaItem>,
-    offset: Offset,
-    glideSelectItem: (MediaItem) -> Unit,
-    glideSelectFolder: (MediaFolder) -> Unit,
-    glideSelectDirectory: (GalleryDirectory) -> Unit,
-) {
-    val info = gridState.layoutInfo.visibleItemsInfo.firstOrNull { itemInfo ->
-        val left = itemInfo.offset.x
-        val top = itemInfo.offset.y
-        val right = left + itemInfo.size.width
-        val bottom = top + itemInfo.size.height
-        offset.x.toInt() in left..right && offset.y.toInt() in top..bottom
-    } ?: return
-    val key = info.key?.toString() ?: return
-    when {
-        key.startsWith("directory:") -> {
-            val bucketId = key.removePrefix("directory:")
-            childDirectories.firstOrNull { it.folder.bucketId == bucketId }?.let(glideSelectDirectory)
-        }
-        key.startsWith("album:") -> {
-            val uriStr = key.removePrefix("album:")
-            displayItems.firstOrNull { it.uri.toString() == uriStr }?.let(glideSelectItem)
-        }
-    }
+/**
+ * Key of the tile whose window bounds contain [position], where [position] is
+ * local to the grid (the gesture's coordinate space). Measured bounds are used
+ * rather than LazyGrid `layoutInfo` offsets so content padding, scroll and item
+ * spacing can never shift the hit target.
+ */
+private fun hitTestTile(
+    coordinates: LayoutCoordinates?,
+    bounds: Map<String, Rect>,
+    position: Offset,
+): String? {
+    val layout = coordinates?.takeIf { it.isAttached } ?: return null
+    val point = layout.localToWindow(position)
+    return bounds.entries.firstOrNull { it.value.contains(point) }?.key
 }

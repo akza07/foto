@@ -45,7 +45,7 @@
 - **Frosted chrome:** top app bars are translucent gradient scrims plus 18dp backdrop blur. Content scrolls underneath.
 - **Calm motion:** 180–320ms tweens with `FastOutSlowInEasing`, spring blooms for radial/zoom, per-frame transforms in the draw phase (60fps, no jank).
 - **Skeleton-first loading:** never show empty gaps; show shimmer placeholders while decoding.
-- **Safe deletes:** every delete goes to Foto's own private trash first and offers Undo.
+- **Safe deletes:** every delete goes to Android's system trash (MediaStore, API 30+) — instant, no byte copies — and offers Undo. SAF documents, which have no trash, are removed outright after the in-app confirm.
 
 ---
 
@@ -303,7 +303,7 @@ No custom font family; system default with Material3 defaults. Exact usages:
 
 ### 9.5 Delete / share / info / crop
 
-- Drawer Delete (red): confirm dialog if “Confirm before deleting” on (see §12.3); then file copied to private trash + original removed → “Moved to trash” Undo bar (6s) + slide to neighbor (280ms `FastOutSlowIn`; next if exists else prev; last item dismisses). Undo slides back. Trash screen lists it.
+- Drawer Delete (red): video deletes always confirm; other items only show the in-app confirm when the delete is permanent (SAF, or no system trash) — the provider's trash prompt is the confirmation otherwise. Deleting trashes through `MediaStore.createTrashRequest` (no copy) → “Moved to trash” Undo bar (6s) + slide to neighbor (280ms `FastOutSlowIn`; next if exists else prev; last item dismisses). Undo untrashes and slides back. The Trash screen lists everything in the system trash.
 - Share: system chooser with URI grant. Info: bottom sheet (see §11). Crop: “Coming soon” light toast (placeholder).
 - Page change updates settled index; list shrink clamps pager; input gated during slide.
 
@@ -354,11 +354,15 @@ Real playback via single ExoPlayer per viewer session (no per-page players). Aud
 
 **Enter:** long-press tile/folder (haptic) or toggle. Taps toggle; header offers Select all; bottom bar acts across selection (folders expand to contents).
 
+**Glide:** keep the finger down after the long-press and drag across tiles — each newly covered tile joins the selection with a light haptic tick. Lifting ends the gesture; another pass needs a fresh long-press. Hit-testing uses the measured window bounds of each composed tile, so padding, scroll and spacing can't shift the target.
+
+**Header count:** shows the number of *media items* the selection resolves to (an album/parent contributes its whole count), so it matches what Delete/Copy/Move/Share act on.
+
 **Tile visuals:** badge top-start 8dp (z 2) 24dp circle: selected = white + 14dp `#09090B` Check (“Selected”); unselected = black 50% + 1dp white border hollow. Unselected tiles dim black 40%. No ripple in selection.
 
 **Action bar (bottom-center):** full-width `#09090B` 12dp elevation + nav-bar padding. Top row 8dp/8dp: `Close` white (“Exit selection”) + “N selected” 16sp SemiBold (weight 1). Bottom row 16dp/4dp `SpaceEvenly`: Delete (outlined, white) / Copy / Move / Share — each 10dp round clickable 12dp/6dp padding: 22dp white icon + 4dp gap + 11sp Medium muted label.
 
-**Behaviors:** Delete → confirm (if enabled) → trash + Undo/toasts (“Deleted N items”). Copy/Move → system directory picker (SAF) + busy overlay (“Copying/Moving N items…”) → toasts (“Copied/Moved N items” or partial “Moved X, copied Y”). Share → chooser with grants.
+**Behaviors:** Delete → system trash request (in-app confirm only when the delete is permanent) → Undo. Selection chrome animates: header cross-fades, badges fade+scale in, action bar slides up. Copy/Move → system directory picker (SAF) + busy overlay (“Copying/Moving N items…”) → toasts (“Copied/Moved N items” or partial “Moved X, copied Y”). Share → chooser with grants.
 
 ---
 
@@ -400,11 +404,11 @@ Same frosted header (“Folders”). Hint 13sp/18sp muted 4dp start: allow-mode 
 
 ### 14.2 Trash screen
 
-Private `trash/` (only this app’s deletes), sorted newest-deleted first (date not shown). Same slide/frosted chrome (“Trash” 22sp + back + “Empty” text-button with `DeleteSweep` icon: white when non-empty, muted when empty; while clearing 16dp spinner + “Emptying…”).
+Android's system trash (MediaStore `QUERY_ARG_MATCH_TRASHED`, API 30+), newest-modified first; the same files appear in the platform's own trash UI. Same slide/frosted chrome (“Trash” 22sp + back + “Empty” text-button with `DeleteSweep` icon: white when non-empty, muted when empty; while the Empty request is pending 16dp spinner + “Emptying…”). On API 29 (no system trash) the screen shows “Android trash needs Android 11 or newer”.
 
 - Empty: centered “Trash is empty” 14sp muted. Else list 16dp sides, top status+56+8dp, bottom 8dp, 8dp spacing: summary 12sp muted (“N · size”) 4dp start/bottom.
-- Row card 12dp `#09090B` 8dp padding: 52dp thumb 9dp corners (`Crop`; video 14dp Play bottom-end 4dp) + 12dp gap + name 14sp Medium 1 line + size 12sp muted (weight 1) + `Restore` outlined white (“Restore”) → restores + reloads + `onChanged`; `Delete` outlined red (“Delete”) → permanent single delete (no per-item confirm) + reloads.
-- “Empty” → destructive confirm (“Empty trash?” / “Items in the trash will be permanently deleted. This can’t be undone.” / Cancel + Empty red) → clears with spinner → reloads. No in-screen undo (Undo lives in gallery pill after delete).
+- Row card 12dp `#09090B` 8dp padding: 52dp thumb 9dp corners (glyph behind the image for providers that can't decode trashed rows; video `Play`) + 12dp gap + name 14sp Medium 1 line + size 12sp muted (weight 1) + `Restore` outlined white (“Restore”) → `createTrashRequest(value=false)` + reloads + `onChanged`; `Delete` outlined red (“Delete”) → `createDeleteRequest` (permanent) + reloads.
+- “Empty” → destructive confirm (“Empty trash?” / “Items in the trash will be permanently deleted. This can’t be undone.” / Cancel + Empty red) → `createDeleteRequest` for the whole list → reloads while “Emptying…”. Every provider request is approved in the system dialog, so no in-screen undo.
 
 ---
 
@@ -423,7 +427,7 @@ Overlay on gallery when permissions granted + unseen; replayable via Settings (a
 2. “Find your photos” / “Open an album to see everything inside, or tap the search icon to find a file by name.” — mock pill search (12×96dp `Border` + 20dp Search) over 2×3 grid.
 3. “View and zoom” / “Swipe between photos, double-tap or pinch to zoom, and swipe down to close.” — portrait rect (`Border` 16dp 62%×74%) + 52dp ring (2dp white) + 8dp dot + 28dp `KeyboardArrowDown` muted.
 4. “Actions in one motion” / “Long-press anywhere, slide to Delete, Info, Share or Crop, then release to run it.” — 180dp radial (black-35% disc, `Border` rings/spokes) + 4 icons 90°×54dp (Delete red, others white 22dp/26dp boxes) + center Close 20dp + finger dot (16dp ring 2dp white offset 70dp@30°).
-5. “Select and stay safe” / “Long-press a tile to select several, then delete, copy, move or share. Deletes go to the trash — undo right away, or empty it from Settings.” — 2×3 grid (3 checked: 16dp white circle + 11dp black Check) + bottom Delete(red)/Copy/Move/Share 20dp + floating Undo pill (white 50dp, bottom 16dp, 11sp black “Moved to trash  ·  Undo” 14dp/7dp).
+5. “Select and stay safe” / “Long-press a tile to enter selection mode, then glide your finger across tiles to select many in one motion. Delete, copy, move or share them; deletes go to the Android trash — undo right away, or empty it from Settings.” — 2×3 grid (3 checked: 16dp white circle + 11dp black Check) + bottom Delete(red)/Copy/Move/Share 20dp + floating Undo pill (white 50dp, bottom 16dp, 11sp black “Moved to trash  ·  Undo” 14dp/7dp).
 
 ---
 

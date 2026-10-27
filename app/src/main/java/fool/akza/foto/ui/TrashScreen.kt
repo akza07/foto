@@ -1,9 +1,11 @@
 package fool.akza.foto.ui
 
-import android.net.Uri
+import android.app.Activity
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.IntentSenderRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -20,20 +22,20 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.DeleteSweep
+import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.Restore
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -55,8 +57,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
 import fool.akza.foto.R
-import fool.akza.foto.data.TrashEntry
-import fool.akza.foto.data.TrashStore
+import fool.akza.foto.data.SystemTrash
+import fool.akza.foto.data.SystemTrashEntry
 import fool.akza.foto.ui.theme.AmoledBlack
 import fool.akza.foto.ui.theme.Surface as ThemeSurface
 import fool.akza.foto.ui.theme.TextMuted
@@ -66,26 +68,63 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
- * Foto's own trash: items deleted in-app while their bytes lived in
- * `filesDir/trash`. Isolated from Android's system trash, so it only ever lists
- * (and purges) files this app deleted.
+ * Android's system trash (MediaStore, API 30+), shown in-app.
+ *
+ * Foto no longer keeps a private copy of deleted files: deleting moves the row
+ * into the platform trash, which is instant and shared with the system, so the
+ * user can restore from either place. Restore and permanent delete both go
+ * through the provider, which prompts for approval once per request.
  */
 @Composable
 fun TrashScreen(onBack: () -> Unit, onChanged: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    var entries by remember { mutableStateOf<List<TrashEntry>?>(null) }
+    var entries by remember { mutableStateOf<List<SystemTrashEntry>?>(null) }
     var showEmptyConfirm by remember { mutableStateOf(false) }
-    var clearing by remember { mutableStateOf(false) }
+    // True only for the "Empty" request, so the header spinner reads correctly
+    // while a single restore/delete is in flight.
+    var emptying by remember { mutableStateOf(false) }
+    var working by remember { mutableStateOf(false) }
+    // URIs the pending provider dialog will act on (empty when nothing is pending).
+    var pendingUris by remember { mutableStateOf<List<android.net.Uri>>(emptyList()) }
 
     BackHandler { onBack() }
 
-    LaunchedEffect(Unit) {
-        entries = withContext(Dispatchers.IO) { TrashStore.list(context) }
+    suspend fun refresh() {
+        entries = withContext(Dispatchers.IO) { SystemTrash.list(context) }
+    }
+
+    LaunchedEffect(Unit) { refresh() }
+
+    val launcher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartIntentSenderForResult()
+    ) { result ->
+        val uris = pendingUris
+        pendingUris = emptyList()
+        working = false
+        emptying = false
+        if (result.resultCode == Activity.RESULT_OK && uris.isNotEmpty()) {
+            scope.launch {
+                refresh()
+                onChanged()
+            }
+        }
+    }
+
+    val run = { uris: List<android.net.Uri>, request: (List<android.net.Uri>) -> android.content.IntentSender? ->
+        val sender = request(uris)
+        if (sender == null) {
+            working = false
+        } else {
+            pendingUris = uris
+            working = true
+            launcher.launch(IntentSenderRequest.Builder(sender).build())
+        }
     }
 
     val list = entries ?: emptyList()
     val totalBytes = remember(list) { list.sumOf { it.sizeBytes } }
+    val supported = SystemTrash.supported
 
     FrostedHeaderScaffold(
         background = AmoledBlack,
@@ -114,9 +153,9 @@ fun TrashScreen(onBack: () -> Unit, onChanged: () -> Unit) {
                 )
                 TextButton(
                     onClick = { showEmptyConfirm = true },
-                    enabled = list.isNotEmpty() && !clearing,
+                    enabled = list.isNotEmpty() && !working,
                 ) {
-                    if (clearing) {
+                    if (emptying) {
                         CircularProgressIndicator(
                             modifier = Modifier.size(16.dp),
                             color = TextPrimary,
@@ -146,7 +185,10 @@ fun TrashScreen(onBack: () -> Unit, onChanged: () -> Unit) {
         if (entries != null && list.isEmpty()) {
             Box(modifier = contentModifier, contentAlignment = Alignment.Center) {
                 Text(
-                    text = stringResource(R.string.storage_trash_empty),
+                    text = stringResource(
+                        if (supported) R.string.storage_trash_empty
+                        else R.string.storage_trash_unsupported,
+                    ),
                     color = TextMuted,
                     fontSize = 14.sp,
                 )
@@ -177,22 +219,14 @@ fun TrashScreen(onBack: () -> Unit, onChanged: () -> Unit) {
                         )
                     }
                 }
-                items(list, key = { it.id }) { entry ->
+                items(list, key = { it.uri.toString() }) { entry ->
                     TrashRow(
                         entry = entry,
                         onRestore = {
-                            scope.launch {
-                                withContext(Dispatchers.IO) { TrashStore.restore(context, entry) }
-                                entries = withContext(Dispatchers.IO) { TrashStore.list(context) }
-                                onChanged()
-                            }
+                            run(listOf(entry.uri)) { uris -> SystemTrash.restoreRequest(context, uris) }
                         },
                         onDelete = {
-                            scope.launch {
-                                withContext(Dispatchers.IO) { TrashStore.remove(context, entry) }
-                                entries = withContext(Dispatchers.IO) { TrashStore.list(context) }
-                                onChanged()
-                            }
+                            run(listOf(entry.uri)) { uris -> SystemTrash.deleteRequest(context, uris) }
                         },
                     )
                 }
@@ -208,12 +242,12 @@ fun TrashScreen(onBack: () -> Unit, onChanged: () -> Unit) {
             destructive = true,
             onConfirm = {
                 showEmptyConfirm = false
-                scope.launch {
-                    clearing = true
-                    withContext(Dispatchers.IO) { TrashStore.clear(context) }
-                    entries = withContext(Dispatchers.IO) { TrashStore.list(context) }
-                    clearing = false
-                    onChanged()
+                val uris = list.map { it.uri }
+                if (uris.isEmpty()) {
+                    working = false
+                } else {
+                    emptying = true
+                    run(uris) { SystemTrash.deleteRequest(context, it) }
                 }
             },
             onDismiss = { showEmptyConfirm = false },
@@ -222,7 +256,7 @@ fun TrashScreen(onBack: () -> Unit, onChanged: () -> Unit) {
 }
 
 @Composable
-private fun TrashRow(entry: TrashEntry, onRestore: () -> Unit, onDelete: () -> Unit) {
+private fun TrashRow(entry: SystemTrashEntry, onRestore: () -> Unit, onDelete: () -> Unit) {
     Surface(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(12.dp),
@@ -240,24 +274,22 @@ private fun TrashRow(entry: TrashEntry, onRestore: () -> Unit, onDelete: () -> U
                     .size(52.dp)
                     .clip(RoundedCornerShape(9.dp))
                     .background(ThemeSurface),
+                contentAlignment = Alignment.Center,
             ) {
+                // Trashed rows are not decodable thumbnails on every provider, so
+                // a glyph sits behind the image and shows through when it can't load.
+                Icon(
+                    imageVector = if (entry.isVideo) Icons.Filled.PlayArrow else Icons.Outlined.Image,
+                    contentDescription = null,
+                    tint = TextMuted,
+                    modifier = Modifier.size(20.dp),
+                )
                 AsyncImage(
-                    model = entry.payload,
+                    model = entry.uri,
                     contentDescription = null,
                     contentScale = ContentScale.Crop,
                     modifier = Modifier.fillMaxSize(),
                 )
-                if (entry.isVideo) {
-                    Icon(
-                        imageVector = Icons.Filled.PlayArrow,
-                        contentDescription = null,
-                        tint = Color.White,
-                        modifier = Modifier
-                            .align(Alignment.BottomEnd)
-                            .padding(4.dp)
-                            .size(14.dp),
-                    )
-                }
             }
             Spacer(Modifier.width(12.dp))
             Column(modifier = Modifier.weight(1f)) {

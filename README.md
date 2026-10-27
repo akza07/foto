@@ -164,10 +164,13 @@ edge-to-edge rendering.
   on release, clamped to the image bounds.
 - **Top-left:** back button + counter pill (`3/12`).
 - **Drawer actions:** Delete (red), Share, Info, Crop ("Coming soon" shadcn toast).
-  - **Delete:** shadcn confirmation modal (red accent) → the file is copied into
-    **Foto's own trash** (`filesDir/trash`, isolated from Android's system trash)
-    and then its original is removed, so every delete shows an **Undo** bar and can
-    be restored later from **Settings → Storage → Trash**.
+  - **Delete:** videos always ask first; other items only show the in-app modal
+    when the delete is permanent (SAF documents, or a device without the system
+    trash). Otherwise the file is moved into **Android's system trash**
+    (`MediaStore.createTrashRequest`, a row update — no byte copy), so deletes are
+    instant, every delete shows an **Undo** bar, and the file also appears in the
+    platform's own trash UI. **Settings → Storage → Trash** lists the system trash
+    with restore and permanent delete.
   - **Share:** `ACTION_SEND` chooser with URI grant.
   - **Info:** sheet with name, size, and date.
 
@@ -274,10 +277,10 @@ edge-to-edge rendering.
   Results are grouped by month/year and open in the viewer.
 - **Open from other apps**: Foto handles `ACTION_VIEW` and `ACTION_SEND` for
   `image/*` and `video/*`, opening the handed-over file in the viewer.
-- **Non-destructive delete**: every delete is undoable — the file is copied into
-  Foto's **own trash** first (isolated from Android's system trash), then removed.
-  The Trash screen (Settings → Storage → Trash) lists what Foto deleted, with
-  restore and empty.
+- **Non-destructive delete**: every delete is undoable — media is moved into
+  Android's **system trash** (instant; the provider flips the row instead of the
+  app copying bytes). The Trash screen (Settings → Storage → Trash) lists the
+  system trash with restore and permanent delete.
 
 ---
 
