@@ -181,9 +181,10 @@ edge-to-edge rendering.
     result immediately; a **Preparing preview…** loader stays up until the reload
     returns the new item and its thumbnail has been queued.
   - **Wallpaper:** full-screen picker with a Portrait/Landscape frame matching the
-    screen, pinch-to-zoom and drag-to-reposition, and Home / Lock / Both targets.
-    Nothing is written to storage: the crop goes straight to the system wallpaper
-    service (`WallpaperManager.setBitmap`), so the original is untouched.
+    screen, pinch-to-zoom and drag-to-reposition, and icon toggles for the Home and
+    Lock targets. Nothing is written to storage: the crop goes straight to the
+    system wallpaper service (`WallpaperManager.setBitmap`), so the original is
+    untouched.
 
 ### 5.4.1 Video playback
 - Tapping a **video** tile opens the viewer with **real playback** via

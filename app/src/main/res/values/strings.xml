@@ -148,9 +148,8 @@
     <string name="wallpaper_orientation_landscape">Landscape</string>
     <string name="wallpaper_target_home">Home</string>
     <string name="wallpaper_target_lock">Lock</string>
-    <string name="wallpaper_target_both">Both</string>
     <string name="wallpaper_hint">Pinch to zoom, drag to reposition</string>
-    <string name="wallpaper_set">Set wallpaper</string>
+    <string name="wallpaper_set_short">Set</string>
     <string name="wallpaper_setting">Setting wallpaper…</string>
     <string name="wallpaper_set_done">Wallpaper set</string>
     <string name="wallpaper_set_failed">Couldn\'t set the wallpaper. Try again.</string>

@@ -345,8 +345,7 @@ No custom font family; system default with Material3 defaults. Exact usages:
 - Full-screen black surface layered above the viewer (images only). Top bar mirrors the crop editor: 22dp Close (“Cancel”), “Set wallpaper” 20sp SemiBold, 22dp Reset icon that refits the frame.
 - Canvas: 20dp horizontal / 8dp vertical breathing room, image Fit centered, reusing the crop overlay (1.5dp white border, thirds grid, black 58% scrim outside; corner handles, no edge handles).
 - Frame: a fixed-aspect window matching the screen in the chosen orientation — **Portrait** (short/long edge) or **Landscape** (long/short edge) — independent of how the device is currently rotated. Pinch zooms the window around the gesture centroid (1× = whole frame, clamped to a minimum 8% width) and drag repositions it; the window can never leave the image. Changing orientation or reset refits it.
-- Chips: orientation row (Portrait / Landscape) then target row (Home / Lock / Both), same 50dp round pill style as the crop ratios. Hint “Pinch to zoom, drag to reposition” 12sp muted; failure 13sp Medium red.
-- Action: full-width 48dp, 16dp-corner white **Set wallpaper** button; while applying, a blocking **Setting wallpaper…** busy overlay. Success closes the picker and shows the “Wallpaper set” toast.
+- Control bar: one bottom row, no chip text. Left: an exclusive two-segment pill (42×36dp segments, 3dp gap, 1dp `Border`, 21dp corners) whose 36dp white indicator slides between the portrait and landscape glyphs (`CropPortrait` / `CropLandscape` 20dp) in 220ms `FastOutSlowInEasing`; the selected glyph tints to black, the other stays white. Next: a Home / Lock pill of the same metrics with independent toggles (`Home`, `Lock`, `Role.Checkbox`); both on = both screens, and the last active one can’t be switched off. Right, pushed to the edge: a 42dp white **Set** pill (14sp SemiBold black); disabled it becomes `#09090B` with a `Border` outline and muted label, and while applying a blocking **Setting wallpaper…** busy overlay covers it. Success closes the picker and shows the “Wallpaper set” toast. Hint “Pinch to zoom, drag to reposition” 12sp muted sits above the row and fades out after the first pan/zoom; failure 13sp Medium red replaces it.
 - Nothing is written to storage: the crop is handed to `WallpaperManager.setBitmap(..., FLAG_SYSTEM / FLAG_LOCK / both)` under the normal `SET_WALLPAPER` permission, so the original and the library are untouched. The source is decoded upright and capped at 3072px like the crop editor.
 
 ---
@@ -500,7 +499,7 @@ Overlay on gallery when permissions granted + unseen; replayable via Settings (a
 
 ## 18. Accessibility & Edge Cases
 
-- Content descriptions: Search/Settings/Filter/Back/Clear/Selected/Select all/Exit selection/Video/Restore/Delete/Remove/Crop reset/Wallpaper reset.
+- Content descriptions: Search/Settings/Filter/Back/Clear/Selected/Select all/Exit selection/Video/Restore/Delete/Remove/Crop reset/Wallpaper reset/Portrait/Landscape/Home/Lock.
 - Live-region polite on toast/undo; switches expose Role.Switch (whole row toggleable); action rows Role.Button; radial hint announces “Release to X”.
 - Touch targets: header icons 40dp+ (viewer back 40dp, actions 44dp), drawer wells 54dp, video controls 44dp, tutorial CTA 50dp.
 - Empty/error/loading covered per screen (§6.4, §8, §11 error, permission fallback, cache “Nothing cached”, trash “empty”, folders “No folders added”).

@@ -3,10 +3,18 @@ package fool.akza.foto.ui
 import android.graphics.Bitmap
 import androidx.activity.compose.BackHandler
 import androidx.annotation.StringRes
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
@@ -19,14 +27,23 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.CropLandscape
+import androidx.compose.material.icons.outlined.Home
+import androidx.compose.material.icons.outlined.CropPortrait
+import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
@@ -45,7 +62,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
@@ -68,6 +87,7 @@ import fool.akza.foto.data.fitWallpaperCrop
 import fool.akza.foto.data.toCropRegion
 import fool.akza.foto.data.transformWallpaperCrop
 import fool.akza.foto.ui.theme.AmoledBlack
+import fool.akza.foto.ui.theme.Border
 import fool.akza.foto.ui.theme.DeleteRed
 import fool.akza.foto.ui.theme.Surface as ThemeSurface
 import fool.akza.foto.ui.theme.TextMuted
@@ -76,7 +96,11 @@ import kotlinx.coroutines.launch
 import kotlin.math.max
 import kotlin.math.min
 
-private val WallpaperButtonShape = RoundedCornerShape(16.dp)
+private val WallpaperBarShape = RoundedCornerShape(21.dp)
+private val WallpaperSegmentShape = RoundedCornerShape(17.dp)
+private val SegmentWidth = 42.dp
+private val SegmentHeight = 36.dp
+private val SegmentGap = 3.dp
 
 /** The orientation of the wallpaper frame, independent of the device's rotation. */
 private enum class WallpaperOrientation(val labelRes: Int) {
@@ -84,11 +108,22 @@ private enum class WallpaperOrientation(val labelRes: Int) {
     Landscape(R.string.wallpaper_orientation_landscape),
 }
 
-@StringRes
-private fun WallpaperTarget.labelRes(): Int = when (this) {
-    WallpaperTarget.Home -> R.string.wallpaper_target_home
-    WallpaperTarget.Lock -> R.string.wallpaper_target_lock
-    WallpaperTarget.Both -> R.string.wallpaper_target_both
+private val WallpaperOrientation.icon: ImageVector
+    get() = when (this) {
+        WallpaperOrientation.Portrait -> Icons.Outlined.CropPortrait
+        WallpaperOrientation.Landscape -> Icons.Outlined.CropLandscape
+    }
+
+/** Picks the target for a pair of Home/Lock toggles, never leaving both off. */
+private fun resolveTarget(
+    home: Boolean,
+    lock: Boolean,
+    current: WallpaperTarget,
+): WallpaperTarget = when {
+    home && lock -> WallpaperTarget.Both
+    home -> WallpaperTarget.Home
+    lock -> WallpaperTarget.Lock
+    else -> current
 }
 
 /**
@@ -116,6 +151,8 @@ internal fun WallpaperScreen(
     var orientation by remember(item.uri) { mutableStateOf(WallpaperOrientation.Portrait) }
     var target by remember(item.uri) { mutableStateOf(WallpaperTarget.Home) }
     var crop by remember(item.uri) { mutableStateOf(NormalizedCrop(0f, 0f, 1f, 1f)) }
+    // The gesture hint yields the space to the frame once the user has panned.
+    var showHint by remember(item.uri) { mutableStateOf(true) }
     var saving by remember(item.uri) { mutableStateOf(false) }
     var saveFailed by remember(item.uri) { mutableStateOf(false) }
 
@@ -202,6 +239,7 @@ internal fun WallpaperScreen(
                         onCropChange = {
                             crop = it
                             saveFailed = false
+                            showHint = false
                         },
                     )
                     loadFailed -> Text(
@@ -233,6 +271,7 @@ internal fun WallpaperScreen(
                 enabled = bitmap != null && !saving,
                 saving = saving,
                 saveFailed = saveFailed,
+                showHint = showHint,
                 onOrientationChange = {
                     orientation = it
                     saveFailed = false
@@ -380,6 +419,7 @@ private fun WallpaperControls(
     enabled: Boolean,
     saving: Boolean,
     saveFailed: Boolean,
+    showHint: Boolean,
     onOrientationChange: (WallpaperOrientation) -> Unit,
     onTargetChange: (WallpaperTarget) -> Unit,
     onSet: () -> Unit,
@@ -387,75 +427,230 @@ private fun WallpaperControls(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 12.dp),
+            .padding(start = 16.dp, end = 16.dp, top = 2.dp, bottom = 12.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
+        AnimatedVisibility(
+            visible = showHint && !saveFailed,
+            enter = fadeIn(tween(160)),
+            exit = fadeOut(tween(160)),
         ) {
-            WallpaperOrientation.entries.forEach { option ->
-                SelectChip(
-                    label = stringResource(option.labelRes),
-                    selected = option == orientation,
-                    enabled = enabled,
-                    onClick = { onOrientationChange(option) },
-                )
-            }
+            Text(
+                text = stringResource(R.string.wallpaper_hint),
+                color = TextMuted,
+                fontSize = 12.sp,
+                modifier = Modifier.padding(bottom = 8.dp),
+            )
         }
-        Spacer(Modifier.height(8.dp))
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
-        ) {
-            WallpaperTarget.entries.forEach { option ->
-                SelectChip(
-                    label = stringResource(option.labelRes()),
-                    selected = option == target,
-                    enabled = enabled,
-                    onClick = { onTargetChange(option) },
-                )
-            }
-        }
-        Spacer(Modifier.height(10.dp))
-        Text(
-            text = stringResource(R.string.wallpaper_hint),
-            color = TextMuted,
-            fontSize = 12.sp,
-        )
         if (saveFailed) {
-            Spacer(Modifier.height(6.dp))
             Text(
                 text = stringResource(R.string.wallpaper_set_failed),
                 color = DeleteRed,
                 fontSize = 13.sp,
                 fontWeight = FontWeight.Medium,
+                modifier = Modifier.padding(bottom = 8.dp),
             )
         }
-        Spacer(Modifier.height(14.dp))
-        Surface(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(48.dp)
-                .clip(WallpaperButtonShape)
-                .clickable(
-                    enabled = enabled && !saving,
-                    role = Role.Button,
-                    onClick = onSet,
-                    indication = null,
-                    interactionSource = null,
-                ),
-            shape = WallpaperButtonShape,
-            color = if (enabled) TextPrimary else ThemeSurface,
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            Box(contentAlignment = Alignment.Center) {
-                Text(
-                    text = stringResource(R.string.wallpaper_set),
-                    color = if (enabled) AmoledBlack else TextMuted,
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.SemiBold,
-                )
+            OrientationToggle(
+                orientation = orientation,
+                enabled = enabled,
+                onChange = onOrientationChange,
+            )
+            Spacer(Modifier.width(8.dp))
+            TargetToggle(
+                target = target,
+                enabled = enabled,
+                onChange = onTargetChange,
+            )
+            Spacer(Modifier.weight(1f))
+            SetButton(enabled = enabled, saving = saving, onClick = onSet)
+        }
+    }
+}
+
+/**
+ * Two mutually exclusive icon segments in one pill. The white indicator slides
+ * between them, so the exclusive choice reads as motion, not just colour.
+ */
+@Composable
+private fun OrientationToggle(
+    orientation: WallpaperOrientation,
+    enabled: Boolean,
+    onChange: (WallpaperOrientation) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val options = WallpaperOrientation.entries
+    val indicatorX by animateDpAsState(
+        targetValue = (SegmentWidth + SegmentGap) * options.indexOf(orientation),
+        animationSpec = tween(220, easing = FastOutSlowInEasing),
+        label = "orientationIndicator",
+    )
+    Row(
+        modifier = modifier
+            .height(SegmentHeight + 6.dp)
+            .clip(WallpaperBarShape)
+            .border(1.dp, Border, WallpaperBarShape)
+            .padding(3.dp)
+            .selectableGroup(),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box {
+            Box(
+                modifier = Modifier
+                    .offset(x = indicatorX)
+                    .size(SegmentWidth, SegmentHeight)
+                    .clip(WallpaperSegmentShape)
+                    .background(TextPrimary),
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(SegmentGap)) {
+                options.forEach { option ->
+                    val selected = option == orientation
+                    val tint by animateColorAsState(
+                        targetValue = if (selected) AmoledBlack else TextPrimary,
+                        animationSpec = tween(220, easing = FastOutSlowInEasing),
+                        label = "orientationTint",
+                    )
+                    Box(
+                        modifier = Modifier
+                            .size(SegmentWidth, SegmentHeight)
+                            .clip(WallpaperSegmentShape)
+                            .selectable(
+                                selected = selected,
+                                enabled = enabled,
+                                role = Role.RadioButton,
+                                onClick = { onChange(option) },
+                                indication = null,
+                                interactionSource = null,
+                            ),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            imageVector = option.icon,
+                            contentDescription = stringResource(option.labelRes),
+                            tint = if (enabled) tint else TextMuted,
+                            modifier = Modifier.size(20.dp),
+                        )
+                    }
+                }
             }
+        }
+    }
+}
+
+/** Home and Lock are independent toggles; both on means both screens. */
+@Composable
+private fun TargetToggle(
+    target: WallpaperTarget,
+    enabled: Boolean,
+    onChange: (WallpaperTarget) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val home = target != WallpaperTarget.Lock
+    val lock = target != WallpaperTarget.Home
+    Row(
+        modifier = modifier
+            .height(SegmentHeight + 6.dp)
+            .clip(WallpaperBarShape)
+            .border(1.dp, Border, WallpaperBarShape)
+            .padding(3.dp),
+        horizontalArrangement = Arrangement.spacedBy(SegmentGap),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        TargetSegment(
+            icon = Icons.Outlined.Home,
+            contentDescription = stringResource(R.string.wallpaper_target_home),
+            checked = home,
+            enabled = enabled,
+            onCheckedChange = { onChange(resolveTarget(it, lock, target)) },
+        )
+        TargetSegment(
+            icon = Icons.Outlined.Lock,
+            contentDescription = stringResource(R.string.wallpaper_target_lock),
+            checked = lock,
+            enabled = enabled,
+            onCheckedChange = { onChange(resolveTarget(home, it, target)) },
+        )
+    }
+}
+
+@Composable
+private fun TargetSegment(
+    icon: ImageVector,
+    contentDescription: String,
+    checked: Boolean,
+    enabled: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+) {
+    val background by animateColorAsState(
+        targetValue = if (checked) TextPrimary else Color.Transparent,
+        animationSpec = tween(180, easing = FastOutSlowInEasing),
+        label = "targetBackground",
+    )
+    val tint by animateColorAsState(
+        targetValue = if (checked) AmoledBlack else TextPrimary,
+        animationSpec = tween(180, easing = FastOutSlowInEasing),
+        label = "targetTint",
+    )
+    Box(
+        modifier = Modifier
+            .size(SegmentWidth, SegmentHeight)
+            .clip(WallpaperSegmentShape)
+            .background(background)
+            .toggleable(
+                value = checked,
+                enabled = enabled,
+                role = Role.Checkbox,
+                onValueChange = onCheckedChange,
+                indication = null,
+                interactionSource = null,
+            ),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = contentDescription,
+            tint = if (enabled) tint else TextMuted,
+            modifier = Modifier.size(20.dp),
+        )
+    }
+}
+
+@Composable
+private fun SetButton(
+    enabled: Boolean,
+    saving: Boolean,
+    onClick: () -> Unit,
+) {
+    Surface(
+        modifier = Modifier
+            .heightIn(min = SegmentHeight + 6.dp)
+            .clip(WallpaperBarShape)
+            .clickable(
+                enabled = enabled && !saving,
+                role = Role.Button,
+                onClick = onClick,
+                indication = null,
+                interactionSource = null,
+            ),
+        shape = WallpaperBarShape,
+        color = if (enabled) TextPrimary else ThemeSurface,
+        border = if (enabled) null else BorderStroke(1.dp, Border),
+    ) {
+        Box(
+            modifier = Modifier.padding(horizontal = 18.dp, vertical = 2.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                text = stringResource(R.string.wallpaper_set_short),
+                color = if (enabled) AmoledBlack else TextMuted,
+                fontSize = 14.sp,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+            )
         }
     }
 }
