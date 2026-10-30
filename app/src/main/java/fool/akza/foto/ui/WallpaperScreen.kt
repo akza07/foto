@@ -6,12 +6,23 @@ import android.content.ContextWrapper
 import android.graphics.Bitmap
 import androidx.activity.compose.BackHandler
 import androidx.annotation.StringRes
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -20,6 +31,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectTransformGestures
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -31,6 +44,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -70,6 +84,7 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalConfiguration
@@ -102,6 +117,7 @@ import fool.akza.foto.ui.theme.EmptySurface
 import fool.akza.foto.ui.theme.Surface
 import fool.akza.foto.ui.theme.TextMuted
 import fool.akza.foto.ui.theme.TextPrimary
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.math.max
 import kotlin.math.min
@@ -159,6 +175,11 @@ internal fun WallpaperScreen(
     var previewing by remember(item.uri) { mutableStateOf(false) }
     var saving by remember(item.uri) { mutableStateOf(false) }
     var saveFailed by remember(item.uri) { mutableStateOf(false) }
+    // The host drops us from the tree as soon as it is told to close, so the
+    // exit animation has to play here and call back when it is done.
+    var entered by remember { mutableStateOf(false) }
+    var closing by remember(item.uri) { mutableStateOf(false) }
+    var applied by remember(item.uri) { mutableStateOf(false) }
 
     // Long edge over short edge, so the frame aspect doesn't depend on how the
     // device happens to be rotated right now.
@@ -171,6 +192,15 @@ internal fun WallpaperScreen(
         WallpaperOrientation.Portrait -> 1f / screenAspect
         WallpaperOrientation.Landscape -> screenAspect
     }
+
+    // Rotating the frame morphs between the two aspects. The crop is refitted to
+    // the animated aspect every frame, so the photo is never stretched mid-morph
+    // and lands exactly on the new frame shape.
+    val frameAspectAnim = remember { Animatable(frameAspect) }
+    LaunchedEffect(frameAspect) {
+        frameAspectAnim.animateTo(frameAspect, tween(300, easing = FastOutSlowInEasing))
+    }
+    val morphing = frameAspectAnim.isRunning
 
     LaunchedEffect(item.uri) {
         val loaded = ImageCropper.loadEditableBitmap(context, item.uri)
@@ -186,10 +216,36 @@ internal fun WallpaperScreen(
         saveFailed = false
     }
 
-    BackHandler(enabled = !saving && !previewing) { onDismiss() }
+    BackHandler(enabled = !saving && !previewing && !closing) { closing = true }
+
+    LaunchedEffect(Unit) { entered = true }
+    LaunchedEffect(closing) {
+        if (!closing) return@LaunchedEffect
+        delay(240)
+        if (applied) onApplied() else onDismiss()
+    }
 
     val bitmap = bitmapState.value
     val enabled = bitmap != null && !saving
+    val renderedAspect = frameAspectAnim.value
+    val renderedCrop = if (morphing) {
+        bitmap?.let { source ->
+            fitWallpaperCrop(
+                renderedAspect,
+                source.width.toFloat() / source.height.toFloat(),
+            )
+        } ?: crop
+    } else {
+        crop
+    }
+    val contentProgress by animateFloatAsState(
+        targetValue = if (entered && !closing) 1f else 0f,
+        animationSpec = tween(
+            durationMillis = if (closing) 200 else 300,
+            easing = FastOutSlowInEasing,
+        ),
+        label = "contentEnter",
+    )
 
     Box(
         modifier = modifier
@@ -212,11 +268,15 @@ internal fun WallpaperScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .statusBarsPadding()
-                .navigationBarsPadding(),
+                .navigationBarsPadding()
+                .graphicsLayer {
+                    alpha = contentProgress
+                    translationY = (1f - contentProgress) * 64.dp.toPx()
+                },
         ) {
             WallpaperTopBar(
                 enabled = !saving,
-                onDismiss = onDismiss,
+                onDismiss = { if (!closing) closing = true },
             )
 
             Box(
@@ -226,35 +286,47 @@ internal fun WallpaperScreen(
                     .padding(horizontal = 16.dp, vertical = 4.dp),
                 contentAlignment = Alignment.Center,
             ) {
-                when {
-                    bitmap != null -> WallpaperPreview(
-                        bitmap = bitmap,
-                        crop = crop,
-                        frameAspect = frameAspect,
-                        onCropChange = {
-                            crop = it
-                            saveFailed = false
-                        },
-                    )
-                    loadFailed -> Text(
-                        text = stringResource(R.string.crop_load_failed),
-                        color = TextMuted,
-                        fontSize = 14.sp,
-                    )
-                    else -> Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(12.dp),
-                    ) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(22.dp),
-                            strokeWidth = 2.dp,
-                            color = TextPrimary,
+                AnimatedContent(
+                    targetState = bitmap,
+                    transitionSpec = {
+                        (fadeIn(tween(220)) + scaleIn(
+                            initialScale = 0.97f,
+                            animationSpec = tween(280, easing = FastOutSlowInEasing),
+                        )).togetherWith(fadeOut(tween(140)))
+                    },
+                    label = "previewContent",
+                ) { source ->
+                    when {
+                        source != null -> WallpaperPreview(
+                            bitmap = source,
+                            crop = renderedCrop,
+                            frameAspect = renderedAspect,
+                            gesturesEnabled = !morphing,
+                            onCropChange = {
+                                crop = it
+                                saveFailed = false
+                            },
                         )
-                        Text(
-                            text = stringResource(R.string.crop_loading),
+                        loadFailed -> Text(
+                            text = stringResource(R.string.crop_load_failed),
                             color = TextMuted,
                             fontSize = 14.sp,
                         )
+                        else -> Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(12.dp),
+                        ) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(22.dp),
+                                strokeWidth = 2.dp,
+                                color = TextPrimary,
+                            )
+                            Text(
+                                text = stringResource(R.string.crop_loading),
+                                color = TextMuted,
+                                fontSize = 14.sp,
+                            )
+                        }
                     }
                 }
             }
@@ -291,7 +363,10 @@ internal fun WallpaperScreen(
                         )
                         saving = false
                         when (result) {
-                            WallpaperResult.Applied -> onApplied()
+                            WallpaperResult.Applied -> {
+                                applied = true
+                                closing = true
+                            }
                             is WallpaperResult.Failed -> saveFailed = true
                         }
                     }
@@ -301,8 +376,14 @@ internal fun WallpaperScreen(
 
         AnimatedVisibility(
             visible = previewing && bitmap != null,
-            enter = fadeIn(tween(160)),
-            exit = fadeOut(tween(160)),
+            enter = fadeIn(tween(200)) + scaleIn(
+                initialScale = 1.04f,
+                animationSpec = tween(280, easing = FastOutSlowInEasing),
+            ),
+            exit = fadeOut(tween(160)) + scaleOut(
+                targetScale = 0.98f,
+                animationSpec = tween(200, easing = FastOutSlowInEasing),
+            ),
         ) {
             bitmap?.let { source ->
                 FullscreenPreview(
@@ -381,6 +462,7 @@ private fun WallpaperPreview(
     bitmap: Bitmap,
     crop: NormalizedCrop,
     frameAspect: Float,
+    gesturesEnabled: Boolean,
     onCropChange: (NormalizedCrop) -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -418,7 +500,10 @@ private fun WallpaperPreview(
                 Canvas(
                     modifier = Modifier
                         .fillMaxSize()
-                        .pointerInput(bitmap, frameAspect) {
+                        .pointerInput(bitmap, gesturesEnabled) {
+                            // Gestures are off while the frame morphs: the crop
+                            // is being refitted every frame and would fight back.
+                            if (!gesturesEnabled) return@pointerInput
                             detectTransformGestures { centroid, pan, zoom, _ ->
                                 val current = latestCrop.value
                                 val w = size.width.toFloat()
@@ -690,7 +775,13 @@ private fun WallpaperControlPanel(
             )
         }
 
-        if (saveFailed) {
+        AnimatedVisibility(
+            visible = saveFailed,
+            enter = fadeIn(tween(160)) +
+                expandVertically(tween(180, easing = FastOutSlowInEasing)),
+            exit = fadeOut(tween(120)) +
+                shrinkVertically(tween(160, easing = FastOutSlowInEasing)),
+        ) {
             Text(
                 text = stringResource(R.string.wallpaper_set_failed),
                 color = DeleteRed,
@@ -713,64 +804,97 @@ private fun TargetTabs(
     enabled: Boolean,
     onChange: (WallpaperTarget) -> Unit,
 ) {
-    Row(
+    BoxWithConstraints(
         modifier = Modifier
             .fillMaxWidth()
             .clip(TrackShape)
             .background(EmptySurface)
             .padding(4.dp)
             .selectableGroup(),
-        horizontalArrangement = Arrangement.spacedBy(4.dp),
     ) {
-        WallpaperTargets.forEach { option ->
-            val selected = option.target == target
-            val background by animateColorAsState(
-                targetValue = if (selected) Border else Color.Transparent,
-                animationSpec = tween(180, easing = FastOutSlowInEasing),
-                label = "tabBackground",
-            )
-            val content by animateColorAsState(
-                targetValue = when {
-                    selected -> TextPrimary
-                    enabled -> TextMuted
-                    else -> TextMuted.copy(alpha = 0.45f)
-                },
-                animationSpec = tween(180, easing = FastOutSlowInEasing),
-                label = "tabContent",
-            )
-            Row(
-                modifier = Modifier
-                    .weight(1f)
-                    .height(36.dp)
-                    .clip(TabShape)
-                    .background(background)
-                    .selectable(
-                        selected = selected,
-                        enabled = enabled,
-                        role = Role.Tab,
-                        onClick = { onChange(option.target) },
-                        indication = null,
-                        interactionSource = null,
-                    ),
-                horizontalArrangement = Arrangement.Center,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Icon(
-                    imageVector = option.icon,
-                    contentDescription = null,
-                    tint = content,
-                    modifier = Modifier.size(16.dp),
+        val gap = 4.dp
+        val segmentWidth = ((maxWidth - gap) / 2).coerceAtLeast(0.dp)
+        val index = WallpaperTargets.indexOfFirst { it.target == target }.coerceAtLeast(0)
+        // One pill slides between the tabs instead of each tab fading its own
+        // background, so a switch reads as a single movement.
+        val indicatorX by animateDpAsState(
+            targetValue = (segmentWidth + gap) * index,
+            animationSpec = tween(240, easing = FastOutSlowInEasing),
+            label = "tabIndicator",
+        )
+
+        Box(
+            modifier = Modifier
+                .offset(x = indicatorX)
+                .width(segmentWidth)
+                .height(36.dp)
+                .clip(TabShape)
+                .background(Border),
+        )
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(gap),
+        ) {
+            WallpaperTargets.forEach { option ->
+                val selected = option.target == target
+                val content by animateColorAsState(
+                    targetValue = when {
+                        selected -> TextPrimary
+                        enabled -> TextMuted
+                        else -> TextMuted.copy(alpha = 0.45f)
+                    },
+                    animationSpec = tween(180, easing = FastOutSlowInEasing),
+                    label = "tabContent",
                 )
-                Spacer(Modifier.width(6.dp))
-                Text(
-                    text = stringResource(option.labelRes),
-                    color = content,
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.Medium,
-                    maxLines = 1,
-                )
+                Row(
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(36.dp)
+                        .clip(TabShape)
+                        .selectable(
+                            selected = selected,
+                            enabled = enabled,
+                            role = Role.Tab,
+                            onClick = { onChange(option.target) },
+                            indication = null,
+                            interactionSource = null,
+                        ),
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(
+                        imageVector = option.icon,
+                        contentDescription = null,
+                        tint = content,
+                        modifier = Modifier.size(16.dp),
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                        text = stringResource(option.labelRes),
+                        color = content,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Medium,
+                        maxLines = 1,
+                    )
+                }
             }
         }
+    }
+}
+
+/** Press-down scale, driven by the same interaction source as the clickable. */
+@Composable
+private fun Modifier.pressScale(interactionSource: MutableInteractionSource): Modifier {
+    val pressed by interactionSource.collectIsPressedAsState()
+    val scale by animateFloatAsState(
+        targetValue = if (pressed) 0.97f else 1f,
+        animationSpec = tween(120, easing = FastOutSlowInEasing),
+        label = "pressScale",
+    )
+    return graphicsLayer {
+        scaleX = scale
+        scaleY = scale
     }
 }
 
@@ -787,9 +911,11 @@ private fun PanelOption(
         animationSpec = tween(180, easing = FastOutSlowInEasing),
         label = "optionContent",
     )
+    val interaction = remember { MutableInteractionSource() }
     Row(
         modifier = modifier
             .height(40.dp)
+            .pressScale(interaction)
             .clip(OptionShape)
             .background(EmptySurface)
             .border(1.dp, Border, OptionShape)
@@ -798,7 +924,7 @@ private fun PanelOption(
                 role = Role.Button,
                 onClick = onClick,
                 indication = null,
-                interactionSource = null,
+                interactionSource = interaction,
             ),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.Center,
@@ -837,17 +963,19 @@ private fun SetWallpaperButton(
         animationSpec = tween(180, easing = FastOutSlowInEasing),
         label = "setContent",
     )
+    val interaction = remember { MutableInteractionSource() }
     Surface(
         modifier = modifier
             .fillMaxWidth()
             .heightIn(min = 46.dp)
+            .pressScale(interaction)
             .clip(OptionShape)
             .clickable(
                 enabled = enabled && !saving,
                 role = Role.Button,
                 onClick = onClick,
                 indication = null,
-                interactionSource = null,
+                interactionSource = interaction,
             ),
         shape = OptionShape,
         color = container,

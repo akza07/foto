@@ -182,8 +182,9 @@ edge-to-edge rendering.
     returns the new item and its thumbnail has been queued.
   - **Wallpaper:** full-screen picker whose device-shaped preview is the crop
     itself (portrait or landscape frame matching the screen), with Lock / Home
-    targets, pinch/drag repositioning, and a Preview action that drops all chrome
-    and the system bars to show the wallpaper edge to edge. Nothing is written to
+    targets, pinch/drag repositioning, animated frame/tab transitions, and a
+    Preview action that drops all chrome and the system bars to show the wallpaper
+    edge to edge. Nothing is written to
     storage: the crop goes straight to the system wallpaper service
     (`WallpaperManager.setBitmap`), so the original is untouched.
 
