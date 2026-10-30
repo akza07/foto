@@ -6,6 +6,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -46,6 +47,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -57,6 +59,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
 import fool.akza.foto.R
+import fool.akza.foto.data.MediaItem
 import fool.akza.foto.data.PrivateTrash
 import fool.akza.foto.data.SystemTrash
 import fool.akza.foto.data.TrashEntry
@@ -83,6 +86,8 @@ fun TrashScreen(onBack: () -> Unit, onChanged: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var entries by remember { mutableStateOf<List<TrashEntry>?>(null) }
+    var previewItems by remember { mutableStateOf<List<MediaItem>?>(null) }
+    var previewIndex by remember { mutableStateOf(0) }
     var showEmptyConfirm by remember { mutableStateOf(false) }
     var pendingPrivateDelete by remember { mutableStateOf<TrashEntry?>(null) }
     // Private entries to remove after the system-trash delete prompt succeeds.
@@ -168,6 +173,12 @@ fun TrashScreen(onBack: () -> Unit, onChanged: () -> Unit) {
 
     val list = entries ?: emptyList()
     val totalBytes = remember(list) { list.sumOf { it.sizeBytes } }
+    val openPreview: (TrashEntry) -> Unit = { entry ->
+        TrashRepository.previewItem(context, entry)?.let { item ->
+            previewItems = listOf(item)
+            previewIndex = 0
+        }
+    }
 
     FrostedHeaderScaffold(
         background = AmoledBlack,
@@ -262,6 +273,7 @@ fun TrashScreen(onBack: () -> Unit, onChanged: () -> Unit) {
                 items(list, key = { it.uri.toString() }) { entry ->
                     TrashRow(
                         entry = entry,
+                        onOpen = { openPreview(entry) },
                         onRestore = {
                             if (entry.source == TrashSource.Private) {
                                 restorePrivate(entry)
@@ -333,12 +345,39 @@ fun TrashScreen(onBack: () -> Unit, onChanged: () -> Unit) {
             onDismiss = { pendingPrivateDelete = null },
         )
     }
+
+    val preview = previewItems
+    if (preview != null && preview.isNotEmpty()) {
+        FullImageViewer(
+            items = preview,
+            initialIndex = previewIndex.coerceIn(0, preview.lastIndex),
+            sourceRect = Rect.Zero,
+            onDismiss = { previewItems = null },
+            onPageChanged = { previewIndex = it },
+            onDelete = {},
+            onShare = {},
+            onInfo = {},
+            onCrop = {},
+            previewOnly = true,
+        )
+    }
 }
 
 @Composable
-private fun TrashRow(entry: TrashEntry, onRestore: () -> Unit, onDelete: () -> Unit) {
+private fun TrashRow(
+    entry: TrashEntry,
+    onOpen: () -> Unit,
+    onRestore: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    val context = LocalContext.current
+    // Private entries have no MediaStore row; point the preview at the bytes
+    // kept in Foto's private trash so thumbnails and the viewer still work.
+    val preview = remember(entry) { TrashRepository.previewItem(context, entry) }
     Surface(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onOpen),
         shape = RoundedCornerShape(12.dp),
         color = ThemeSurface,
         shadowElevation = 0.dp,
@@ -356,20 +395,39 @@ private fun TrashRow(entry: TrashEntry, onRestore: () -> Unit, onDelete: () -> U
                     .background(ThemeSurface),
                 contentAlignment = Alignment.Center,
             ) {
-                // Trashed rows are not decodable thumbnails on every provider, so
-                // a glyph sits behind the image and shows through when it can't load.
+                // Glyph sits behind the preview and shows through when a provider
+                // cannot decode a trashed row.
                 Icon(
                     imageVector = if (entry.isVideo) Icons.Filled.PlayArrow else Icons.Outlined.Image,
                     contentDescription = null,
                     tint = TextMuted,
                     modifier = Modifier.size(20.dp),
                 )
-                AsyncImage(
-                    model = entry.uri,
-                    contentDescription = null,
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier.fillMaxSize(),
-                )
+                if (preview != null) {
+                    if (preview.isVideo) {
+                        VideoPosterThumb(
+                            item = preview,
+                            modifier = Modifier.fillMaxSize(),
+                        )
+                        // Small play affordance on top of the poster.
+                        Icon(
+                            imageVector = Icons.Filled.PlayArrow,
+                            contentDescription = null,
+                            tint = TextPrimary,
+                            modifier = Modifier
+                                .align(Alignment.BottomEnd)
+                                .padding(3.dp)
+                                .size(14.dp),
+                        )
+                    } else {
+                        AsyncImage(
+                            model = preview.uri,
+                            contentDescription = null,
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier.fillMaxSize(),
+                        )
+                    }
+                }
             }
             Spacer(Modifier.width(12.dp))
             Column(modifier = Modifier.weight(1f)) {

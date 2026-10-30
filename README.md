@@ -292,6 +292,8 @@ edge-to-edge rendering.
   app copying bytes); SAF documents from added folders move into Foto's private
   trash because the platform has no trash for them. The Trash screen
   (Settings → Storage → Trash) lists both with restore and permanent delete.
+  Trash rows show real image/video thumbnails (private SAF entries are read from
+  the app-private copy), and tapping a row opens a read-only in-app viewer/player.
 
 ---
 

@@ -87,6 +87,26 @@ object PrivateTrash {
         }
     }
 
+    /** A viewer-ready item backed by the private trash file, or null if missing. */
+    fun previewItem(context: Context, entry: TrashEntry): MediaItem? {
+        val id = entry.privateId ?: return null
+        val file = dataFile(context, id)
+        if (!file.isFile) return null
+        return MediaItem(
+            id = 0L,
+            uri = Uri.fromFile(file),
+            bucketId = "",
+            bucketName = "",
+            relativePath = null,
+            dateAdded = entry.dateModified,
+            isVideo = entry.isVideo,
+            displayName = entry.name,
+            mimeType = entry.mimeType,
+            lastModified = file.lastModified() / 1000L,
+            sizeBytes = file.length(),
+        )
+    }
+
     /** Entries currently held in the private trash, newest first. */
     suspend fun list(context: Context): List<TrashEntry> = withContext(Dispatchers.IO) {
         listMetas(context).mapNotNull { meta ->

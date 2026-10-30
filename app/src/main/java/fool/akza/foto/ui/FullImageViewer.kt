@@ -220,6 +220,8 @@ fun FullImageViewer(
     onInfo: (MediaItem) -> Unit,
     onCrop: (MediaItem) -> Unit,
     loopVideos: Boolean = false,
+    /** View/play only: no action wheel, drawer, delete, share, info or crop. */
+    previewOnly: Boolean = false,
     pendingRemoval: MediaItem? = null,
     /** A file delete has been accepted but has not yet completed. */
     deleteInProgress: Boolean = false,
@@ -512,15 +514,25 @@ fun FullImageViewer(
             // Applies to images and videos alike: the video pill only covers the
             // bottom, so a swipe starting on the video surface reaches this
             // detector cleanly.
-            .pointerInput(currentPageZoomed, drawerVisible, radialPresent, leaving, multiTouchActive, removing) {
+            .pointerInput(
+                currentPageZoomed,
+                drawerVisible,
+                radialPresent,
+                leaving,
+                multiTouchActive,
+                removing,
+                previewOnly,
+            ) {
                 if (!currentPageZoomed && !drawerVisible && !radialPresent && !leaving &&
                     !multiTouchActive && !removing
                 ) {
                     detectVerticalSwipe(
                         threshold = swipeThreshold,
                         onSwipeUp = {
-                            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                            drawerVisible = true
+                            if (!previewOnly) {
+                                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                drawerVisible = true
+                            }
                         },
                         onSwipeDown = { close() },
                     )
@@ -532,8 +544,8 @@ fun FullImageViewer(
             // longer owns a long-press of its own, so this detector serves
             // images and videos alike; opening the wheel pauses video so the
             // action applies to a frozen frame (no auto-resume).
-            .pointerInput(drawerVisible, leaving, multiTouchActive, removing) {
-                if (drawerVisible || leaving || multiTouchActive || removing) {
+            .pointerInput(drawerVisible, leaving, multiTouchActive, removing, previewOnly) {
+                if (previewOnly || drawerVisible || leaving || multiTouchActive || removing) {
                     return@pointerInput
                 }
                 awaitEachGesture {
@@ -802,7 +814,7 @@ fun FullImageViewer(
         }
 
         // Long-press radial menu: 4 sectors on images, Delete/Info/Share on video.
-        if (radialPresent) {
+        if (radialPresent && !previewOnly) {
             ViewerActionWheel(
                 center = radialCenter,
                 hovered = radialHovered,
@@ -815,7 +827,7 @@ fun FullImageViewer(
 
         // Sliding bottom action drawer.
         AnimatedVisibility(
-            visible = drawerVisible,
+            visible = drawerVisible && !previewOnly,
             enter = slideInVertically(initialOffsetY = { it }) + fadeIn(),
             exit = slideOutVertically(targetOffsetY = { it }) + fadeOut(),
         ) {

@@ -35,4 +35,25 @@ object TrashRepository {
         (SystemTrash.list(context) + PrivateTrash.list(context))
             .sortedByDescending { it.dateModified }
     }
+
+    /**
+     * Builds a viewer-ready item for [entry]. Private entries point at the
+     * app-private data file; system entries point at the trashed MediaStore row.
+     */
+    fun previewItem(context: Context, entry: TrashEntry): MediaItem? = when (entry.source) {
+        TrashSource.Private -> PrivateTrash.previewItem(context, entry)
+        TrashSource.System -> MediaItem(
+            id = entry.uri.lastPathSegment?.toLongOrNull() ?: 0L,
+            uri = entry.uri,
+            bucketId = "",
+            bucketName = "",
+            relativePath = null,
+            dateAdded = entry.dateModified,
+            isVideo = entry.isVideo,
+            displayName = entry.name,
+            mimeType = entry.mimeType,
+            lastModified = entry.dateModified,
+            sizeBytes = entry.sizeBytes,
+        )
+    }
 }
