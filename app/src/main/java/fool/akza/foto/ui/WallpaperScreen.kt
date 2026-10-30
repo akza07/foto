@@ -216,7 +216,15 @@ internal fun WallpaperScreen(
         saveFailed = false
     }
 
-    BackHandler(enabled = !saving && !previewing && !closing) { closing = true }
+    // Registered for as long as the picker is mounted, so a back press while the
+    // wallpaper is being applied or while the close animation runs is swallowed
+    // here. If this handler is disabled, the press falls through to the viewer's
+    // handler underneath, which closes the viewer and dumps the user on the grid.
+    // While the fullscreen preview is up, its own handler is composed later and
+    // takes precedence.
+    BackHandler {
+        if (!saving && !closing) closing = true
+    }
 
     LaunchedEffect(Unit) { entered = true }
     LaunchedEffect(closing) {
