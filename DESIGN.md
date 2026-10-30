@@ -45,7 +45,7 @@
 - **Frosted chrome:** top app bars are translucent gradient scrims plus 18dp backdrop blur. Content scrolls underneath.
 - **Calm motion:** 180–320ms tweens with `FastOutSlowInEasing`, spring blooms for radial/zoom, per-frame transforms in the draw phase (60fps, no jank).
 - **Skeleton-first loading:** never show empty gaps; show shimmer placeholders while decoding.
-- **Safe deletes:** every delete goes to Android's system trash (MediaStore, API 30+) — instant, no byte copies — and offers Undo. SAF documents, which have no trash, are removed outright after the in-app confirm.
+- **Safe deletes:** every delete is undoable. MediaStore files go to Android's system trash (API 30+) — instant, no byte copies. SAF documents (added folders, `.nomedia` content), which have no platform trash, are copied into Foto's private trash first. Both kinds offer Undo.
 
 ---
 
@@ -303,7 +303,7 @@ No custom font family; system default with Material3 defaults. Exact usages:
 
 ### 9.5 Delete / share / info / crop
 
-- Drawer Delete (red): video deletes always confirm; other items only show the in-app confirm when the delete is permanent (SAF, or no system trash) — the provider's trash prompt is the confirmation otherwise. Deleting trashes through `MediaStore.createTrashRequest` (no copy) → “Moved to trash” Undo bar (6s) + slide to neighbor (280ms `FastOutSlowIn`; next if exists else prev; last item dismisses). Undo untrashes and slides back. The Trash screen lists everything in the system trash.
+- Drawer Delete (red): video deletes always confirm; other MediaStore items rely on the provider's trash prompt. SAF documents get the in-app confirm because they go to Foto's private trash instead. MediaStore deletes use `MediaStore.createTrashRequest` (no copy); SAF deletes copy bytes into app storage then remove the document. Both show the “Moved to trash” Undo bar (6s) + slide to neighbor (280ms `FastOutSlowIn`; next if exists else prev; last item dismisses). Undo restores from the matching trash and slides back.
 - Share: system chooser with URI grant. Info: bottom sheet (see §11). Crop: full-screen crop editor (see §9.6).
 - Page change updates settled index; list shrink clamps pager; input gated during slide.
 
@@ -369,7 +369,7 @@ Real playback via single ExoPlayer per viewer session (no per-page players). Aud
 
 **Action bar (bottom-center):** full-width `#09090B` 12dp elevation + nav-bar padding. Top row 8dp/8dp: `Close` white (“Exit selection”) + “N selected” 16sp SemiBold (weight 1). Bottom row 16dp/4dp `SpaceEvenly`: Delete (outlined, white) / Copy / Move / Share — each 10dp round clickable 12dp/6dp padding: 22dp white icon + 4dp gap + 11sp Medium muted label.
 
-**Behaviors:** Delete → system trash request (in-app confirm only when the delete is permanent) → Undo. Selection chrome animates: header cross-fades, badges fade+scale in, action bar slides up. Copy/Move → system directory picker (SAF) + busy overlay (“Copying/Moving N items…”) → toasts (“Copied/Moved N items” or partial “Moved X, copied Y”). Share → chooser with grants.
+**Behaviors:** Delete → system trash request for MediaStore items, private trash for SAF documents (in-app confirm for the latter) → Undo. Selection chrome animates: header cross-fades, badges fade+scale in, action bar slides up. Copy/Move → system directory picker (SAF) + busy overlay (“Copying/Moving N items…”) → toasts (“Copied/Moved N items” or partial “Moved X, copied Y”). Share → chooser with grants.
 
 ---
 
@@ -411,11 +411,11 @@ Same frosted header (“Folders”). Hint 13sp/18sp muted 4dp start: allow-mode 
 
 ### 14.2 Trash screen
 
-Android's system trash (MediaStore `QUERY_ARG_MATCH_TRASHED`, API 30+), newest-modified first; the same files appear in the platform's own trash UI. Same slide/frosted chrome (“Trash” 22sp + back + “Empty” text-button with `DeleteSweep` icon: white when non-empty, muted when empty; while the Empty request is pending 16dp spinner + “Emptying…”). On API 29 (no system trash) the screen shows “Android trash needs Android 11 or newer”.
+Merged list of Android's system trash (MediaStore `QUERY_ARG_MATCH_TRASHED`, API 30+) and Foto's private SAF trash, newest first. System entries also appear in the platform's own trash UI. Same slide/frosted chrome (“Trash” 22sp + back + “Empty” text-button with `DeleteSweep` icon: white when non-empty, muted when empty; while the Empty request is pending 16dp spinner + “Emptying…”).
 
 - Empty: centered “Trash is empty” 14sp muted. Else list 16dp sides, top status+56+8dp, bottom 8dp, 8dp spacing: summary 12sp muted (“N · size”) 4dp start/bottom.
-- Row card 12dp `#09090B` 8dp padding: 52dp thumb 9dp corners (glyph behind the image for providers that can't decode trashed rows; video `Play`) + 12dp gap + name 14sp Medium 1 line + size 12sp muted (weight 1) + `Restore` outlined white (“Restore”) → `createTrashRequest(value=false)` + reloads + `onChanged`; `Delete` outlined red (“Delete”) → `createDeleteRequest` (permanent) + reloads.
-- “Empty” → destructive confirm (“Empty trash?” / “Items in the trash will be permanently deleted. This can’t be undone.” / Cancel + Empty red) → `createDeleteRequest` for the whole list → reloads while “Emptying…”. Every provider request is approved in the system dialog, so no in-screen undo.
+- Row card 12dp `#09090B` 8dp padding: 52dp thumb 9dp corners (glyph behind the image for providers that can't decode trashed rows, and for private entries whose original is gone; video `Play`) + 12dp gap + name 14sp Medium 1 line + size 12sp muted (weight 1) + `Restore` outlined white (“Restore”) → system `createTrashRequest(value=false)` or private restore + reloads + `onChanged`; `Delete` outlined red (“Delete”) → system `createDeleteRequest` or a permanent-delete confirm for private entries + reloads.
+- “Empty” → destructive confirm (“Empty trash?” / “Items in the trash will be permanently deleted. This can’t be undone.” / Cancel + Empty red) → system `createDeleteRequest` for system entries and direct removal of private entries → reloads while “Emptying…”. Provider requests are approved in the system dialog; private entries need no prompt.
 
 ---
 
@@ -455,7 +455,7 @@ Overlay on gallery when permissions granted + unseen; replayable via Settings (a
 - Allow-list on: only inside added dirs shown (each with media = album); empty list = nothing. Off: all except added dirs.
 - Added dirs browsed via SAF tree (recursive) + MediaStore merged/deduped by path; picker persists read+write so deletes survive restart. Primary-volume matching assumed.
 - Cache: thumbnails + video frame-0 posters (720px) unified (grid = viewer = player first frame, pixel-identical crossfade); LRU 48/96MB → disk → extract → MediaStore → Coil. Progress pill counts real work.
-- Trash: copy-to-trash then remove original (undoable); isolated from system trash; uninstall wipes all (backup disabled).
+- Trash: MediaStore items go to the system trash; SAF documents copy into app-private trash then remove the original. Both are undoable/restorable; uninstall wipes private trash (backup disabled).
 
 ---
 

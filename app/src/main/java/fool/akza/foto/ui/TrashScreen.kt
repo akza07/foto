@@ -57,8 +57,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
 import fool.akza.foto.R
+import fool.akza.foto.data.PrivateTrash
 import fool.akza.foto.data.SystemTrash
-import fool.akza.foto.data.SystemTrashEntry
+import fool.akza.foto.data.TrashEntry
+import fool.akza.foto.data.TrashRepository
+import fool.akza.foto.data.TrashSource
 import fool.akza.foto.ui.theme.AmoledBlack
 import fool.akza.foto.ui.theme.Surface as ThemeSurface
 import fool.akza.foto.ui.theme.TextMuted
@@ -68,19 +71,22 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
- * Android's system trash (MediaStore, API 30+), shown in-app.
+ * Foto's Trash screen: Android's system trash plus the app-private SAF trash.
  *
- * Foto no longer keeps a private copy of deleted files: deleting moves the row
- * into the platform trash, which is instant and shared with the system, so the
- * user can restore from either place. Restore and permanent delete both go
- * through the provider, which prompts for approval once per request.
+ * MediaStore items are moved into the platform trash, which is instant and
+ * shared with the system. SAF documents (for example media from added folders)
+ * have no platform trash, so [PrivateTrash] keeps their bytes in app storage
+ * until the user restores or permanently deletes them here.
  */
 @Composable
 fun TrashScreen(onBack: () -> Unit, onChanged: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    var entries by remember { mutableStateOf<List<SystemTrashEntry>?>(null) }
+    var entries by remember { mutableStateOf<List<TrashEntry>?>(null) }
     var showEmptyConfirm by remember { mutableStateOf(false) }
+    var pendingPrivateDelete by remember { mutableStateOf<TrashEntry?>(null) }
+    // Private entries to remove after the system-trash delete prompt succeeds.
+    var pendingPrivateEmpty by remember { mutableStateOf<List<TrashEntry>>(emptyList()) }
     // True only for the "Empty" request, so the header spinner reads correctly
     // while a single restore/delete is in flight.
     var emptying by remember { mutableStateOf(false) }
@@ -91,7 +97,7 @@ fun TrashScreen(onBack: () -> Unit, onChanged: () -> Unit) {
     BackHandler { onBack() }
 
     suspend fun refresh() {
-        entries = withContext(Dispatchers.IO) { SystemTrash.list(context) }
+        entries = TrashRepository.list(context)
     }
 
     LaunchedEffect(Unit) { refresh() }
@@ -100,21 +106,33 @@ fun TrashScreen(onBack: () -> Unit, onChanged: () -> Unit) {
         ActivityResultContracts.StartIntentSenderForResult()
     ) { result ->
         val uris = pendingUris
+        val privateEmpty = pendingPrivateEmpty
         pendingUris = emptyList()
+        pendingPrivateEmpty = emptyList()
         working = false
         emptying = false
-        if (result.resultCode == Activity.RESULT_OK && uris.isNotEmpty()) {
+        if (result.resultCode == Activity.RESULT_OK &&
+            (uris.isNotEmpty() || privateEmpty.isNotEmpty())
+        ) {
             scope.launch {
+                if (privateEmpty.isNotEmpty()) {
+                    withContext(Dispatchers.IO) {
+                        privateEmpty.forEach { PrivateTrash.delete(context, it) }
+                    }
+                }
                 refresh()
                 onChanged()
             }
         }
     }
 
-    val run = { uris: List<android.net.Uri>, request: (List<android.net.Uri>) -> android.content.IntentSender? ->
+    val run = { uris: List<android.net.Uri>, privateEmpty: List<TrashEntry>, request: (List<android.net.Uri>) -> android.content.IntentSender? ->
+        pendingPrivateEmpty = privateEmpty
         val sender = request(uris)
         if (sender == null) {
+            pendingPrivateEmpty = emptyList()
             working = false
+            emptying = false
         } else {
             pendingUris = uris
             working = true
@@ -122,9 +140,34 @@ fun TrashScreen(onBack: () -> Unit, onChanged: () -> Unit) {
         }
     }
 
+    val restorePrivate: (TrashEntry) -> Unit = { entry ->
+        if (!working) {
+            working = true
+            scope.launch {
+                val restored = withContext(Dispatchers.IO) { PrivateTrash.restore(context, entry) }
+                working = false
+                if (restored) {
+                    refresh()
+                    onChanged()
+                }
+            }
+        }
+    }
+
+    val deletePrivate: (TrashEntry) -> Unit = { entry ->
+        if (!working) {
+            working = true
+            scope.launch {
+                withContext(Dispatchers.IO) { PrivateTrash.delete(context, entry) }
+                working = false
+                refresh()
+                onChanged()
+            }
+        }
+    }
+
     val list = entries ?: emptyList()
     val totalBytes = remember(list) { list.sumOf { it.sizeBytes } }
-    val supported = SystemTrash.supported
 
     FrostedHeaderScaffold(
         background = AmoledBlack,
@@ -185,10 +228,7 @@ fun TrashScreen(onBack: () -> Unit, onChanged: () -> Unit) {
         if (entries != null && list.isEmpty()) {
             Box(modifier = contentModifier, contentAlignment = Alignment.Center) {
                 Text(
-                    text = stringResource(
-                        if (supported) R.string.storage_trash_empty
-                        else R.string.storage_trash_unsupported,
-                    ),
+                    text = stringResource(R.string.storage_trash_empty),
                     color = TextMuted,
                     fontSize = 14.sp,
                 )
@@ -223,10 +263,22 @@ fun TrashScreen(onBack: () -> Unit, onChanged: () -> Unit) {
                     TrashRow(
                         entry = entry,
                         onRestore = {
-                            run(listOf(entry.uri)) { uris -> SystemTrash.restoreRequest(context, uris) }
+                            if (entry.source == TrashSource.Private) {
+                                restorePrivate(entry)
+                            } else {
+                                run(listOf(entry.uri), emptyList()) { uris ->
+                                    SystemTrash.restoreRequest(context, uris)
+                                }
+                            }
                         },
                         onDelete = {
-                            run(listOf(entry.uri)) { uris -> SystemTrash.deleteRequest(context, uris) }
+                            if (entry.source == TrashSource.Private) {
+                                pendingPrivateDelete = entry
+                            } else {
+                                run(listOf(entry.uri), emptyList()) { uris ->
+                                    SystemTrash.deleteRequest(context, uris)
+                                }
+                            }
                         },
                     )
                 }
@@ -242,21 +294,49 @@ fun TrashScreen(onBack: () -> Unit, onChanged: () -> Unit) {
             destructive = true,
             onConfirm = {
                 showEmptyConfirm = false
-                val uris = list.map { it.uri }
-                if (uris.isEmpty()) {
-                    working = false
-                } else {
-                    emptying = true
-                    run(uris) { SystemTrash.deleteRequest(context, it) }
+                val privateEntries = list.filter { it.source == TrashSource.Private }
+                val systemUris = list.filter { it.source == TrashSource.System }.map { it.uri }
+                when {
+                    systemUris.isNotEmpty() -> {
+                        emptying = true
+                        run(systemUris, privateEntries) { SystemTrash.deleteRequest(context, it) }
+                    }
+                    privateEntries.isNotEmpty() -> {
+                        emptying = true
+                        scope.launch {
+                            withContext(Dispatchers.IO) {
+                                privateEntries.forEach { PrivateTrash.delete(context, it) }
+                            }
+                            emptying = false
+                            refresh()
+                            onChanged()
+                        }
+                    }
+                    else -> working = false
                 }
             },
             onDismiss = { showEmptyConfirm = false },
         )
     }
+
+    val privateDeleteTarget = pendingPrivateDelete
+    if (privateDeleteTarget != null) {
+        ConfirmDialog(
+            title = stringResource(R.string.trash_delete_confirm_title),
+            message = stringResource(R.string.trash_delete_confirm_message),
+            confirmLabel = stringResource(R.string.action_delete),
+            destructive = true,
+            onConfirm = {
+                pendingPrivateDelete = null
+                deletePrivate(privateDeleteTarget)
+            },
+            onDismiss = { pendingPrivateDelete = null },
+        )
+    }
 }
 
 @Composable
-private fun TrashRow(entry: SystemTrashEntry, onRestore: () -> Unit, onDelete: () -> Unit) {
+private fun TrashRow(entry: TrashEntry, onRestore: () -> Unit, onDelete: () -> Unit) {
     Surface(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(12.dp),

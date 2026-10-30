@@ -59,7 +59,7 @@ import fool.akza.foto.data.GalleryEvents
 import fool.akza.foto.data.GridSize
 import fool.akza.foto.data.MediaSort
 import fool.akza.foto.data.SettingsRepository
-import fool.akza.foto.data.SystemTrash
+import fool.akza.foto.data.TrashRepository
 import fool.akza.foto.data.thumbnails.ThumbCache
 import fool.akza.foto.data.thumbnails.VideoFrameCache
 import fool.akza.foto.ui.theme.AmoledBlack
@@ -162,7 +162,7 @@ private fun SettingsRoot(
         // Android's system trash is a single MediaStore query, so this stays
         // cheap even when the user has trashed hundreds of files.
         val summary = withContext(Dispatchers.IO) {
-            val entries = SystemTrash.list(context)
+            val entries = TrashRepository.list(context)
             entries.size to entries.sumOf { it.sizeBytes }
         }
         trashCount = summary.first

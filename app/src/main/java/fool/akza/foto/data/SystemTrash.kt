@@ -8,16 +8,6 @@ import android.os.Bundle
 import android.provider.MediaStore
 import fool.akza.foto.AppLog
 
-/** One media item currently sitting in Android's system trash. */
-data class SystemTrashEntry(
-    val uri: Uri,
-    val name: String,
-    val mimeType: String?,
-    val isVideo: Boolean,
-    val sizeBytes: Long,
-    val dateModified: Long,
-)
-
 /**
  * Thin wrapper over Android's MediaStore trash (API 30+).
  *
@@ -72,7 +62,7 @@ object SystemTrash {
     }
 
     /** Everything currently in the system trash, newest first. */
-    fun list(context: Context): List<SystemTrashEntry> {
+    fun list(context: Context): List<TrashEntry> {
         if (!supported) return emptyList()
         val projection = arrayOf(
             MediaStore.MediaColumns._ID,
@@ -87,7 +77,7 @@ object SystemTrash {
         val args = Bundle().apply {
             putInt(MediaStore.QUERY_ARG_MATCH_TRASHED, MediaStore.MATCH_ONLY)
         }
-        val entries = mutableListOf<SystemTrashEntry>()
+        val entries = mutableListOf<TrashEntry>()
         runCatching {
             context.contentResolver.query(
                 MediaStore.Files.getContentUri(MediaStore.VOLUME_EXTERNAL),
@@ -107,13 +97,14 @@ object SystemTrash {
                     val isImage = mediaType == MediaStore.Files.FileColumns.MEDIA_TYPE_IMAGE
                     if (!isVideo && !isImage) continue
                     val id = cursor.getLong(idCol)
-                    entries += SystemTrashEntry(
+                    entries += TrashEntry(
                         uri = mediaCollectionUri(isVideo, id),
                         name = cursor.getString(nameCol) ?: "file",
                         mimeType = cursor.getString(mimeCol),
                         isVideo = isVideo,
                         sizeBytes = cursor.getLong(sizeCol),
                         dateModified = cursor.getLong(modifiedCol),
+                        source = TrashSource.System,
                     )
                 }
             }

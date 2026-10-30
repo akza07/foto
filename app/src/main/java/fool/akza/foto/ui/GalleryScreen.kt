@@ -113,6 +113,7 @@ import fool.akza.foto.R
 import fool.akza.foto.data.MediaFolder
 import fool.akza.foto.data.MediaItem
 import fool.akza.foto.data.MediaRepository
+import fool.akza.foto.data.PrivateTrash
 import fool.akza.foto.data.SettingsRepository
 import fool.akza.foto.data.SystemTrash
 import fool.akza.foto.data.mediaCollectionUri
@@ -698,7 +699,10 @@ fun GalleryScreen(
             // The provider has already moved these into the system trash.
             trashing.isNotEmpty() -> {
                 removeDeletedBatch(trashing)
-                undoItems = trashing
+                // A mixed delete may already have put SAF items in private
+                // trash before this system prompt was shown; keep both batches
+                // restorable from the same Undo bar.
+                undoItems = (undoItems.orEmpty() + trashing).distinctBy { it.uri }
                 undoKey += 1
                 clearSelection()
             }
@@ -721,19 +725,39 @@ fun GalleryScreen(
         }
     }
 
-    // Undo puts the last trashed batch back through the system (API 30+).
+    // Undo restores both kinds of trash: SAF documents come back from Foto's
+    // private trash, MediaStore items from Android's system trash.
     val undoTrash: () -> Unit = {
         val items = undoItems
         if (items != null) {
             undoItems = null
             scope.launch {
-                val sender = SystemTrash.restoreRequest(context, items.map { it.trashRequestUri() })
+                val privateItems = items.filter { it.safTreeUri != null }
+                val systemItems = items.filterNot { it.safTreeUri != null }
+                val restoredPrivate = if (privateItems.isNotEmpty()) {
+                    withContext(Dispatchers.IO) {
+                        privateItems.filter { PrivateTrash.restore(context, it) }
+                    }
+                } else emptyList()
+                if (restoredPrivate.isNotEmpty()) {
+                    finishRestore(restoredPrivate)
+                    toastKey += 1
+                    toastMessage = UiText.Res(R.string.restored)
+                }
+                if (restoredPrivate.size != privateItems.size) {
+                    toastKey += 1
+                    toastMessage = UiText.Res(R.string.error_restore)
+                }
+
+                val sender = if (systemItems.isNotEmpty()) {
+                    SystemTrash.restoreRequest(context, systemItems.map { it.trashRequestUri() })
+                } else null
                 if (sender != null) {
-                    pendingRestoreItems = items
+                    pendingRestoreItems = systemItems
                     consentLauncher.launch(
                         androidx.activity.result.IntentSenderRequest.Builder(sender).build(),
                     )
-                } else {
+                } else if (restoredPrivate.isEmpty()) {
                     viewerUndo = null
                 }
             }
@@ -741,9 +765,10 @@ fun GalleryScreen(
     }
 
     // ── Delete ──────────────────────────────────────────────────────────────
-    // MediaStore items go to the system trash (no copy, no per-item query);
-    // SAF documents are removed outright because the platform has no trash for
-    // them. Nothing here touches the UI thread.
+    // MediaStore items go to the system trash (no copy, no per-item query).
+    // SAF documents have no platform trash, so their bytes are moved into
+    // Foto's private trash first; only if that fails do we permanently delete.
+    // Nothing here touches the UI thread.
     val trashAndDelete: (List<MediaItem>) -> Unit = { items ->
         if (items.isEmpty()) {
             clearSelection()
@@ -751,10 +776,25 @@ fun GalleryScreen(
             val saf = items.filter { android.provider.DocumentsContract.isDocumentUri(context, it.uri) }
             val media = items.filterNot { android.provider.DocumentsContract.isDocumentUri(context, it.uri) }
             if (saf.isNotEmpty()) {
-                val deleted = withContext(Dispatchers.IO) {
-                    saf.filter { MediaRepository.delete(context, it) == DeleteResult.Deleted }
+                val trashed = mutableListOf<MediaItem>()
+                val deleted = mutableListOf<MediaItem>()
+                withContext(Dispatchers.IO) {
+                    saf.forEach { item ->
+                        if (PrivateTrash.trash(context, item)) {
+                            trashed += item
+                            deleted += item
+                        } else if (MediaRepository.delete(context, item) == DeleteResult.Deleted) {
+                            // No tree metadata to restore to (e.g. a document
+                            // handed over by another app): permanent fallback.
+                            deleted += item
+                        }
+                    }
                 }
                 if (deleted.isNotEmpty()) removeDeletedBatch(deleted)
+                if (trashed.isNotEmpty()) {
+                    undoItems = (undoItems.orEmpty() + trashed).distinctBy { it.uri }
+                    undoKey += 1
+                }
                 if (deleted.size != saf.size) reportDeleteFailure()
             }
             if (media.isEmpty()) {
@@ -787,12 +827,13 @@ fun GalleryScreen(
     }
 
     // True when the in-app confirm dialog adds information the system won't.
-    // The provider's trash prompt already lists the files and asks for approval,
-    // so asking twice only makes a delete feel slow; a permanent delete (SAF
-    // documents, or a device without the system trash) still needs our dialog.
+    // The provider's trash prompt already lists MediaStore files and asks for
+    // approval, so asking twice only makes a delete feel slow; SAF documents
+    // still get the app dialog because their private trash has no system prompt.
     val needsAppConfirm: (List<MediaItem>) -> Boolean = { items ->
         appSettings.confirmBeforeDelete && items.any { item ->
-            !SystemTrash.supported ||
+            item.safTreeUri != null ||
+                !SystemTrash.supported ||
                 android.provider.DocumentsContract.isDocumentUri(context, item.uri)
         }
     }
@@ -1157,8 +1198,9 @@ fun GalleryScreen(
 
         val deleteTarget = pendingDeleteItem
         if (deleteTarget != null) {
-            val canUndoDelete = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R &&
-                !android.provider.DocumentsContract.isDocumentUri(context, deleteTarget.uri)
+            val canUndoDelete = deleteTarget.safTreeUri != null ||
+                (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R &&
+                    !android.provider.DocumentsContract.isDocumentUri(context, deleteTarget.uri))
             ConfirmDialog(
                 title = stringResource(
                     if (deleteTarget.isVideo) R.string.delete_confirm_video
@@ -1212,8 +1254,11 @@ fun GalleryScreen(
         // Batch-delete confirmation dialog.
         val batch = pendingBatchDelete
         if (batch != null && batch.isNotEmpty()) {
-            val canUndoDelete = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R &&
-                batch.any { !android.provider.DocumentsContract.isDocumentUri(context, it.uri) }
+            val canUndoDelete = batch.all { item ->
+                item.safTreeUri != null ||
+                    (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R &&
+                        !android.provider.DocumentsContract.isDocumentUri(context, item.uri))
+            }
             ConfirmDialog(
                 title = pluralStringResource(
                     R.plurals.delete_confirm_count,

@@ -165,12 +165,13 @@ edge-to-edge rendering.
 - **Top-left:** back button + counter pill (`3/12`).
 - **Drawer actions:** Delete (red), Share, Info, Crop.
   - **Delete:** videos always ask first; other items only show the in-app modal
-    when the delete is permanent (SAF documents, or a device without the system
-    trash). Otherwise the file is moved into **Android's system trash**
+    when there is no system prompt to confirm (SAF documents, or a device without
+    the system trash). MediaStore files move into **Android's system trash**
     (`MediaStore.createTrashRequest`, a row update — no byte copy), so deletes are
-    instant, every delete shows an **Undo** bar, and the file also appears in the
-    platform's own trash UI. **Settings → Storage → Trash** lists the system trash
-    with restore and permanent delete.
+    instant and the file also appears in the platform's own trash UI. SAF documents
+    (added folders, `.nomedia` content) have no platform trash, so Foto moves their
+    bytes into an app-private trash. Both kinds show an **Undo** bar and appear in
+    **Settings → Storage → Trash** with restore and permanent delete.
   - **Share:** `ACTION_SEND` chooser with URI grant.
   - **Info:** sheet with name, size, and date.
   - **Crop:** full-screen editor with drag handles, a thirds grid and Free/1:1/4:5/16:9
@@ -282,10 +283,11 @@ edge-to-edge rendering.
   Results are grouped by month/year and open in the viewer.
 - **Open from other apps**: Foto handles `ACTION_VIEW` and `ACTION_SEND` for
   `image/*` and `video/*`, opening the handed-over file in the viewer.
-- **Non-destructive delete**: every delete is undoable — media is moved into
+- **Non-destructive delete**: every delete is undoable. MediaStore files move into
   Android's **system trash** (instant; the provider flips the row instead of the
-  app copying bytes). The Trash screen (Settings → Storage → Trash) lists the
-  system trash with restore and permanent delete.
+  app copying bytes); SAF documents from added folders move into Foto's private
+  trash because the platform has no trash for them. The Trash screen
+  (Settings → Storage → Trash) lists both with restore and permanent delete.
 
 ---
 
