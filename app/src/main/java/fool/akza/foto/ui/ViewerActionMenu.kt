@@ -20,6 +20,7 @@ import androidx.compose.material.icons.outlined.Crop
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Share
+import androidx.compose.material.icons.outlined.Wallpaper
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -52,13 +53,14 @@ import kotlin.math.roundToInt
 import kotlin.math.sin
 
 /** Actions offered by the viewer's long-press radial menu. */
-internal enum class ViewerAction { Delete, Info, Share, Crop }
+internal enum class ViewerAction { Delete, Info, Share, Crop, Wallpaper }
 
 private fun ViewerAction.icon(): ImageVector = when (this) {
     ViewerAction.Delete -> Icons.Outlined.Delete
     ViewerAction.Info -> Icons.Outlined.Info
     ViewerAction.Share -> Icons.Outlined.Share
     ViewerAction.Crop -> Icons.Outlined.Crop
+    ViewerAction.Wallpaper -> Icons.Outlined.Wallpaper
 }
 
 @StringRes
@@ -67,6 +69,7 @@ private fun ViewerAction.labelRes(): Int = when (this) {
     ViewerAction.Info -> R.string.info_title
     ViewerAction.Share -> R.string.action_share
     ViewerAction.Crop -> R.string.action_crop
+    ViewerAction.Wallpaper -> R.string.action_wallpaper
 }
 
 private val WheelRadius = 132.dp

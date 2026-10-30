@@ -237,6 +237,8 @@ fun GalleryScreen(
     var infoItem by remember { mutableStateOf<MediaItem?>(null) }
     // Image currently open in the full-screen crop editor (images only).
     var cropItem by remember { mutableStateOf<MediaItem?>(null) }
+    // Image currently open in the full-screen wallpaper picker (images only).
+    var wallpaperItem by remember { mutableStateOf<MediaItem?>(null) }
     // Just-saved crop while the gallery reloads and its preview is prepared.
     var pendingCropItem by remember { mutableStateOf<MediaItem?>(null) }
     var cropUpdating by remember { mutableStateOf(false) }
@@ -1263,6 +1265,7 @@ fun GalleryScreen(
                 onShare = { shareItem(it) },
                 onInfo = { infoItem = it },
                 onCrop = { item -> cropItem = item },
+                onWallpaper = { item -> wallpaperItem = item },
                 loopVideos = appSettings.loopVideos,
             )
 
@@ -1282,6 +1285,22 @@ fun GalleryScreen(
                         pendingCropItem = cropped
                         cropUpdating = true
                         reload()
+                    },
+                )
+            }
+
+            // Wallpaper is a full-screen picker layered above the viewer too. It
+            // writes nothing to the library: the crop goes straight to the system
+            // wallpaper service, so there is nothing to reload on success.
+            val wallpaperSource = wallpaperItem
+            if (wallpaperSource != null) {
+                WallpaperScreen(
+                    item = wallpaperSource,
+                    onDismiss = { wallpaperItem = null },
+                    onApplied = {
+                        wallpaperItem = null
+                        toastKey += 1
+                        toastMessage = UiText.Res(R.string.wallpaper_set_done)
                     },
                 )
             }

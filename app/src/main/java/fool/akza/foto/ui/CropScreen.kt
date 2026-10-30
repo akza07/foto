@@ -393,7 +393,7 @@ private fun CropControls(
             horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
         ) {
             CropAspect.entries.forEach { option ->
-                AspectChip(
+                SelectChip(
                     label = stringResource(option.labelRes),
                     selected = option == aspect,
                     enabled = enabled,
@@ -481,7 +481,7 @@ private fun CropControls(
 }
 
 @Composable
-private fun AspectChip(
+internal fun SelectChip(
     label: String,
     selected: Boolean,
     enabled: Boolean,
@@ -516,7 +516,7 @@ private fun AspectChip(
 }
 
 /** Fit the image inside the available canvas, centered. */
-private fun fitDisplayRect(size: IntSize, imageWidth: Int, imageHeight: Int): Rect {
+internal fun fitDisplayRect(size: IntSize, imageWidth: Int, imageHeight: Int): Rect {
     if (size.width <= 0 || size.height <= 0 || imageWidth <= 0 || imageHeight <= 0) {
         return Rect.Zero
     }
@@ -683,7 +683,7 @@ private fun CropDrag.isTopHandle(): Boolean =
 private fun CropDrag.isBottomHandle(): Boolean =
     this == CropDrag.Bottom || this == CropDrag.BottomLeft || this == CropDrag.BottomRight
 
-private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawCropOverlay(
+internal fun androidx.compose.ui.graphics.drawscope.DrawScope.drawCropOverlay(
     display: Rect,
     crop: Rect,
     showEdges: Boolean,

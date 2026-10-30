@@ -313,7 +313,7 @@ No custom font family; system default with Material3 defaults. Exact usages:
 
 - Full black 55% scrim fades in/out independently (tap closes). Sheet bottom-center full-width, top 16dp corners, `#09090B`, nav-bar padding, 12dp top / 24dp bottom.
 - Handle 40×4dp muted-40% centered, 20dp gap, single `SpaceEvenly` row.
-- Items: Share, Info, Delete, Crop (Crop omitted on video). Each: 54dp black well 14dp corners with 26dp outlined icon + 6dp gap + 12sp Medium white label. Delete red; others white. Tap closes drawer then runs action. The sheet slides+fades from the bottom; the scrim only fades and never slides.
+- Items: Share, Info, Delete, Crop, Wallpaper (Crop and Wallpaper omitted on video). Each: 54dp black well 14dp corners with 26dp outlined icon + 6dp gap + 12sp Medium white label. Delete red; others white. Tap closes drawer then runs action. The sheet slides+fades from the bottom; the scrim only fades and never slides.
 
 ### 9.4 Gestures (images)
 
@@ -324,10 +324,10 @@ No custom font family; system default with Material3 defaults. Exact usages:
 - **Long-press anywhere:** radial menu (see §10). **No rotation gesture** (ignored).
 - Pager locked when zoomed (>1.01×), 2+ fingers, radial open, delete/restore slide, or delete in progress.
 
-### 9.5 Delete / share / info / crop
+### 9.5 Delete / share / info / crop / wallpaper
 
 - Drawer Delete (red): video deletes always confirm; other MediaStore items rely on the provider's trash prompt. SAF documents get the in-app confirm because they go to Foto's private trash instead. MediaStore deletes use `MediaStore.createTrashRequest` (no copy); SAF deletes copy bytes into app storage then remove the document. Both show the “Moved to trash” Undo bar (6s) + slide to neighbor (280ms `FastOutSlowIn`; next if exists else prev; last item dismisses). Undo restores from the matching trash and slides back.
-- Share: system chooser with URI grant. Info: bottom sheet (see §11). Crop: full-screen crop editor (see §9.6).
+- Share: system chooser with URI grant. Info: bottom sheet (see §11). Crop: full-screen crop editor (see §9.6). Wallpaper: full-screen picker (see §9.7).
 - Page change updates settled index; list shrink clamps pager; input gated during slide.
 
 ### 9.6 Crop editor
@@ -340,13 +340,22 @@ No custom font family; system default with Material3 defaults. Exact usages:
 - Crop rectangle is stored in normalized image coordinates. Corner handles resize (edges too in Free mode), dragging inside moves it, and a thirds grid plus dark scrim outside the crop preview the result. Fixed ratios anchor the opposite corner so the crop never distorts.
 - Output is written beside the original for normal MediaStore folders (DCIM/Pictures/Download/Documents) or through the same SAF tree grant; otherwise it falls back to `Pictures/Foto/`. While encoding, a blocking **Saving crop…** busy overlay is shown. Saving swaps the viewer to the new copy, reloads the grid, and shows a blocking **Preparing preview…** loader until the reload returns the item and its thumbnail is queued; then “Cropped copy saved”.
 
+### 9.7 Wallpaper picker
+
+- Full-screen black surface layered above the viewer (images only). Top bar mirrors the crop editor: 22dp Close (“Cancel”), “Set wallpaper” 20sp SemiBold, 22dp Reset icon that refits the frame.
+- Canvas: 20dp horizontal / 8dp vertical breathing room, image Fit centered, reusing the crop overlay (1.5dp white border, thirds grid, black 58% scrim outside; corner handles, no edge handles).
+- Frame: a fixed-aspect window matching the screen in the chosen orientation — **Portrait** (short/long edge) or **Landscape** (long/short edge) — independent of how the device is currently rotated. Pinch zooms the window around the gesture centroid (1× = whole frame, clamped to a minimum 8% width) and drag repositions it; the window can never leave the image. Changing orientation or reset refits it.
+- Chips: orientation row (Portrait / Landscape) then target row (Home / Lock / Both), same 50dp round pill style as the crop ratios. Hint “Pinch to zoom, drag to reposition” 12sp muted; failure 13sp Medium red.
+- Action: full-width 48dp, 16dp-corner white **Set wallpaper** button; while applying, a blocking **Setting wallpaper…** busy overlay. Success closes the picker and shows the “Wallpaper set” toast.
+- Nothing is written to storage: the crop is handed to `WallpaperManager.setBitmap(..., FLAG_SYSTEM / FLAG_LOCK / both)` under the normal `SET_WALLPAPER` permission, so the original and the library are untouched. The source is decoded upright and capped at 3072px like the crop editor.
+
 ---
 
 ## 10. Long-Press Radial Menu (ViewerActionWheel)
 
 **Summon:** long-press anywhere in viewer (images+videos, host-level). Haptic, video pauses (no auto-resume), wheel blooms at finger (clamped so 132dp+8dp edge stays on screen; centers if screen too small). Sector set frozen at open; crossing page mid-press doesn’t remap. Background photo blurs 16dp×progress.
 
-**Geometry:** outer 132dp, hub 38dp, icons 26dp on 36dp backing (+10dp) at 0.62×outer radius, label column 78dp. Images: 4 sectors (Delete, Info, Share, Crop in order); videos: 3 (Delete, Info, Share, Delete stays top). Sector 0 centered top (−90°). Hit: <38dp hub → cancel; >132dp → cancel; else angle → nearest sector.
+**Geometry:** outer 132dp, hub 38dp, icons 26dp on 36dp backing (+10dp) at 0.62×outer radius, label column 78dp. Images: 5 sectors (Delete, Info, Share, Crop, Wallpaper in order); videos: 3 (Delete, Info, Share, Delete stays top). Sector 0 centered top (−90°). Hit: <38dp hub → cancel; >132dp → cancel; else angle → nearest sector.
 
 **Appearance:** disc radial black 42%→66%, alpha p, spring bloom (1.2 overshoot allowed). Hovered wedge: white 16% (Delete 85% red). Spokes hub→outer white 26% 1dp. Double rims (outer+hub): black 60% 2dp + white 32% 1dp; hub black 50%. Icon backing black 42% (60% selected); tint: Delete red unselected else white; selected white. Label 11sp Medium + black 95% blur-7 shadow. Center `Close` outlined white 95% (0.84×hub). Hint pill below (centerY+outer+20dp, 240dp centered): 50dp round `#09090B` 90% (Delete red 90%), white 18% 1dp border, “Release to {action}” 13sp Medium, 18dp/9dp padding.
 
@@ -459,7 +468,7 @@ Overlay on gallery when permissions granted + unseen; replayable via Settings (a
 1. “Welcome to Foto” / “A fast, AMOLED-first gallery for the photos and videos already on your device.” — 3×3 tiles (`Border` 9dp; one video tile 13dp Play).
 2. “Find your photos” / “Open an album to see everything inside, or tap the search icon to find a file by name.” — mock pill search (12×96dp `Border` + 20dp Search) over 2×3 grid.
 3. “View and zoom” / “Swipe between photos, double-tap or pinch to zoom, and swipe down to close.” — portrait rect (`Border` 16dp 62%×74%) + 52dp ring (2dp white) + 8dp dot + 28dp `KeyboardArrowDown` muted.
-4. “Actions in one motion” / “Long-press anywhere, slide to Delete, Info, Share or Crop, then release to run it.” — 180dp radial (black-35% disc, `Border` rings/spokes) + 4 icons 90°×54dp (Delete red, others white 22dp/26dp boxes) + center Close 20dp + finger dot (16dp ring 2dp white offset 70dp@30°).
+4. “Actions in one motion” / “Long-press anywhere, slide to Delete, Info, Share, Crop or Wallpaper, then release to run it.” — 180dp radial (black-35% disc, `Border` rings/spokes) + 5 icons 72°×54dp (Delete red, others white 22dp/26dp boxes) + center Close 20dp + finger dot (16dp ring 2dp white offset 70dp@30°).
 5. “Select and stay safe” / “Long-press a tile to enter selection mode, then glide your finger across tiles to select many in one motion. Delete, copy, move or share them; deletes go to the trash — undo right away, or empty it from Settings.” — 2×3 grid (3 checked: 16dp white circle + 11dp black Check) + bottom Delete(red)/Copy/Move/Share 20dp + floating Undo pill (white 50dp, bottom 16dp, 11sp black “Moved to trash  ·  Undo” 14dp/7dp).
 
 ---
@@ -483,6 +492,7 @@ Overlay on gallery when permissions granted + unseen; replayable via Settings (a
 - Added dirs browsed via SAF tree (recursive) + MediaStore merged/deduped by path; picker persists read+write so deletes survive restart. Primary-volume matching assumed.
 - Cache: thumbnails + video frame-0 posters (720px) unified (grid = viewer = player first frame, pixel-identical crossfade); LRU 48/96MB → disk → extract → MediaStore → Coil. Progress pill reports done/total only; the total may grow during discovery, so no percentage is shown.
 - Crop: always writes a new file; the original is untouched. Working bitmap capped at 3072px; PNG/WebP preserved, other formats become JPEG quality 92; output goes beside the original or falls back to `Pictures/Foto/`.
+- Wallpaper: never writes a file. The crop is passed straight to `WallpaperManager.setBitmap` (Home / Lock / Both), so there is nothing to undo or clean up and the library never changes.
 - Pull-to-refresh reloads the current library view; it does not clear the thumbnail cache.
 - Trash: MediaStore items go to the system trash; SAF documents copy into app-private trash then remove the original. Both are undoable/restorable; uninstall wipes private trash (backup disabled).
 
@@ -490,7 +500,7 @@ Overlay on gallery when permissions granted + unseen; replayable via Settings (a
 
 ## 18. Accessibility & Edge Cases
 
-- Content descriptions: Search/Settings/Filter/Back/Clear/Selected/Select all/Exit selection/Video/Restore/Delete/Remove/Crop reset.
+- Content descriptions: Search/Settings/Filter/Back/Clear/Selected/Select all/Exit selection/Video/Restore/Delete/Remove/Crop reset/Wallpaper reset.
 - Live-region polite on toast/undo; switches expose Role.Switch (whole row toggleable); action rows Role.Button; radial hint announces “Release to X”.
 - Touch targets: header icons 40dp+ (viewer back 40dp, actions 44dp), drawer wells 54dp, video controls 44dp, tutorial CTA 50dp.
 - Empty/error/loading covered per screen (§6.4, §8, §11 error, permission fallback, cache “Nothing cached”, trash “empty”, folders “No folders added”).

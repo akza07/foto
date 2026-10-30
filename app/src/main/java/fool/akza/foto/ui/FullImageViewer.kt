@@ -45,6 +45,7 @@ import androidx.compose.material.icons.outlined.Crop
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Share
+import androidx.compose.material.icons.outlined.Wallpaper
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -239,7 +240,8 @@ private suspend fun AwaitPointerEventScope.drainUntilUp(pointerId: androidx.comp
  * - Images: double-tap zoom, pinch zoom/pan. While two fingers are down,
  *   single-finger gestures yield to pinch-zoom.
  * - Long-press (images + videos): radial action wheel at the finger;
- *   videos offer Delete/Info/Share (no Crop). Swipe up: bottom action sheet.
+ *   videos offer Delete/Info/Share (no Crop or Wallpaper). Swipe up: bottom
+ *   action sheet.
  * - Swipe down (at 1x / settled video): dismisses.
  * - Counter pill (top-left): current/total.
  * - Back button (top-left): dismisses.
@@ -255,8 +257,9 @@ fun FullImageViewer(
     onShare: (MediaItem) -> Unit,
     onInfo: (MediaItem) -> Unit,
     onCrop: (MediaItem) -> Unit,
+    onWallpaper: (MediaItem) -> Unit,
     loopVideos: Boolean = false,
-    /** View/play only: no action wheel, drawer, delete, share, info or crop. */
+    /** View/play only: no action wheel, drawer, delete, share, info, crop or wallpaper. */
     previewOnly: Boolean = false,
     pendingRemoval: MediaItem? = null,
     /** A file delete has been accepted but has not yet completed. */
@@ -500,7 +503,8 @@ fun FullImageViewer(
     val p = progress.value
 
     // Maps a radial-menu choice onto the viewer's action callbacks.
-    // Videos have no Crop sector, so a stale Crop hover on a video page is a no-op.
+    // Videos have no Crop or Wallpaper sector, so a stale hover on a video page
+    // is a no-op.
     val onRadialAction: (ViewerAction) -> Unit = { action ->
         currentItem?.let { item ->
             when (action) {
@@ -508,6 +512,7 @@ fun FullImageViewer(
                 ViewerAction.Info -> onInfo(item)
                 ViewerAction.Share -> onShare(item)
                 ViewerAction.Crop -> if (!item.isVideo) onCrop(item)
+                ViewerAction.Wallpaper -> if (!item.isVideo) onWallpaper(item)
             }
         }
     }
@@ -515,7 +520,8 @@ fun FullImageViewer(
     // adjacent pages share a media type. Read the current callback when the finger
     // lifts so a radial action always applies to the page being viewed now.
     val latestOnRadialAction = rememberUpdatedState(onRadialAction)
-    // Sectors offered by the wheel: videos drop Crop (Delete stays on top).
+    // Sectors offered by the wheel: videos drop Crop and Wallpaper (Delete
+    // stays on top).
     val radialActions = remember(currentPageIsVideo) {
         if (currentPageIsVideo) {
             listOf(ViewerAction.Delete, ViewerAction.Info, ViewerAction.Share)
@@ -849,7 +855,7 @@ fun FullImageViewer(
             }
         }
 
-        // Long-press radial menu: 4 sectors on images, Delete/Info/Share on video.
+        // Long-press radial menu: 5 sectors on images, Delete/Info/Share on video.
         if (radialPresent && !previewOnly) {
             ViewerActionWheel(
                 center = radialCenter,
@@ -883,6 +889,10 @@ fun FullImageViewer(
             onCrop = {
                 drawerVisible = false
                 currentItem?.let(onCrop)
+            },
+            onWallpaper = {
+                drawerVisible = false
+                currentItem?.let(onWallpaper)
             },
         )
     }
@@ -1211,6 +1221,7 @@ private fun ActionSheet(
     onShare: () -> Unit,
     onInfo: () -> Unit,
     onCrop: () -> Unit,
+    onWallpaper: () -> Unit,
 ) {
     val target = item ?: return
     Box(modifier = Modifier.fillMaxSize()) {
@@ -1277,9 +1288,15 @@ private fun ActionSheet(
                         ActionItem(Icons.Outlined.Share, stringResource(R.string.action_share), TextPrimary, onShare)
                         ActionItem(Icons.Outlined.Info, stringResource(R.string.info_title), TextPrimary, onInfo)
                         ActionItem(Icons.Outlined.Delete, stringResource(R.string.action_delete), DeleteRed, onDelete)
-                        // Videos have no crop action.
+                        // Videos have no crop or wallpaper actions.
                         if (!target.isVideo) {
                             ActionItem(Icons.Outlined.Crop, stringResource(R.string.action_crop), TextPrimary, onCrop)
+                            ActionItem(
+                                Icons.Outlined.Wallpaper,
+                                stringResource(R.string.action_wallpaper),
+                                TextPrimary,
+                                onWallpaper,
+                            )
                         }
                     }
                 }

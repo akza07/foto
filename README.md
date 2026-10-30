@@ -156,14 +156,14 @@ edge-to-edge rendering.
 - **Pinch:** zoom (1–5×) + pan (clamped; panning disabled at 1×).
 - **Two-finger rotation:** rotates the image in the gesture direction.
 - **Long-press (images):** a **radial menu** appears at your finger — keep holding
-  and slide to Delete / Info / Share / Crop, then release to run it (release in
-  the centre to cancel). One gesture, no button to find.
+  and slide to Delete / Info / Share / Crop / Wallpaper, then release to run it
+  (release in the centre to cancel). One gesture, no button to find.
 - **Swipe up:** opens the bottom action drawer.
 - **Swipe down (at 1×):** dismisses the viewer.
 - **Zoomed panning:** 1:1 while dragging, then a low-friction **momentum glide**
   on release, clamped to the image bounds.
 - **Top-left:** back button + counter pill (`3/12`).
-- **Drawer actions:** Delete (red), Share, Info, Crop.
+- **Drawer actions:** Delete (red), Share, Info, Crop, Wallpaper.
   - **Delete:** videos always ask first; other items only show the in-app modal
     when there is no system prompt to confirm (SAF documents, or a device without
     the system trash). MediaStore files move into **Android's system trash**
@@ -180,6 +180,10 @@ edge-to-edge rendering.
     `Pictures/Foto/`) without modifying the original. The viewer swaps to the cropped
     result immediately; a **Preparing preview…** loader stays up until the reload
     returns the new item and its thumbnail has been queued.
+  - **Wallpaper:** full-screen picker with a Portrait/Landscape frame matching the
+    screen, pinch-to-zoom and drag-to-reposition, and Home / Lock / Both targets.
+    Nothing is written to storage: the crop goes straight to the system wallpaper
+    service (`WallpaperManager.setBitmap`), so the original is untouched.
 
 ### 5.4.1 Video playback
 - Tapping a **video** tile opens the viewer with **real playback** via
