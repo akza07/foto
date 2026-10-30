@@ -1,11 +1,17 @@
 package fool.akza.foto.ui
 
+import android.app.Activity
+import android.content.Context
+import android.content.ContextWrapper
 import android.graphics.Bitmap
 import androidx.activity.compose.BackHandler
 import androidx.annotation.StringRes
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -40,13 +46,13 @@ import androidx.compose.material.icons.outlined.GridView
 import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.Pinch
 import androidx.compose.material.icons.outlined.Visibility
-import androidx.compose.material.icons.outlined.VisibilityOff
 import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -56,10 +62,8 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.ImageBitmap
@@ -70,6 +74,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
@@ -78,6 +83,8 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import fool.akza.foto.R
 import fool.akza.foto.data.ImageCropper
 import fool.akza.foto.data.MediaItem
@@ -95,18 +102,16 @@ import fool.akza.foto.ui.theme.EmptySurface
 import fool.akza.foto.ui.theme.Surface
 import fool.akza.foto.ui.theme.TextMuted
 import fool.akza.foto.ui.theme.TextPrimary
-import java.time.LocalDateTime
-import java.time.format.DateTimeFormatter
 import kotlinx.coroutines.launch
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
 
 private val PreviewShape = RoundedCornerShape(30.dp)
-private val PanelShape = RoundedCornerShape(12.dp)
-private val TrackShape = RoundedCornerShape(8.dp)
-private val TabShape = RoundedCornerShape(6.dp)
-private val OptionShape = RoundedCornerShape(8.dp)
+private val PanelShape = RoundedCornerShape(16.dp)
+private val TrackShape = RoundedCornerShape(12.dp)
+private val TabShape = RoundedCornerShape(9.dp)
+private val OptionShape = RoundedCornerShape(12.dp)
 
 /** Targets offered by the picker, in tab order. */
 private val WallpaperTargets = listOf(
@@ -131,9 +136,8 @@ private enum class WallpaperOrientation(val labelRes: Int) {
  *
  * The preview is a device-shaped frame filled with the crop: the frame takes the
  * aspect of the screen in the chosen [WallpaperOrientation], and the user pans
- * and pinches to choose which part of the photo fills it. With the preview on, a
- * simulated lock/home screen sits on top so the [WallpaperTarget] choice is
- * visible; with it off the frame shows the crop grid instead. Nothing is written
+ * and pinches to choose which part of the photo fills it. Tapping Preview drops
+ * every piece of chrome and shows the same crop edge to edge. Nothing is written
  * to storage — the crop goes straight to the system wallpaper service.
  */
 @Composable
@@ -152,7 +156,7 @@ internal fun WallpaperScreen(
     var orientation by remember(item.uri) { mutableStateOf(WallpaperOrientation.Portrait) }
     var target by remember(item.uri) { mutableStateOf(WallpaperTarget.Home) }
     var crop by remember(item.uri) { mutableStateOf(NormalizedCrop(0f, 0f, 1f, 1f)) }
-    var preview by remember(item.uri) { mutableStateOf(true) }
+    var previewing by remember(item.uri) { mutableStateOf(false) }
     var saving by remember(item.uri) { mutableStateOf(false) }
     var saveFailed by remember(item.uri) { mutableStateOf(false) }
 
@@ -182,7 +186,7 @@ internal fun WallpaperScreen(
         saveFailed = false
     }
 
-    BackHandler(enabled = !saving) { onDismiss() }
+    BackHandler(enabled = !saving && !previewing) { onDismiss() }
 
     val bitmap = bitmapState.value
     val enabled = bitmap != null && !saving
@@ -227,8 +231,6 @@ internal fun WallpaperScreen(
                         bitmap = bitmap,
                         crop = crop,
                         frameAspect = frameAspect,
-                        target = target,
-                        preview = preview,
                         onCropChange = {
                             crop = it
                             saveFailed = false
@@ -263,7 +265,6 @@ internal fun WallpaperScreen(
                     .padding(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 12.dp),
                 target = target,
                 orientation = orientation,
-                preview = preview,
                 enabled = enabled,
                 saving = saving,
                 saveFailed = saveFailed,
@@ -275,7 +276,7 @@ internal fun WallpaperScreen(
                     orientation = it
                     saveFailed = false
                 },
-                onPreviewChange = { preview = it },
+                onPreview = { previewing = true },
                 onSet = set@{
                     val source = bitmapState.value ?: return@set
                     if (saving) return@set
@@ -296,6 +297,20 @@ internal fun WallpaperScreen(
                     }
                 },
             )
+        }
+
+        AnimatedVisibility(
+            visible = previewing && bitmap != null,
+            enter = fadeIn(tween(160)),
+            exit = fadeOut(tween(160)),
+        ) {
+            bitmap?.let { source ->
+                FullscreenPreview(
+                    bitmap = source,
+                    crop = crop,
+                    onDismiss = { previewing = false },
+                )
+            }
         }
 
         BusyOverlay(
@@ -358,16 +373,14 @@ private fun WallpaperTopBar(
 
 /**
  * Device-shaped preview: the crop is drawn straight into the frame, so what the
- * frame shows is exactly what gets applied. The simulated screen (or the crop
- * grid, when the preview is off) is painted on top; the hint sits under it.
+ * frame shows is exactly what gets applied. The crop guides are painted on top
+ * and the gesture hint sits under the frame.
  */
 @Composable
 private fun WallpaperPreview(
     bitmap: Bitmap,
     crop: NormalizedCrop,
     frameAspect: Float,
-    target: WallpaperTarget,
-    preview: Boolean,
     onCropChange: (NormalizedCrop) -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -411,6 +424,12 @@ private fun WallpaperPreview(
                                 val w = size.width.toFloat()
                                 val h = size.height.toFloat()
                                 if (w <= 0f || h <= 0f) return@detectTransformGestures
+                                // The centroid keeps moving once the finger
+                                // leaves the frame; anchor on the closest point
+                                // inside it, otherwise the focus saturates and
+                                // the crop jumps to a bound.
+                                val focusX = centroid.x.coerceIn(0f, w)
+                                val focusY = centroid.y.coerceIn(0f, h)
                                 // The image moves with the finger, so the crop
                                 // window moves against it (hence the negated pan).
                                 latestOnCropChange.value(
@@ -418,8 +437,8 @@ private fun WallpaperPreview(
                                         crop = current,
                                         frameAspect = latestFrameAspect.value,
                                         imageAspect = imageAspect,
-                                        focusX = current.left + centroid.x / w * current.width,
-                                        focusY = current.top + centroid.y / h * current.height,
+                                        focusX = current.left + focusX / w * current.width,
+                                        focusY = current.top + focusY / h * current.height,
                                         panX = -pan.x * current.width / w,
                                         panY = -pan.y * current.height / h,
                                         zoom = zoom,
@@ -429,15 +448,7 @@ private fun WallpaperPreview(
                         },
                 ) {
                     drawWallpaperCrop(image, bitmap.width, bitmap.height, crop)
-                    drawPreviewChrome(gridVisible = !preview)
-                }
-
-                if (preview) {
-                    WallpaperHud(
-                        target = target,
-                        frameWidth = frameWidth,
-                        frameHeight = frameHeight,
-                    )
+                    drawCropGuides()
                 }
             }
 
@@ -447,7 +458,78 @@ private fun WallpaperPreview(
     }
 }
 
-/** Draws exactly the crop region, scaled to fill the preview frame. */
+/**
+ * Preview with no chrome at all: the crop fitted to the window, tap or back to
+ * return. Swallows the whole gesture so it can't pan the frame underneath.
+ */
+@Composable
+private fun FullscreenPreview(
+    bitmap: Bitmap,
+    crop: NormalizedCrop,
+    onDismiss: () -> Unit,
+) {
+    val image = remember(bitmap) { bitmap.asImageBitmap() }
+    BackHandler { onDismiss() }
+
+    // Hide the system bars while previewing, so the wallpaper is all that is
+    // left on screen; they come back when the preview closes.
+    val view = LocalView.current
+    DisposableEffect(view) {
+        val window = view.context.findActivity()?.window
+        val controller = window?.let { WindowInsetsControllerCompat(it, view) }
+        if (controller != null) {
+            controller.systemBarsBehavior =
+                WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            controller.hide(WindowInsetsCompat.Type.systemBars())
+        }
+        onDispose {
+            controller?.show(WindowInsetsCompat.Type.systemBars())
+        }
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(AmoledBlack)
+            .pointerInput(Unit) {
+                val slop = viewConfiguration.touchSlop
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false)
+                    down.consume()
+                    var dragged = false
+                    var released = false
+                    while (true) {
+                        val event = awaitPointerEvent()
+                        val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                        if ((change.position - down.position).getDistance() > slop) {
+                            dragged = true
+                        }
+                        change.consume()
+                        if (!change.pressed) {
+                            released = true
+                            break
+                        }
+                    }
+                    if (released && !dragged) onDismiss()
+                }
+            },
+    ) {
+        Canvas(Modifier.fillMaxSize()) {
+            drawWallpaperCrop(image, bitmap.width, bitmap.height, crop)
+        }
+    }
+}
+
+private tailrec fun Context.findActivity(): Activity? = when (this) {
+    is Activity -> this
+    is ContextWrapper -> baseContext.findActivity()
+    else -> null
+}
+
+/**
+ * Draws exactly the crop region, scaled to fit the canvas and centred, so a
+ * landscape crop letterboxes on a portrait screen instead of distorting.
+ */
 private fun DrawScope.drawWallpaperCrop(
     image: ImageBitmap,
     imageWidth: Int,
@@ -455,37 +537,43 @@ private fun DrawScope.drawWallpaperCrop(
     crop: NormalizedCrop,
 ) {
     if (imageWidth <= 0 || imageHeight <= 0) return
-    val dstWidth = size.width.roundToInt()
-    val dstHeight = size.height.roundToInt()
-    if (dstWidth <= 0 || dstHeight <= 0) return
+    if (size.width <= 0f || size.height <= 0f) return
 
     val srcX = (crop.left * imageWidth).roundToInt().coerceIn(0, imageWidth - 1)
     val srcY = (crop.top * imageHeight).roundToInt().coerceIn(0, imageHeight - 1)
     val srcWidth = (crop.width * imageWidth).roundToInt().coerceIn(1, imageWidth - srcX)
     val srcHeight = (crop.height * imageHeight).roundToInt().coerceIn(1, imageHeight - srcY)
 
+    val srcAspect = srcWidth.toFloat() / srcHeight
+    val canvasAspect = size.width / size.height
+    val dstWidth: Float
+    val dstHeight: Float
+    if (srcAspect >= canvasAspect) {
+        dstWidth = size.width
+        dstHeight = size.width / srcAspect
+    } else {
+        dstHeight = size.height
+        dstWidth = size.height * srcAspect
+    }
+
     drawImage(
         image = image,
         srcOffset = IntOffset(srcX, srcY),
         srcSize = IntSize(srcWidth, srcHeight),
-        dstOffset = IntOffset.Zero,
-        dstSize = IntSize(dstWidth, dstHeight),
+        dstOffset = IntOffset(
+            ((size.width - dstWidth) / 2f).roundToInt(),
+            ((size.height - dstHeight) / 2f).roundToInt(),
+        ),
+        dstSize = IntSize(
+            dstWidth.roundToInt().coerceAtLeast(1),
+            dstHeight.roundToInt().coerceAtLeast(1),
+        ),
         filterQuality = FilterQuality.High,
     )
 }
 
-/** Crop grid (thirds + corner brackets) and the HUD legibility vignette. */
-private fun DrawScope.drawPreviewChrome(gridVisible: Boolean) {
-    drawRect(
-        brush = Brush.verticalGradient(
-            0f to Color.Black.copy(alpha = 0.32f),
-            0.28f to Color.Transparent,
-            0.72f to Color.Transparent,
-            1f to Color.Black.copy(alpha = 0.32f),
-        ),
-    )
-    if (!gridVisible) return
-
+/** Thirds grid and corner brackets, drawn inside the preview frame. */
+private fun DrawScope.drawCropGuides() {
     val inset = 10.dp.toPx()
     val left = inset
     val top = inset
@@ -515,142 +603,6 @@ private fun DrawScope.drawPreviewChrome(gridVisible: Boolean) {
     bracket(right, bottom, -1f, -1f)
 }
 
-/**
- * Simulated screen content: a clock for the lock screen, a faint app grid and
- * dock for the home screen. Only shown while the preview is on.
- */
-@Composable
-private fun WallpaperHud(
-    target: WallpaperTarget,
-    frameWidth: Dp,
-    frameHeight: Dp,
-) {
-    Box(modifier = Modifier.fillMaxSize()) {
-        if (target != WallpaperTarget.Lock) {
-            HomeScreenHud(
-                frameWidth = frameWidth,
-                frameHeight = frameHeight,
-                modifier = Modifier.fillMaxSize(),
-            )
-        }
-        if (target != WallpaperTarget.Home) {
-            LockScreenHud(
-                frameWidth = frameWidth,
-                frameHeight = frameHeight,
-                modifier = Modifier.align(Alignment.TopCenter),
-            )
-        }
-    }
-}
-
-@Composable
-private fun LockScreenHud(
-    frameWidth: Dp,
-    frameHeight: Dp,
-    modifier: Modifier = Modifier,
-) {
-    val now = remember { LocalDateTime.now() }
-    val time = remember(now) { now.format(DateTimeFormatter.ofPattern("HH:mm")) }
-    val date = remember(now) {
-        now.format(DateTimeFormatter.ofPattern("EEE, MMM d")).uppercase()
-    }
-    // A landscape frame is short: keep the clock proportional to its height and
-    // drop the date so the mock status block never crowds the photo.
-    val compact = frameHeight < 280.dp
-    val clockSize = (frameHeight.value * 0.15f).coerceIn(15f, 44f).sp
-
-    Column(
-        modifier = modifier.padding(top = if (compact) 10.dp else 20.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        if (!compact) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(5.dp),
-            ) {
-                Icon(
-                    imageVector = Icons.Outlined.Lock,
-                    contentDescription = null,
-                    tint = Color.White.copy(alpha = 0.8f),
-                    modifier = Modifier.size(11.dp),
-                )
-                Text(
-                    text = date,
-                    color = Color.White.copy(alpha = 0.78f),
-                    fontSize = 9.sp,
-                    fontWeight = FontWeight.Medium,
-                    letterSpacing = 0.6.sp,
-                )
-            }
-        }
-        Text(
-            text = time,
-            color = Color.White,
-            fontSize = clockSize,
-            fontWeight = FontWeight.Bold,
-            letterSpacing = (-0.5).sp,
-        )
-    }
-}
-
-@Composable
-private fun HomeScreenHud(
-    frameWidth: Dp,
-    frameHeight: Dp,
-    modifier: Modifier = Modifier,
-) {
-    val tile = (min(frameWidth.value, frameHeight.value) * 0.105f).coerceIn(12f, 30f).dp
-    val gap = tile * 0.30f
-    val edge = tile * 0.55f
-    // A short (landscape) frame has no room for an icon grid, so only the dock
-    // is left as a hint of the home screen.
-    val compact = frameHeight < 280.dp
-
-    Column(
-        modifier = modifier.padding(
-            horizontal = edge,
-            // Clear the 30dp preview corners so the dock is never clipped.
-            vertical = if (compact) 16.dp else edge,
-        ),
-        verticalArrangement = Arrangement.SpaceBetween,
-    ) {
-        if (!compact) {
-            Column(verticalArrangement = Arrangement.spacedBy(gap)) {
-                repeat(2) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                    ) {
-                        repeat(4) { AppTile(tile, Color.White.copy(alpha = 0.16f)) }
-                    }
-                }
-            }
-        } else {
-            Spacer(Modifier.height(0.dp))
-        }
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(tile * 0.62f))
-                .background(Color.Black.copy(alpha = 0.26f))
-                .padding(tile * 0.24f),
-            horizontalArrangement = Arrangement.SpaceBetween,
-        ) {
-            repeat(4) { AppTile(tile, Color.White.copy(alpha = 0.24f)) }
-        }
-    }
-}
-
-@Composable
-private fun AppTile(size: Dp, color: Color) {
-    Box(
-        modifier = Modifier
-            .size(size)
-            .clip(RoundedCornerShape(size * 0.30f))
-            .background(color),
-    )
-}
-
 @Composable
 private fun HintPill() {
     Row(
@@ -677,20 +629,19 @@ private fun HintPill() {
 }
 
 /**
- * One card: target tabs, preview/aspect options, and the primary action, so the
+ * One card: target tabs, aspect/preview options, and the primary action, so the
  * picker reads as a single tool instead of a stack of chip rows.
  */
 @Composable
 private fun WallpaperControlPanel(
     target: WallpaperTarget,
     orientation: WallpaperOrientation,
-    preview: Boolean,
     enabled: Boolean,
     saving: Boolean,
     saveFailed: Boolean,
     onTargetChange: (WallpaperTarget) -> Unit,
     onOrientationChange: (WallpaperOrientation) -> Unit,
-    onPreviewChange: (Boolean) -> Unit,
+    onPreview: () -> Unit,
     onSet: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -718,7 +669,6 @@ private fun WallpaperControlPanel(
                     R.string.wallpaper_aspect,
                     stringResource(orientation.labelRes),
                 ),
-                active = false,
                 enabled = enabled,
                 onClick = {
                     onOrientationChange(
@@ -732,11 +682,10 @@ private fun WallpaperControlPanel(
                 modifier = Modifier.weight(1f),
             )
             PanelOption(
-                icon = if (preview) Icons.Outlined.Visibility else Icons.Outlined.VisibilityOff,
+                icon = Icons.Outlined.Visibility,
                 label = stringResource(R.string.wallpaper_preview),
-                active = preview,
                 enabled = enabled,
-                onClick = { onPreviewChange(!preview) },
+                onClick = onPreview,
                 modifier = Modifier.weight(1f),
             )
         }
@@ -829,40 +778,21 @@ private fun TargetTabs(
 private fun PanelOption(
     icon: ImageVector,
     label: String,
-    active: Boolean,
     enabled: Boolean,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val background by animateColorAsState(
-        targetValue = if (active) Border else EmptySurface,
-        animationSpec = tween(180, easing = FastOutSlowInEasing),
-        label = "optionBackground",
-    )
     val content by animateColorAsState(
-        targetValue = when {
-            !enabled -> TextMuted.copy(alpha = 0.45f)
-            active -> TextPrimary
-            else -> TextMuted
-        },
+        targetValue = if (enabled) TextPrimary else TextMuted.copy(alpha = 0.45f),
         animationSpec = tween(180, easing = FastOutSlowInEasing),
         label = "optionContent",
-    )
-    val labelColor by animateColorAsState(
-        targetValue = when {
-            !enabled -> TextMuted.copy(alpha = 0.45f)
-            else -> TextPrimary
-        },
-        animationSpec = tween(180, easing = FastOutSlowInEasing),
-        label = "optionLabel",
     )
     Row(
         modifier = modifier
             .height(40.dp)
             .clip(OptionShape)
-            .background(background)
-            // The active pill is a solid step up, so it drops the hairline.
-            .then(if (active) Modifier else Modifier.border(1.dp, Border, OptionShape))
+            .background(EmptySurface)
+            .border(1.dp, Border, OptionShape)
             .clickable(
                 enabled = enabled,
                 role = Role.Button,
@@ -876,13 +806,13 @@ private fun PanelOption(
         Icon(
             imageVector = icon,
             contentDescription = null,
-            tint = content,
+            tint = if (enabled) TextMuted else TextMuted.copy(alpha = 0.45f),
             modifier = Modifier.size(17.dp),
         )
         Spacer(Modifier.width(7.dp))
         Text(
             text = label,
-            color = labelColor,
+            color = content,
             fontSize = 13.sp,
             fontWeight = FontWeight.Medium,
             maxLines = 1,
