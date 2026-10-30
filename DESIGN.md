@@ -294,7 +294,7 @@ No custom font family; system default with Material3 defaults. Exact usages:
 
 ### 9.4 Gestures (images)
 
-- **Swipe down (1× only):** dismisses viewer. **Swipe up:** opens drawer (haptic). Threshold 56dp vertical; single finger; second finger aborts. The first axis past touch slop wins: horizontal is left entirely to the pager, vertical consumes both axes before the pager sees them — so an angled swipe can never page and open the drawer at once. Disabled when zoomed/drawer/radial/leaving/multi-touch/removing.
+- **Swipe down (1× only):** dismisses viewer. **Swipe up:** opens drawer (haptic). Threshold 56dp vertical; single finger; second finger aborts. Once past touch slop, only a gesture at least 2× more vertical than horizontal counts as vertical; everything else is left entirely to the pager. Vertical consumes both axes and drains the rest of the gesture, so a diagonal (e.g. bottom-right → top-left) swipe pages instead of opening the drawer, and a vertical swipe never pages. Disabled when zoomed/drawer/radial/leaving/multi-touch/removing.
 - **Single tap:** toggles chrome. **Double-tap:** if zoomed → animate reset to 1×; else animate to 3× anchored at tap (target offset = (tap−center)×−2), spring `NoBouncy/MediumLow`, cancels fling. Dead during multi-touch.
 - **Pinch:** 1–5×, centroid-anchored, pan only when ≠1×, offsets clamped ±W×(scale−1)/2, ±H×(scale−1)/2. 2+ fingers suppress taps/swipes/pager; re-keys input; cancels fling on start/page change.
 - **Momentum:** 1:1 drag; on release if >250px/s and >1.01× → exponential decay (friction 0.6) clamped to bounds.

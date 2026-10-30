@@ -106,6 +106,9 @@ import kotlinx.coroutines.launch
 
 private val SheetRadius = RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp)
 
+/** A gesture must be this much more vertical than horizontal to count as vertical. */
+private const val VerticalGestureRatio = 2.0f
+
 /** Slide duration when a delete moves the viewer to the adjacent item. */
 private const val DeleteSlideDurationMs = 280
 
@@ -152,10 +155,10 @@ internal suspend fun PointerInputScope.detectMultiTouch(
  * instant a second finger lands, so a two-finger pinch can never open the drawer
  * or dismiss the viewer.
  *
- * The first axis to pass touch slop wins. Horizontal is left entirely to the
- * pager (nothing is consumed); vertical consumes both axes before the pager
- * sees them, so an angled swipe can never slide the page and open the drawer at
- * the same time.
+ * Once past touch slop, only a gesture at least [VerticalGestureRatio] times
+ * more vertical than horizontal counts as vertical. Everything else is left to
+ * the pager. Vertical consumes both axes and drains the rest of the gesture, so
+ * an angled swipe can never slide the page and open the drawer at the same time.
  */
 internal suspend fun PointerInputScope.detectVerticalSwipe(
     threshold: Float,
@@ -188,8 +191,10 @@ internal suspend fun PointerInputScope.detectVerticalSwipe(
             totalDy += dy
 
             if (!axisDecided && kotlin.math.hypot(totalDx, totalDy) > touchSlop) {
-                if (kotlin.math.abs(totalDx) > kotlin.math.abs(totalDy)) {
-                    // Horizontal wins: leave the stream untouched for the pager.
+                // Only a steep gesture counts as vertical. Anything diagonal is
+                // handed to the pager, so bottom-right → top-left swipes page
+                // instead of opening the action drawer.
+                if (kotlin.math.abs(totalDy) < kotlin.math.abs(totalDx) * VerticalGestureRatio) {
                     return@awaitEachGesture
                 }
                 axisDecided = true
