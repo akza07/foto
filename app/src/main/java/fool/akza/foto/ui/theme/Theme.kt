@@ -8,6 +8,8 @@ import androidx.compose.ui.graphics.Color
 // Pitch-black AMOLED background with shadcn/zinc neutrals.
 val AmoledBlack = Color(0xFF000000)
 val Surface = Color(0xFF09090B)
+// Slightly lifted card surface for list rows that need separation from AMOLED black.
+val RaisedSurface = Color(0xFF111113)
 val Border = Color(0xFF27272A)
 val TextPrimary = Color(0xFFFAFAFA)
 val TextMuted = Color(0xFFA1A1AA)

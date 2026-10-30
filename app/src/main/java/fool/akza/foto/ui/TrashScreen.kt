@@ -5,6 +5,7 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -50,6 +51,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
@@ -66,6 +69,8 @@ import fool.akza.foto.data.TrashEntry
 import fool.akza.foto.data.TrashRepository
 import fool.akza.foto.data.TrashSource
 import fool.akza.foto.ui.theme.AmoledBlack
+import fool.akza.foto.ui.theme.Border
+import fool.akza.foto.ui.theme.RaisedSurface
 import fool.akza.foto.ui.theme.Surface as ThemeSurface
 import fool.akza.foto.ui.theme.TextMuted
 import fool.akza.foto.ui.theme.TextPrimary
@@ -88,6 +93,8 @@ fun TrashScreen(onBack: () -> Unit, onChanged: () -> Unit) {
     var entries by remember { mutableStateOf<List<TrashEntry>?>(null) }
     var previewItems by remember { mutableStateOf<List<MediaItem>?>(null) }
     var previewIndex by remember { mutableStateOf(0) }
+    var previewSourceRect by remember { mutableStateOf(Rect.Zero) }
+    val thumbRects = remember { mutableMapOf<android.net.Uri, Rect>() }
     var showEmptyConfirm by remember { mutableStateOf(false) }
     var pendingPrivateDelete by remember { mutableStateOf<TrashEntry?>(null) }
     // Private entries to remove after the system-trash delete prompt succeeds.
@@ -175,6 +182,7 @@ fun TrashScreen(onBack: () -> Unit, onChanged: () -> Unit) {
     val totalBytes = remember(list) { list.sumOf { it.sizeBytes } }
     val openPreview: (TrashEntry) -> Unit = { entry ->
         TrashRepository.previewItem(context, entry)?.let { item ->
+            previewSourceRect = thumbRects[entry.uri] ?: Rect.Zero
             previewItems = listOf(item)
             previewIndex = 0
         }
@@ -274,6 +282,7 @@ fun TrashScreen(onBack: () -> Unit, onChanged: () -> Unit) {
                     TrashRow(
                         entry = entry,
                         onOpen = { openPreview(entry) },
+                        onThumbPositioned = { rect -> thumbRects[entry.uri] = rect },
                         onRestore = {
                             if (entry.source == TrashSource.Private) {
                                 restorePrivate(entry)
@@ -351,7 +360,7 @@ fun TrashScreen(onBack: () -> Unit, onChanged: () -> Unit) {
         FullImageViewer(
             items = preview,
             initialIndex = previewIndex.coerceIn(0, preview.lastIndex),
-            sourceRect = Rect.Zero,
+            sourceRect = previewSourceRect,
             onDismiss = { previewItems = null },
             onPageChanged = { previewIndex = it },
             onDelete = {},
@@ -367,6 +376,7 @@ fun TrashScreen(onBack: () -> Unit, onChanged: () -> Unit) {
 private fun TrashRow(
     entry: TrashEntry,
     onOpen: () -> Unit,
+    onThumbPositioned: (Rect) -> Unit,
     onRestore: () -> Unit,
     onDelete: () -> Unit,
 ) {
@@ -379,7 +389,8 @@ private fun TrashRow(
             .fillMaxWidth()
             .clickable(onClick = onOpen),
         shape = RoundedCornerShape(12.dp),
-        color = ThemeSurface,
+        color = RaisedSurface,
+        border = BorderStroke(1.dp, Border),
         shadowElevation = 0.dp,
     ) {
         Row(
@@ -392,7 +403,8 @@ private fun TrashRow(
                 modifier = Modifier
                     .size(52.dp)
                     .clip(RoundedCornerShape(9.dp))
-                    .background(ThemeSurface),
+                    .background(ThemeSurface)
+                    .onGloballyPositioned { onThumbPositioned(it.boundsInWindow()) },
                 contentAlignment = Alignment.Center,
             ) {
                 // Glyph sits behind the preview and shows through when a provider
