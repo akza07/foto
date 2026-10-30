@@ -4,6 +4,29 @@
 - **Tool Execution**: Full permission to use any available tools (including file operations, searches, terminal command execution, and subagent orchestration) within the scope of this project.
 - **Scope Restriction**: All tool invocations, reads, and writes must remain confined to the current project directory.
 
+## Subagent orchestration (Pi agents only)
+
+If the agent running this project is a Pi agent, use the `pi-subagents` skill
+(`subagent` tool) to parallelize work instead of doing everything serially in
+the main loop. Split independent work into parallel children and keep dependent
+stages in a single scripted workflow:
+
+- Fan out independent reading, investigation, review, and validation with
+  `subagent({ workflow: "parallel", args: { tasks: [...] } })`; use `worker` for
+  changes, `scout`/`researcher` for investigation, and `reviewer`/`oracle` for
+  independent review.
+- Use a workflow script (a `js workflow` code block in the reply, launched via
+  `subagent({ workflow: true })`) when a later step depends on an earlier
+  result, or for retried, aggregated, or resumed children.
+- Keep one writer per working tree: parallelize reads, reviews, and validation,
+  and use `worktree: true` when several children must edit at once.
+- Briefs must be self-contained (goal, paths, constraints, success criteria,
+  expected output); children start with fresh context.
+- The main agent keeps intent, routing, decisions, final acceptance, and the
+  release build; it does not delegate the APK output step below.
+- Non-Pi agents can ignore this section and use their own native delegation or
+  serial execution.
+
 ## On task completion
 If task is completed, then produce an output to `apk-output/foto-arm64-android16-release.apk` so that user can install, test and provide feedback for further improvement.
 Then perform `cp apk-output/foto-arm64-android16-release.apk /media/XYZ/DiffusionArt/foto-arm64-android16-release.apk` for the system to copy the file to the device.
