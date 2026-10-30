@@ -10,6 +10,18 @@ Then perform `cp apk-output/foto-arm64-android16-release.apk /media/XYZ/Diffusio
 
 - **App identity**: application ID `fool.akza.foto`, launcher name `Foto`.
 
+## Commit messages
+
+Follow the format already used in this repository. Use a conventional subject
+line (`type(scope): imperative summary`) followed by a high-level prose
+description of what changed and why. Write paragraphs, or a compact `-` list
+with no blank lines between items; do not put a blank line between list
+entries. The body should read as a summary a reviewer can understand without
+the diff, not as a bare bullet dump.
+
+Do not pass one `-m` per bullet: each `-m` becomes a separate paragraph and
+leaves a blank line between list items.
+
 ## Run in the Android emulator
 
 The installed `Pixel_10a` AVD uses an x86_64 Android image with arm64-v8a compatibility.
