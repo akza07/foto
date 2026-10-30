@@ -10,6 +10,7 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -63,6 +64,7 @@ import fool.akza.foto.data.TrashRepository
 import fool.akza.foto.data.thumbnails.ThumbCache
 import fool.akza.foto.data.thumbnails.VideoFrameCache
 import fool.akza.foto.ui.theme.AmoledBlack
+import fool.akza.foto.ui.theme.Border
 import fool.akza.foto.ui.theme.Surface as ThemeSurface
 import fool.akza.foto.ui.theme.TextMuted
 import fool.akza.foto.ui.theme.TextPrimary
@@ -416,6 +418,7 @@ private fun <T> OptionPickerDialog(
                 .padding(horizontal = 32.dp),
             shape = RoundedCornerShape(16.dp),
             color = ThemeSurface,
+            border = BorderStroke(1.dp, Border),
             shadowElevation = 0.dp,
         ) {
             Column(modifier = Modifier.padding(20.dp)) {

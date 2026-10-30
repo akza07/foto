@@ -246,9 +246,10 @@ internal fun CropScreen(
             )
         }
 
-        if (saving) {
-            BusyOverlay(stringResource(R.string.crop_saving))
-        }
+        BusyOverlay(
+            visible = saving,
+            message = stringResource(R.string.crop_saving),
+        )
     }
 }
 

@@ -41,6 +41,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
@@ -58,6 +59,7 @@ import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.DropdownMenu
@@ -65,6 +67,9 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.material3.pulltorefresh.PullToRefreshDefaults
+import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -207,6 +212,7 @@ fun GalleryScreen(
     SettingsRepository.init(context)
     val appSettings by SettingsRepository.settings.collectAsState()
     var content by remember { mutableStateOf<GalleryContent?>(null) }
+    var refreshing by remember { mutableStateOf(false) }
     var openFolder by remember { mutableStateOf<MediaFolder?>(null) }
     var directoryStack by remember { mutableStateOf<List<DirectoryLevel>>(emptyList()) }
     var closing by remember { mutableStateOf(false) }
@@ -231,6 +237,9 @@ fun GalleryScreen(
     var infoItem by remember { mutableStateOf<MediaItem?>(null) }
     // Image currently open in the full-screen crop editor (images only).
     var cropItem by remember { mutableStateOf<MediaItem?>(null) }
+    // Just-saved crop while the gallery reloads and its preview is prepared.
+    var pendingCropItem by remember { mutableStateOf<MediaItem?>(null) }
+    var cropUpdating by remember { mutableStateOf(false) }
     // URIs this session has deleted. MediaStore can keep serving the row for a
     // while after the file is gone (SAF deletes especially), which would otherwise
     // resurrect the item in folder covers/counts on the next reload — so every
@@ -281,6 +290,36 @@ fun GalleryScreen(
         }
     }
     val storageFolderLabel = stringResource(R.string.folder_storage)
+    // Hold a loader after saving a crop until the reload actually returns the new
+    // item. This is the gap where the file exists but the directory still shows
+    // the old contents (and its thumbnail has not been prepared yet).
+    LaunchedEffect(visibleContent, pendingCropItem) {
+        val target = pendingCropItem ?: return@LaunchedEffect
+        val targetPath = target.canonicalPath()
+        val found = visibleContent?.allItems?.firstOrNull { candidate ->
+            (target.id != 0L && candidate.id == target.id) ||
+                (targetPath != null && candidate.canonicalPath() == targetPath) ||
+                candidate.uri == target.uri
+        }
+        if (found != null) {
+            ThumbCache.enqueueIfMissing(found)
+            pendingCropItem = null
+            cropUpdating = false
+            toastKey += 1
+            toastMessage = UiText.Res(R.string.crop_saved)
+        }
+    }
+    LaunchedEffect(pendingCropItem) {
+        val target = pendingCropItem ?: return@LaunchedEffect
+        delay(10_000)
+        if (pendingCropItem == target) {
+            pendingCropItem = null
+            cropUpdating = false
+            toastKey += 1
+            toastMessage = UiText.Res(R.string.crop_saved)
+        }
+    }
+
     val hierarchy = remember(
         visibleContent,
         appSettings.sortOrder,
@@ -327,9 +366,21 @@ fun GalleryScreen(
             AppLog.w("delete: reload re-queued $leaked suppressed item(s)")
         }
         content = loaded
+        if (refreshing) {
+            // Keep the pull indicator up long enough to read even when the
+            // provider answers instantly.
+            delay(300)
+            refreshing = false
+        }
     }
 
     val reload = { reloadKey += 1 }
+    val refresh = {
+        if (!refreshing) {
+            refreshing = true
+            reload()
+        }
+    }
 
     // Surface MediaStore changes so the gallery reloads when files
     // appear or disappear. MainActivity's SyncCoordinator (debounced) emits;
@@ -574,6 +625,11 @@ fun GalleryScreen(
     var deleteProgress by remember { mutableStateOf<DeleteProgress?>(null) }
     // Shared busy overlay for single-item deletes and copy/move transfers.
     var busyMessage by remember { mutableStateOf<UiText?>(null) }
+    // Last non-null busy message, kept so the overlay can animate out.
+    var lastBusyMessage by remember { mutableStateOf<UiText?>(null) }
+    LaunchedEffect(busyMessage) {
+        if (busyMessage != null) lastBusyMessage = busyMessage
+    }
 
     // Removes deleted items from the visible content + viewer and reloads.
     val removeDeletedBatch = { deletedItems: List<MediaItem> ->
@@ -808,6 +864,13 @@ fun GalleryScreen(
                     }
                 }
                 if (bulk) {
+                    if (media.isEmpty()) {
+                        // Let the bar ease to 100% before the modal exits, so a
+                        // fast batch still reads as continuous progress rather
+                        // than a single jump.
+                        deleteProgress = DeleteProgress(done = items.size, total = items.size)
+                        delay(360)
+                    }
                     deleteProgress = null
                 } else {
                     busyMessage = null
@@ -1041,6 +1104,8 @@ fun GalleryScreen(
             gridSize = appSettings.gridSize,
             onSortOrderChange = { SettingsRepository.setSortOrder(it) },
             onGridSizeChange = { SettingsRepository.setGridSize(it) },
+            isRefreshing = refreshing,
+            onRefresh = refresh,
             selection = selection,
             onToggleSelect = { if (directoryStack.isEmpty()) toggleSelect(it) },
             onToggleFolder = { if (directoryStack.isEmpty()) toggleSelectFolder(it) },
@@ -1149,6 +1214,8 @@ fun GalleryScreen(
                     gridSize = appSettings.gridSize,
                     onSortOrderChange = { SettingsRepository.setSortOrder(it) },
                     onGridSizeChange = { SettingsRepository.setGridSize(it) },
+                    isRefreshing = refreshing,
+                    onRefresh = refresh,
                 )
             }
         }
@@ -1212,9 +1279,9 @@ fun GalleryScreen(
                         viewerItems = viewerItems?.map { current ->
                             if (current.uri == cropTarget.uri) cropped else current
                         }
+                        pendingCropItem = cropped
+                        cropUpdating = true
                         reload()
-                        toastKey += 1
-                        toastMessage = UiText.Res(R.string.crop_saved)
                     },
                 )
             }
@@ -1321,13 +1388,24 @@ fun GalleryScreen(
             )
         }
 
-        busyMessage?.let { message ->
-            BusyOverlay(message = message.resolve())
+        val shownBusy = busyMessage ?: lastBusyMessage
+        if (shownBusy != null) {
+            BusyOverlay(
+                visible = busyMessage != null,
+                message = shownBusy.resolve(),
+            )
         }
+        BusyOverlay(
+            visible = cropUpdating,
+            message = stringResource(R.string.crop_preparing_preview),
+        )
 
-        deleteProgress?.let { progress ->
-            DeleteProgressOverlay(done = progress.done, total = progress.total)
-        }
+        val progress = deleteProgress
+        DeleteProgressOverlay(
+            visible = progress != null,
+            done = progress?.done ?: 0,
+            total = progress?.total ?: 0,
+        )
 
         // Floating pill overlay, centered below the app bar (in safe area).
         // Positioned once at the root so it covers both the Albums grid and
@@ -1497,6 +1575,38 @@ private fun MenuSectionLabel(text: String) {
     )
 }
 
+/** Pull-to-refresh wrapper for the grid screens, with the spinner below the app bar. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun GalleryPullToRefresh(
+    isRefreshing: Boolean,
+    onRefresh: () -> Unit,
+    modifier: Modifier = Modifier,
+    content: @Composable () -> Unit,
+) {
+    val state = rememberPullToRefreshState()
+    PullToRefreshBox(
+        isRefreshing = isRefreshing,
+        onRefresh = onRefresh,
+        state = state,
+        modifier = modifier,
+        indicator = {
+            PullToRefreshDefaults.Indicator(
+                state = state,
+                isRefreshing = isRefreshing,
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .statusBarsPadding()
+                    .padding(top = AppBarHeight + 8.dp),
+                containerColor = SurfaceColor,
+                color = TextPrimary,
+            )
+        },
+    ) {
+        content()
+    }
+}
+
 @Composable
 private fun MainGalleryGrid(
     content: GalleryContent?,
@@ -1520,6 +1630,8 @@ private fun MainGalleryGrid(
     gridSize: GridSize = GridSize.MEDIUM,
     onSortOrderChange: (MediaSort) -> Unit = {},
     onGridSizeChange: (GridSize) -> Unit = {},
+    isRefreshing: Boolean = false,
+    onRefresh: () -> Unit = {},
 ) {
     val gridState = rememberLazyGridState()
     val currentContent by rememberUpdatedState(content)
@@ -1592,35 +1704,48 @@ private fun MainGalleryGrid(
             }
         },
     ) { gridModifier ->
-        val current = content
-        val statusBarTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
-        when {
-            current == null -> {
-                Box(
-                    modifier = gridModifier,
-                    contentAlignment = Alignment.Center,
-                ) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.align(Alignment.Center),
-                        color = TextPrimary,
-                    )
+        GalleryPullToRefresh(
+            isRefreshing = isRefreshing,
+            onRefresh = onRefresh,
+            modifier = gridModifier,
+        ) {
+            val current = content
+            val statusBarTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
+            when {
+                current == null -> {
+                    Box(
+                        modifier = Modifier.fillMaxSize(),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.align(Alignment.Center),
+                            color = TextPrimary,
+                        )
+                    }
                 }
-            }
-            current.folders.isEmpty() && current.looseItems.isEmpty() -> {
-                Box(modifier = gridModifier, contentAlignment = Alignment.Center) {
-                    Text(
-                        text = stringResource(R.string.no_media_found),
-                        color = TextMuted,
-                        fontSize = 14.sp,
-                    )
+                current.folders.isEmpty() && current.looseItems.isEmpty() -> {
+                    LazyColumn(modifier = Modifier.fillMaxSize()) {
+                        item {
+                            Box(
+                                modifier = Modifier.fillParentMaxSize(),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Text(
+                                    text = stringResource(R.string.no_media_found),
+                                    color = TextMuted,
+                                    fontSize = 14.sp,
+                                )
+                            }
+                        }
+                    }
                 }
-            }
-            else -> {
-                LazyVerticalGrid(
-                    state = gridState,
-                    columns = GridCells.Adaptive(minSize = minTileSize),
-                    modifier = gridModifier
-                        .onGloballyPositioned { gridCoordinates = it }
+                else -> {
+                    LazyVerticalGrid(
+                        state = gridState,
+                        columns = GridCells.Adaptive(minSize = minTileSize),
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .onGloballyPositioned { gridCoordinates = it }
                         .pointerInput(Unit) {
                             // The grid owns long-press so the gesture is not lost to
                             // the tile's own click detector: whichever timer fires
@@ -1644,7 +1769,14 @@ private fun MainGalleryGrid(
                                         ?: event.changes.firstOrNull { it.pressed }
                                         ?: break
                                     pointerId = change.id
-                                    if (!change.pressed) break
+                                    if (!change.pressed) {
+                                        // Consume the up event too: otherwise the
+                                        // tile's tap detector fires on release and
+                                        // immediately toggles the just-selected item
+                                        // back off.
+                                        change.consume()
+                                        break
+                                    }
                                     change.consume()
                                     glidePosition(change.position)
                                 }
@@ -1698,6 +1830,7 @@ private fun MainGalleryGrid(
             }
         }
     }
+    }
 }
 
 @Composable
@@ -1725,6 +1858,8 @@ private fun AlbumGrid(
     gridSize: GridSize = GridSize.MEDIUM,
     onSortOrderChange: (MediaSort) -> Unit = {},
     onGridSizeChange: (GridSize) -> Unit = {},
+    isRefreshing: Boolean = false,
+    onRefresh: () -> Unit = {},
 ) {
     val density = LocalDensity.current
     val gridState = rememberLazyGridState()
@@ -1785,18 +1920,35 @@ private fun AlbumGrid(
         Box(modifier = Modifier.fillMaxSize()) {
             val hazeState = rememberHazeState()
 
-            if (displayItems.isEmpty() && childDirectories.isEmpty()) {
-                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Text(text = stringResource(R.string.no_items), color = TextMuted, fontSize = 14.sp)
-                }
-            } else {
-                LazyVerticalGrid(
-                    state = gridState,
-                    columns = GridCells.Adaptive(minSize = minTileSize),
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .hazeSource(state = hazeState)
-                        .onGloballyPositioned { gridCoordinates = it }
+            GalleryPullToRefresh(
+                isRefreshing = isRefreshing,
+                onRefresh = onRefresh,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .hazeSource(state = hazeState),
+            ) {
+                if (displayItems.isEmpty() && childDirectories.isEmpty()) {
+                    LazyColumn(modifier = Modifier.fillMaxSize()) {
+                        item {
+                            Box(
+                                modifier = Modifier.fillParentMaxSize(),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Text(
+                                    text = stringResource(R.string.no_items),
+                                    color = TextMuted,
+                                    fontSize = 14.sp,
+                                )
+                            }
+                        }
+                    }
+                } else {
+                    LazyVerticalGrid(
+                        state = gridState,
+                        columns = GridCells.Adaptive(minSize = minTileSize),
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .onGloballyPositioned { gridCoordinates = it }
                         .pointerInput(Unit) {
                             // See MainGalleryGrid: one owner for long-press + glide.
                             awaitEachGesture {
@@ -1812,7 +1964,14 @@ private fun AlbumGrid(
                                         ?: event.changes.firstOrNull { it.pressed }
                                         ?: break
                                     pointerId = change.id
-                                    if (!change.pressed) break
+                                    if (!change.pressed) {
+                                        // Consume the up event too: otherwise the
+                                        // tile's tap detector fires on release and
+                                        // immediately toggles the just-selected item
+                                        // back off.
+                                        change.consume()
+                                        break
+                                    }
                                     change.consume()
                                     glidePosition(change.position)
                                 }
@@ -1905,6 +2064,7 @@ private fun AlbumGrid(
                         }
                     }
                 }
+            }
             }
 
             // Frosted header overlaying the grid. Haze (backdrop blur) is expensive

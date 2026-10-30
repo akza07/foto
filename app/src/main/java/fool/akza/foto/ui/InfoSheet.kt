@@ -1,5 +1,6 @@
 package fool.akza.foto.ui
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -32,6 +33,7 @@ import fool.akza.foto.data.MediaInfo
 import fool.akza.foto.data.MediaItem
 import fool.akza.foto.data.MediaRepository
 import fool.akza.foto.ui.theme.AmoledBlack
+import fool.akza.foto.ui.theme.Border
 import fool.akza.foto.ui.theme.Surface as SurfaceColor
 import fool.akza.foto.ui.theme.TextMuted
 import fool.akza.foto.ui.theme.TextPrimary
@@ -59,6 +61,7 @@ internal fun InfoSheet(item: MediaItem, onClose: () -> Unit) {
                 .padding(12.dp),
             shape = RoundedCornerShape(16.dp),
             color = SurfaceColor,
+            border = BorderStroke(1.dp, Border),
         ) {
             Column(modifier = Modifier.padding(20.dp)) {
                 Text(stringResource(R.string.info_title), color = TextPrimary, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)

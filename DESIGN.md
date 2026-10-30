@@ -312,7 +312,7 @@ No custom font family; system default with Material3 defaults. Exact usages:
 - Full-screen black surface: close + title + Reset on top; Free / 1:1 / 4:5 / 16:9 ratio chips, Cancel and **Save copy** at the bottom. The original is never modified.
 - Source is decoded upright (EXIF orientation applied) and downsampled to at most 3072px on its long edge, so large photos do not exhaust memory. The save format follows the source (PNG/WebP preserved; JPEG/HEIC/AVIF/GIF become JPEG).
 - Crop rectangle is stored in normalized image coordinates. Corner handles resize (edges too in Free mode), dragging inside moves it, and a thirds grid plus dark scrim outside the crop preview the result. Fixed ratios anchor the opposite corner so the crop never distorts.
-- Output is written beside the original for normal MediaStore folders (DCIM/Pictures/Download/Documents) or through the same SAF tree grant; otherwise it falls back to `Pictures/Foto/`. Saving swaps the viewer to the new copy, reloads the grid and shows “Cropped copy saved”.
+- Output is written beside the original for normal MediaStore folders (DCIM/Pictures/Download/Documents) or through the same SAF tree grant; otherwise it falls back to `Pictures/Foto/`. Saving swaps the viewer to the new copy, reloads the grid, and shows a blocking **Preparing preview…** loader until the reload returns the item and its thumbnail is queued; then “Cropped copy saved”.
 
 ---
 
@@ -369,7 +369,7 @@ Real playback via single ExoPlayer per viewer session (no per-page players). Aud
 
 **Action bar (bottom-center):** compact full-width `#09090B` 12dp elevation + nav-bar padding. Single row 16dp/4dp `SpaceEvenly`: Delete (outlined, white) / Copy / Move / Share — each 10dp round clickable 12dp/6dp padding: 22dp white icon + 4dp gap + 11sp Medium muted label. The selection count and Close live only in the top header, so the bar stays short and leaves more grid visible.
 
-**Behaviors:** Delete → system trash request for MediaStore items, private trash for SAF documents (in-app confirm for the latter) → Undo. Single SAF deletes show a blocking “Deleting…” spinner; bulk deletes show a blocking “Deleting items…” modal with a progress bar and “N of M” while private copies run. Selection chrome animates: header cross-fades, badges fade+scale in, action bar slides up. Copy/Move → system directory picker (SAF) + busy overlay (“Copying/Moving N items…”) → toasts (“Copied/Moved N items” or partial “Moved X, copied Y”). Share → chooser with grants.
+**Behaviors:** Delete → system trash request for MediaStore items, private trash for SAF documents (in-app confirm for the latter) → Undo. Single SAF deletes show a blocking “Deleting…” spinner; bulk deletes show a blocking “Deleting items…” modal with a smooth animated progress bar, “N of M”, scale+fade entry/exit and a 1dp `Border` stroke. Pull down on the root Albums grid or an album grid to reload media and previews (spinner sits below the frosted header). Selection chrome animates: header cross-fades, badges fade+scale in, action bar slides up. Copy/Move → system directory picker (SAF) + busy overlay (“Copying/Moving N items…”) → toasts (“Copied/Moved N items” or partial “Moved X, copied Y”). Share → chooser with grants.
 
 ---
 

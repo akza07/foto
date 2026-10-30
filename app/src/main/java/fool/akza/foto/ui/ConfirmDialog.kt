@@ -5,6 +5,7 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.scaleIn
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -36,6 +37,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import fool.akza.foto.R
 import fool.akza.foto.ui.theme.AmoledBlack
+import fool.akza.foto.ui.theme.Border
 import fool.akza.foto.ui.theme.DeleteRed
 import fool.akza.foto.ui.theme.Surface as ThemeSurface
 import fool.akza.foto.ui.theme.TextMuted
@@ -84,6 +86,7 @@ internal fun ConfirmDialog(
                         .padding(horizontal = 32.dp),
                     shape = RoundedCornerShape(16.dp),
                     color = ThemeSurface,
+                    border = BorderStroke(1.dp, Border),
                     shadowElevation = 0.dp,
                 ) {
             Column(modifier = Modifier.padding(24.dp)) {

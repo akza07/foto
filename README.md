@@ -178,7 +178,8 @@ edge-to-edge rendering.
     ratios. It decodes upright (EXIF applied), caps the working bitmap at 3072px for
     large sources, and saves a new copy beside the original (falling back to
     `Pictures/Foto/`) without modifying the original. The viewer swaps to the cropped
-    result immediately and the grid reloads.
+    result immediately; a **Preparing preview…** loader stays up until the reload
+    returns the new item and its thumbnail has been queued.
 
 ### 5.4.1 Video playback
 - Tapping a **video** tile opens the viewer with **real playback** via
@@ -237,6 +238,8 @@ edge-to-edge rendering.
   action bar provides **Delete / Copy / Move / Share** across the selection
   (folders expand to their contents). Copy/Move use the system directory picker
   (SAF). Deleting shows a blocking progress modal for bulk private-trash copies.
+  Pull down on the Albums or album grid to reload media and previews when the
+  filesystem changed outside the app.
 
 ### 5.5 Settings
 - **Gear icon** → Settings screen (slide transition). Grouped into four cards:

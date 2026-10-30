@@ -134,6 +134,7 @@
     <string name="crop_aspect_wide">16:9</string>
     <string name="crop_save_copy">Save copy</string>
     <string name="crop_saving">Saving crop…</string>
+    <string name="crop_preparing_preview">Preparing preview…</string>
     <string name="crop_save_failed">Couldn\'t save the crop. Try again.</string>
     <string name="crop_saved">Cropped copy saved</string>
     <string name="crop_original_kept">The original photo is kept</string>

@@ -1,10 +1,16 @@
 package fool.akza.foto.ui
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -47,6 +53,7 @@ import fool.akza.foto.ui.theme.Surface as SurfaceColor
 import fool.akza.foto.ui.theme.TextMuted
 import fool.akza.foto.ui.theme.TextPrimary
 import kotlinx.coroutines.delay
+import kotlin.math.roundToInt
 
 /** Shadcn-style toast: a small rounded pill at the bottom center that auto-dismisses. */
 @Composable
@@ -155,51 +162,97 @@ internal fun UndoBar(key: Int, onUndo: () -> Unit, onDismiss: () -> Unit) {
 
 /** Modal progress card used while a bulk delete copies/trashes items. */
 @Composable
-internal fun DeleteProgressOverlay(done: Int, total: Int) {
-    val fraction = if (total <= 0) 0f else (done.toFloat() / total).coerceIn(0f, 1f)
+internal fun DeleteProgressOverlay(
+    visible: Boolean,
+    done: Int,
+    total: Int,
+) {
+    // Keep the last real values while the exit animation plays, and animate the
+    // bar between per-item updates so 5 files read as one continuous motion.
+    var shownDone by remember { mutableStateOf(done) }
+    var shownTotal by remember { mutableStateOf(total) }
+    LaunchedEffect(done, total) {
+        if (total > 0) {
+            shownDone = done
+            shownTotal = total
+        }
+    }
+    val target = if (shownTotal <= 0) 0f else {
+        (shownDone.toFloat() / shownTotal).coerceIn(0f, 1f)
+    }
+    val animated by animateFloatAsState(
+        targetValue = target,
+        animationSpec = tween(durationMillis = 320, easing = FastOutSlowInEasing),
+        label = "deleteProgress",
+    )
+    val animatedDone = (animated * shownTotal).roundToInt().coerceIn(0, shownTotal)
     val interaction = remember { MutableInteractionSource() }
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(AmoledBlack.copy(alpha = 0.68f))
-            .clickable(
-                interactionSource = interaction,
-                indication = null,
-                onClick = {},
-            ),
-        contentAlignment = Alignment.Center,
+
+    AnimatedVisibility(
+        visible = visible,
+        enter = fadeIn(tween(180)),
+        exit = fadeOut(tween(140)),
     ) {
-        Surface(
+        Box(
             modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 32.dp),
-            shape = RoundedCornerShape(16.dp),
-            color = SurfaceColor,
-            shadowElevation = 8.dp,
+                .fillMaxSize()
+                .background(AmoledBlack.copy(alpha = 0.68f))
+                .clickable(
+                    interactionSource = interaction,
+                    indication = null,
+                    onClick = {},
+                ),
+            contentAlignment = Alignment.Center,
         ) {
-            Column(modifier = Modifier.padding(24.dp)) {
-                Text(
-                    text = stringResource(R.string.deleting_items),
-                    color = TextPrimary,
-                    fontSize = 18.sp,
-                    fontWeight = FontWeight.SemiBold,
-                )
-                Spacer(Modifier.height(14.dp))
-                LinearProgressIndicator(
-                    progress = { fraction },
+            AnimatedVisibility(
+                visible = visible,
+                enter = scaleIn(
+                    initialScale = 0.94f,
+                    animationSpec = tween(220, easing = FastOutSlowInEasing),
+                ) + fadeIn(tween(180)),
+                exit = scaleOut(
+                    targetScale = 0.96f,
+                    animationSpec = tween(180, easing = FastOutSlowInEasing),
+                ) + fadeOut(tween(140)),
+            ) {
+                Surface(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(4.dp)
-                        .clip(RoundedCornerShape(50)),
-                    color = TextPrimary,
-                    trackColor = Border,
-                )
-                Spacer(Modifier.height(10.dp))
-                Text(
-                    text = stringResource(R.string.delete_progress_count, done, total),
-                    color = TextMuted,
-                    fontSize = 13.sp,
-                )
+                        .padding(horizontal = 32.dp),
+                    shape = RoundedCornerShape(16.dp),
+                    color = SurfaceColor,
+                    border = BorderStroke(1.dp, Border),
+                    shadowElevation = 8.dp,
+                ) {
+                    Column(modifier = Modifier.padding(24.dp)) {
+                        Text(
+                            text = stringResource(R.string.deleting_items),
+                            color = TextPrimary,
+                            fontSize = 18.sp,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                        Spacer(Modifier.height(14.dp))
+                        LinearProgressIndicator(
+                            progress = { animated },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(4.dp)
+                                .clip(RoundedCornerShape(50)),
+                            color = TextPrimary,
+                            trackColor = Border,
+                        )
+                        Spacer(Modifier.height(10.dp))
+                        Text(
+                            text = stringResource(
+                                R.string.delete_progress_count,
+                                animatedDone,
+                                shownTotal,
+                            ),
+                            color = TextMuted,
+                            fontSize = 13.sp,
+                        )
+                    }
+                }
             }
         }
     }
@@ -207,40 +260,59 @@ internal fun DeleteProgressOverlay(done: Int, total: Int) {
 
 /** Simple centered spinner + label overlay while a long operation runs. */
 @Composable
-internal fun BusyOverlay(message: String) {
+internal fun BusyOverlay(visible: Boolean, message: String) {
     val interaction = remember { MutableInteractionSource() }
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(AmoledBlack.copy(alpha = 0.6f))
-            .clickable(
-                interactionSource = interaction,
-                indication = null,
-                onClick = {},
-            ),
-        contentAlignment = Alignment.Center,
+    AnimatedVisibility(
+        visible = visible,
+        enter = fadeIn(tween(180)),
+        exit = fadeOut(tween(140)),
     ) {
-        Surface(
-            shape = RoundedCornerShape(16.dp),
-            color = SurfaceColor,
-            shadowElevation = 8.dp,
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(AmoledBlack.copy(alpha = 0.6f))
+                .clickable(
+                    interactionSource = interaction,
+                    indication = null,
+                    onClick = {},
+                ),
+            contentAlignment = Alignment.Center,
         ) {
-            Row(
-                modifier = Modifier.padding(horizontal = 20.dp, vertical = 16.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            AnimatedVisibility(
+                visible = visible,
+                enter = scaleIn(
+                    initialScale = 0.94f,
+                    animationSpec = tween(220, easing = FastOutSlowInEasing),
+                ) + fadeIn(tween(180)),
+                exit = scaleOut(
+                    targetScale = 0.96f,
+                    animationSpec = tween(180, easing = FastOutSlowInEasing),
+                ) + fadeOut(tween(140)),
             ) {
-                CircularProgressIndicator(
-                    modifier = Modifier.width(20.dp),
-                    strokeWidth = 2.dp,
-                    color = TextPrimary,
-                )
-                Text(
-                    text = message,
-                    color = TextPrimary,
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.Medium,
-                )
+                Surface(
+                    shape = RoundedCornerShape(16.dp),
+                    color = SurfaceColor,
+                    border = BorderStroke(1.dp, Border),
+                    shadowElevation = 8.dp,
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 20.dp, vertical = 16.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.width(20.dp),
+                            strokeWidth = 2.dp,
+                            color = TextPrimary,
+                        )
+                        Text(
+                            text = message,
+                            color = TextPrimary,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Medium,
+                        )
+                    }
+                }
             }
         }
     }
