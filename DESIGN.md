@@ -97,7 +97,7 @@ No custom font family; system default with Material3 defaults. Exact usages:
 - Pills/toasts/counter/sync/hint/speed-chip container: `CircleShape` / `RoundedCornerShape(50)`.
 - Drawer handle: 40×4dp, 2dp corners, `#A1A1AA` at 40%.
 - Buttons in dialogs: 10dp corners, 44dp tall; CTA tutorial: 12dp corners, 50dp tall; drawer icon wells: 14dp corners, 54dp box.
-- Grid: adaptive columns (`Small` min 88dp / `Medium` 112dp default / `Large` 144dp), 8dp horizontal+vertical spacing, 12dp side padding, top = status-bar + 56dp bar + 12dp, bottom = 12dp + nav-bar (or 96dp action bar + 12dp + nav-bar in selection).
+- Grid: adaptive columns (`Small` min 88dp / `Medium` 112dp default / `Large` 144dp), 8dp horizontal+vertical spacing, 12dp side padding, top = status-bar + 56dp bar + 12dp, bottom = 12dp + nav-bar (or 68dp action bar + 12dp + nav-bar in selection).
 - Headers: 56dp tall + status-bar padding; header horizontal padding 20dp (Albums), 4dp (album/search/settings/folders/trash inner row) + 8dp start inset for viewer top bar.
 
 ### 3.4 Edge-to-edge & system bars
@@ -220,7 +220,7 @@ No custom font family; system default with Material3 defaults. Exact usages:
 
 - Loading (`null`): centered white spinner.
 - Empty library: centered “No media found” 14sp muted.
-- Deletes animate reflow only (no fade); grid bottom reserves 96dp when selection bar visible so last row clears it.
+- Deletes animate reflow + a 180ms fade; grid bottom reserves 68dp when the compact selection bar is visible so the last row clears it.
 
 ---
 
@@ -367,9 +367,9 @@ Real playback via single ExoPlayer per viewer session (no per-page players). Aud
 
 **Tile visuals:** badge top-start 8dp (z 2) 24dp circle: selected = white + 14dp `#09090B` Check (“Selected”); unselected = black 50% + 1dp white border hollow. Unselected tiles dim black 40%. No ripple in selection.
 
-**Action bar (bottom-center):** full-width `#09090B` 12dp elevation + nav-bar padding. Top row 8dp/8dp: `Close` white (“Exit selection”) + “N selected” 16sp SemiBold (weight 1). Bottom row 16dp/4dp `SpaceEvenly`: Delete (outlined, white) / Copy / Move / Share — each 10dp round clickable 12dp/6dp padding: 22dp white icon + 4dp gap + 11sp Medium muted label.
+**Action bar (bottom-center):** compact full-width `#09090B` 12dp elevation + nav-bar padding. Single row 16dp/4dp `SpaceEvenly`: Delete (outlined, white) / Copy / Move / Share — each 10dp round clickable 12dp/6dp padding: 22dp white icon + 4dp gap + 11sp Medium muted label. The selection count and Close live only in the top header, so the bar stays short and leaves more grid visible.
 
-**Behaviors:** Delete → system trash request for MediaStore items, private trash for SAF documents (in-app confirm for the latter) → Undo. Selection chrome animates: header cross-fades, badges fade+scale in, action bar slides up. Copy/Move → system directory picker (SAF) + busy overlay (“Copying/Moving N items…”) → toasts (“Copied/Moved N items” or partial “Moved X, copied Y”). Share → chooser with grants.
+**Behaviors:** Delete → system trash request for MediaStore items, private trash for SAF documents (in-app confirm for the latter) → Undo. Single SAF deletes show a blocking “Deleting…” spinner; bulk deletes show a blocking “Deleting items…” modal with a progress bar and “N of M” while private copies run. Selection chrome animates: header cross-fades, badges fade+scale in, action bar slides up. Copy/Move → system directory picker (SAF) + busy overlay (“Copying/Moving N items…”) → toasts (“Copied/Moved N items” or partial “Moved X, copied Y”). Share → chooser with grants.
 
 ---
 

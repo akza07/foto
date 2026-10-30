@@ -17,12 +17,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.DriveFileMove
 import androidx.compose.material.icons.outlined.Check
-import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -30,7 +28,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
@@ -70,8 +67,6 @@ val SelectionState.itemCount: Int
 /** Floating bottom action bar shown in selection mode with the bulk actions. */
 @Composable
 internal fun SelectionActionBar(
-    count: Int,
-    onClose: () -> Unit,
     onDelete: () -> Unit,
     onCopy: () -> Unit,
     onMove: () -> Unit,
@@ -85,40 +80,17 @@ internal fun SelectionActionBar(
         color = SurfaceColor,
         shadowElevation = 12.dp,
     ) {
-        Column {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 8.dp, vertical = 8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                IconButton(onClick = onClose) {
-                    Icon(
-                        imageVector = Icons.Outlined.Close,
-                        contentDescription = stringResource(R.string.selection_exit),
-                        tint = TextPrimary,
-                    )
-                }
-                Text(
-                    text = pluralStringResource(R.plurals.selection_count, count, count),
-                    color = TextPrimary,
-                    fontSize = 16.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    modifier = Modifier.weight(1f),
-                )
-            }
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 4.dp),
-                horizontalArrangement = Arrangement.SpaceEvenly,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                SelectionAction(Icons.Outlined.Delete, stringResource(R.string.action_delete), onDelete)
-                SelectionAction(Icons.Outlined.ContentCopy, stringResource(R.string.action_copy), onCopy)
-                SelectionAction(Icons.AutoMirrored.Outlined.DriveFileMove, stringResource(R.string.action_move), onMove)
-                SelectionAction(Icons.Outlined.Share, stringResource(R.string.action_share), onShare)
-            }
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 4.dp),
+            horizontalArrangement = Arrangement.SpaceEvenly,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            SelectionAction(Icons.Outlined.Delete, stringResource(R.string.action_delete), onDelete)
+            SelectionAction(Icons.Outlined.ContentCopy, stringResource(R.string.action_copy), onCopy)
+            SelectionAction(Icons.AutoMirrored.Outlined.DriveFileMove, stringResource(R.string.action_move), onMove)
+            SelectionAction(Icons.Outlined.Share, stringResource(R.string.action_share), onShare)
         }
     }
 }

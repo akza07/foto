@@ -233,9 +233,10 @@ edge-to-edge rendering.
 
 ### 5.4.2 Multi-select
 - Long-press a tile or folder to enter selection mode; taps toggle selection,
-  the header offers **Select all**, and a floating action bar provides
-  **Delete / Copy / Move / Share** across the selection (folders expand to their
-  contents). Copy/Move use the system directory picker (SAF).
+  the header offers **Select all** and the live count, and a compact floating
+  action bar provides **Delete / Copy / Move / Share** across the selection
+  (folders expand to their contents). Copy/Move use the system directory picker
+  (SAF). Deleting shows a blocking progress modal for bulk private-trash copies.
 
 ### 5.5 Settings
 - **Gear icon** → Settings screen (slide transition). Grouped into four cards:

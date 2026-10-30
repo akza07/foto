@@ -7,15 +7,20 @@ import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -37,7 +42,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import fool.akza.foto.R
 import fool.akza.foto.ui.theme.AmoledBlack
+import fool.akza.foto.ui.theme.Border
 import fool.akza.foto.ui.theme.Surface as SurfaceColor
+import fool.akza.foto.ui.theme.TextMuted
 import fool.akza.foto.ui.theme.TextPrimary
 import kotlinx.coroutines.delay
 
@@ -146,13 +153,71 @@ internal fun UndoBar(key: Int, onUndo: () -> Unit, onDismiss: () -> Unit) {
     }
 }
 
-/** Simple centered spinner + label overlay while a long operation runs. */
+/** Modal progress card used while a bulk delete copies/trashes items. */
 @Composable
-internal fun BusyOverlay(message: String) {
+internal fun DeleteProgressOverlay(done: Int, total: Int) {
+    val fraction = if (total <= 0) 0f else (done.toFloat() / total).coerceIn(0f, 1f)
+    val interaction = remember { MutableInteractionSource() }
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(AmoledBlack.copy(alpha = 0.6f)),
+            .background(AmoledBlack.copy(alpha = 0.68f))
+            .clickable(
+                interactionSource = interaction,
+                indication = null,
+                onClick = {},
+            ),
+        contentAlignment = Alignment.Center,
+    ) {
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 32.dp),
+            shape = RoundedCornerShape(16.dp),
+            color = SurfaceColor,
+            shadowElevation = 8.dp,
+        ) {
+            Column(modifier = Modifier.padding(24.dp)) {
+                Text(
+                    text = stringResource(R.string.deleting_items),
+                    color = TextPrimary,
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Spacer(Modifier.height(14.dp))
+                LinearProgressIndicator(
+                    progress = { fraction },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(4.dp)
+                        .clip(RoundedCornerShape(50)),
+                    color = TextPrimary,
+                    trackColor = Border,
+                )
+                Spacer(Modifier.height(10.dp))
+                Text(
+                    text = stringResource(R.string.delete_progress_count, done, total),
+                    color = TextMuted,
+                    fontSize = 13.sp,
+                )
+            }
+        }
+    }
+}
+
+/** Simple centered spinner + label overlay while a long operation runs. */
+@Composable
+internal fun BusyOverlay(message: String) {
+    val interaction = remember { MutableInteractionSource() }
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(AmoledBlack.copy(alpha = 0.6f))
+            .clickable(
+                interactionSource = interaction,
+                indication = null,
+                onClick = {},
+            ),
         contentAlignment = Alignment.Center,
     ) {
         Surface(

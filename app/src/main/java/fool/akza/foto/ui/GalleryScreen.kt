@@ -145,10 +145,13 @@ import kotlinx.coroutines.withContext
 private val TileShape = RoundedCornerShape(12.dp)
 private val GridSpacing = 8.dp
 // Height of the selection action bar so grids can reserve space for it.
-private val ActionBarHeightDp = 96.dp
+private val ActionBarHeightDp = 68.dp
 
 /** A viewer item removed by a pending delete, with its index for a slide-back Undo. */
 private data class ViewerUndo(val item: MediaItem, val index: Int)
+
+/** Bulk-delete progress for the blocking modal (private SAF copies). */
+private data class DeleteProgress(val done: Int, val total: Int)
 
 /** The source tile for one level of directory navigation. */
 private data class DirectoryLevel(val path: String, val sourceRect: Rect)
@@ -567,6 +570,10 @@ fun GalleryScreen(
     // Sentinel consumed by the LaunchedEffect below to launch the next API 29
     // consent dialog without the launcher referencing itself.
     var nextConsentLaunch by remember { mutableStateOf<androidx.activity.result.IntentSenderRequest?>(null) }
+    // Progress for a blocking bulk-delete modal; null when no delete is running.
+    var deleteProgress by remember { mutableStateOf<DeleteProgress?>(null) }
+    // Shared busy overlay for single-item deletes and copy/move transfers.
+    var busyMessage by remember { mutableStateOf<UiText?>(null) }
 
     // Removes deleted items from the visible content + viewer and reloads.
     val removeDeletedBatch = { deletedItems: List<MediaItem> ->
@@ -686,6 +693,9 @@ fun GalleryScreen(
         pendingTrashItems = emptyList()
         pendingRestoreItems = emptyList()
         pendingDeleteItems = emptyList()
+        // The app-side copy work (if any) is done once the provider dialog returns.
+        deleteProgress = null
+        busyMessage = null
         val approved = result.resultCode == android.app.Activity.RESULT_OK
         if (!approved) {
             viewerDeleteInFlightUri = null
@@ -775,20 +785,32 @@ fun GalleryScreen(
         } else scope.launch {
             val saf = items.filter { android.provider.DocumentsContract.isDocumentUri(context, it.uri) }
             val media = items.filterNot { android.provider.DocumentsContract.isDocumentUri(context, it.uri) }
+            val bulk = items.size > 1
             if (saf.isNotEmpty()) {
+                if (bulk) {
+                    deleteProgress = DeleteProgress(done = 0, total = items.size)
+                } else {
+                    busyMessage = UiText.Res(R.string.deleting)
+                }
                 val trashed = mutableListOf<MediaItem>()
                 val deleted = mutableListOf<MediaItem>()
-                withContext(Dispatchers.IO) {
-                    saf.forEach { item ->
-                        if (PrivateTrash.trash(context, item)) {
-                            trashed += item
-                            deleted += item
-                        } else if (MediaRepository.delete(context, item) == DeleteResult.Deleted) {
-                            // No tree metadata to restore to (e.g. a document
-                            // handed over by another app): permanent fallback.
-                            deleted += item
-                        }
+                saf.forEachIndexed { index, item ->
+                    if (PrivateTrash.trash(context, item)) {
+                        trashed += item
+                        deleted += item
+                    } else if (MediaRepository.delete(context, item) == DeleteResult.Deleted) {
+                        // No tree metadata to restore to (e.g. a document
+                        // handed over by another app): permanent fallback.
+                        deleted += item
                     }
+                    if (bulk) {
+                        deleteProgress = DeleteProgress(done = index + 1, total = items.size)
+                    }
+                }
+                if (bulk) {
+                    deleteProgress = null
+                } else {
+                    busyMessage = null
                 }
                 if (deleted.isNotEmpty()) removeDeletedBatch(deleted)
                 if (trashed.isNotEmpty()) {
@@ -811,10 +833,13 @@ fun GalleryScreen(
                         androidx.activity.result.IntentSenderRequest.Builder(sender).build(),
                     )
                 } else {
+                    deleteProgress = null
+                    busyMessage = null
                     reportDeleteFailure()
                     clearSelection()
                 }
             } else {
+                deleteProgress = null
                 runApi29Deletes(media)
             }
         }
@@ -863,7 +888,6 @@ fun GalleryScreen(
     // ── Copy / Move ────────────────────────────────────────────────────────
     var pendingCopy by remember { mutableStateOf<List<MediaItem>?>(null) }
     var pendingMove by remember { mutableStateOf<List<MediaItem>?>(null) }
-    var busyMessage by remember { mutableStateOf<UiText?>(null) }
     val transferScope = rememberCoroutineScope()
 
     // Shared: pick a destination tree, then run the transfer in the background.
@@ -1228,8 +1252,6 @@ fun GalleryScreen(
             modifier = Modifier.align(Alignment.BottomCenter),
         ) {
             SelectionActionBar(
-                count = selection.itemCount,
-                onClose = clearSelection,
                 onDelete = {
                     if (selectedCount > 0) {
                         batchDeleteScope.launch {
@@ -1301,6 +1323,10 @@ fun GalleryScreen(
 
         busyMessage?.let { message ->
             BusyOverlay(message = message.resolve())
+        }
+
+        deleteProgress?.let { progress ->
+            DeleteProgressOverlay(done = progress.done, total = progress.total)
         }
 
         // Floating pill overlay, centered below the app bar (in safe area).
@@ -1644,7 +1670,7 @@ private fun MainGalleryGrid(
                             selection = selection,
                             onToggleSelect = onToggleFolder,
                             onClick = { rect -> onFolderClick(folder, rect) },
-                            modifier = Modifier.animateItem(fadeInSpec = null, fadeOutSpec = null),
+                            modifier = Modifier.animateItem(fadeInSpec = tween(180), fadeOutSpec = tween(180)),
                             onBoundsChanged = { tileBounds["folder:${folder.bucketId}"] = it },
                         )
                     }
@@ -1654,7 +1680,7 @@ private fun MainGalleryGrid(
                             selection = selection,
                             onToggleSelect = onToggleSelect,
                             // Deletes reflow the grid instead of jumping.
-                            modifier = Modifier.animateItem(fadeInSpec = null, fadeOutSpec = null),
+                            modifier = Modifier.animateItem(fadeInSpec = tween(180), fadeOutSpec = tween(180)),
                             onTilePositioned = { uri, rect ->
                                 onTilePositioned(uri, rect)
                                 tileBounds["item:$uri"] = rect
@@ -1821,7 +1847,7 @@ private fun AlbumGrid(
                                 isSelected = selected,
                                 onToggleSelect = onToggleFolder,
                                 onClick = { rect -> onDirectoryClick(child, rect) },
-                                modifier = Modifier.animateItem(fadeInSpec = null, fadeOutSpec = null),
+                                modifier = Modifier.animateItem(fadeInSpec = tween(180), fadeOutSpec = tween(180)),
                                 onBoundsChanged = { tileBounds[boundsKey] = it },
                             )
                         } else {
@@ -1831,7 +1857,7 @@ private fun AlbumGrid(
                                 isSelectedOverride = selected,
                                 onToggleSelect = onToggleFolder,
                                 onClick = { rect -> onDirectoryClick(child, rect) },
-                                modifier = Modifier.animateItem(fadeInSpec = null, fadeOutSpec = null),
+                                modifier = Modifier.animateItem(fadeInSpec = tween(180), fadeOutSpec = tween(180)),
                                 onBoundsChanged = { tileBounds[boundsKey] = it },
                             )
                         }
@@ -1849,7 +1875,7 @@ private fun AlbumGrid(
                                 selection = selection,
                                 onToggleSelect = onToggleSelect,
                                     // Deletes reflow the grid instead of jumping.
-                                modifier = Modifier.animateItem(fadeInSpec = null, fadeOutSpec = null),
+                                modifier = Modifier.animateItem(fadeInSpec = tween(180), fadeOutSpec = tween(180)),
                                 onTilePositioned = { uri, rect ->
                                     onTilePositioned(uri, rect)
                                     tileBounds["album:$uri"] = rect
@@ -1865,7 +1891,7 @@ private fun AlbumGrid(
                                 item = item,
                                 selection = selection,
                                 onToggleSelect = onToggleSelect,
-                                    modifier = Modifier.animateItem(fadeInSpec = null, fadeOutSpec = null),
+                                    modifier = Modifier.animateItem(fadeInSpec = tween(180), fadeOutSpec = tween(180)),
                                 onTilePositioned = { uri, rect ->
                                     onTilePositioned(uri, rect)
                                     tileBounds["album:$uri"] = rect
