@@ -18,7 +18,7 @@
 3. Active selection mode (clears selection first)
 4. Settings root → Folders sub-screen → Trash sub-screen (innermost wins)
 5. Full image/video viewer
-6. Open album (folder) view
+6. Open album stack (nested folder levels)
 7. Albums grid (home, bottom)
 
 **Back behavior summary:**
@@ -27,9 +27,9 @@
 - System back in search closes search.
 - System back with selection active exits selection.
 - System back in Folders returns to Settings root; in Trash returns to Settings root; in Settings root returns to underlying gallery/album/viewer.
-- System back in album view plays reverse deck-collapse animation then shows Albums grid.
+- System back in an album level plays the reverse deck-collapse animation and returns to its parent folder; at the top level it returns to the Albums grid.
 - System back in viewer plays shrink-back-to-tile animation then shows grid/album.
-- No back-stack history beyond one level per overlay.
+- Overlays are single-level; the album directory stack is the exception and pops one folder level at a time.
 
 **External entry:** `ACTION_VIEW` (`intent.data`) and `ACTION_SEND` (`EXTRA_STREAM`) for `image/*` and `video/*` open directly in the viewer with no tile-morph (fade only), over whatever gallery state exists.
 
@@ -46,6 +46,8 @@
 - **Calm motion:** 180–320ms tweens with `FastOutSlowInEasing`, spring blooms for radial/zoom, per-frame transforms in the draw phase (60fps, no jank).
 - **Skeleton-first loading:** never show empty gaps; show shimmer placeholders while decoding.
 - **Safe deletes:** every delete is undoable. MediaStore files go to Android's system trash (API 30+) — instant, no byte copies. SAF documents (added folders, `.nomedia` content), which have no platform trash, are copied into Foto's private trash first. Both kinds offer Undo.
+- **Non-destructive editing:** crop always writes a new copy beside the original; the source file is never modified.
+- **Strict gesture disambiguation:** viewer swipes lock to one axis; only a steep (≥2:1) vertical drag opens the drawer, so diagonal swipes page instead of doing both.
 
 ---
 
@@ -57,6 +59,7 @@
 |---|---|---|
 | `AmoledBlack` | `#000000` | Every screen background; behind status/nav bars; radial backing; drawer icon wells |
 | `Surface` | `#09090B` | Cards, sheets, tiles, headers, pills (counter, sync, toast base is inverted — see §4), switch off-thumb contrast, viewer chrome |
+| `RaisedSurface` | `#111113` | Lifted trash-row cards; separates list rows from AMOLED black without leaving the zinc family |
 | `EmptySurface` | `#18181B` | Lifted placeholder: tiles/viewer pages with no preview, tutorial mock cards; never confused with pure black |
 | `Border` | `#27272A` | All 1dp outlines, separators/dividers, switch tracks/borders, seeker track, sync pill border, tutorial dots (inactive) |
 | `TextPrimary` | `#FAFAFA` | Primary text, primary icons, light button fills, active tutorial dot, seeker fill/thumb, spinner |
@@ -88,16 +91,22 @@ No custom font family; system default with Material3 defaults. Exact usages:
 - Info sheet title: 18sp SemiBold; rows: 14sp (`#A1A1AA` label left, `#FAFAFA` value right).
 - Video HUD times: 12sp Medium (`#FAFAFA` current, `#A1A1AA` total); speed chip: 12sp SemiBold `#A1A1AA`; error title 14sp Medium, message 12sp muted.
 - Trash row name: 14sp Medium `#FAFAFA`; size/summary: 12sp `#A1A1AA`.
+- Delete-progress modal: title 18sp SemiBold `#FAFAFA`; count 13sp `#A1A1AA`.
+- Crop editor: title 20sp SemiBold; ratio chips 13sp; hint/footer 12sp muted; action labels 14sp; save error 13sp Medium red.
 - Tutorial title: 24sp SemiBold centered; body: 14sp line-height 21sp muted centered; Skip: 15sp Medium muted; CTA: 15sp SemiBold black on light.
 
 ### 3.3 Shape & spacing
 
 - Tiles, empty previews: `RoundedCornerShape(12dp)`.
-- Cards, sheets: 12dp (settings group, trash row), 16dp (dialogs, option dialogs, info sheet, bottom drawer top 16dp only).
+- Cards, sheets: 12dp (settings group, trash row), 16dp (dialogs, delete-progress/busy modals, option dialogs, info sheet, bottom drawer top 16dp only, crop action buttons).
+- Trash rows: 12dp `RaisedSurface` + 1dp `Border`, 8dp inner padding, 52dp thumbnail at 9dp corners.
+- Delete-progress card: 16dp corners, 24dp inner padding, 4dp progress bar, 1dp `Border`.
+- Crop editor: ratio chips are 50dp pills (14dp/8dp padding); Cancel/Save-copy buttons are 48dp tall, 16dp corners; crop canvas has 20dp horizontal / 8dp vertical breathing room.
 - Pills/toasts/counter/sync/hint/speed-chip container: `CircleShape` / `RoundedCornerShape(50)`.
 - Drawer handle: 40×4dp, 2dp corners, `#A1A1AA` at 40%.
 - Buttons in dialogs: 10dp corners, 44dp tall; CTA tutorial: 12dp corners, 50dp tall; drawer icon wells: 14dp corners, 54dp box.
 - Grid: adaptive columns (`Small` min 88dp / `Medium` 112dp default / `Large` 144dp), 8dp horizontal+vertical spacing, 12dp side padding, top = status-bar + 56dp bar + 12dp, bottom = 12dp + nav-bar (or 68dp action bar + 12dp + nav-bar in selection).
+- Selection action bar: ~56dp of visible content + nav-bar inset; grids reserve 68dp + 12dp + nav-bar so the last row clears it.
 - Headers: 56dp tall + status-bar padding; header horizontal padding 20dp (Albums), 4dp (album/search/settings/folders/trash inner row) + 8dp start inset for viewer top bar.
 
 ### 3.4 Edge-to-edge & system bars
@@ -139,42 +148,59 @@ No custom font family; system default with Material3 defaults. Exact usages:
 
 ### 4.4 Busy overlay (“Copying/Moving…”)
 
-- Full-screen black 60% scrim, centered card: `#09090B`, 16dp corners, 8dp shadow, 20dp horizontal / 16dp vertical padding.
+- Full-screen black 60% scrim, centered card: `#09090B`, 16dp corners, 1dp `Border` stroke, 8dp shadow, 20dp horizontal / 16dp vertical padding.
 - Row: 20dp spinner (2dp stroke, `#FAFAFA`) + 12dp gap + label 14sp Medium `#FAFAFA`.
-- Blocks input while copy/move runs.
+- Enter/exit: scrim fades 180/140ms; card scales 0.94→1 / 0.96 and fades in 220/180ms.
+- Blocks input while copy/move/save runs.
 
-### 4.5 Confirmation dialog (shared)
+### 4.5 Delete-progress modal
+
+- Shown for bulk deletes that include SAF documents (MediaStore-only batches use the platform prompt). Full-screen black 68% scrim; taps are swallowed.
+- Centered card: full-width with 32dp side margins, `#09090B`, 16dp corners, 1dp `Border`, 8dp shadow, 24dp inner padding.
+- Title “Deleting items…” 18sp SemiBold; 14dp gap; 4dp rounded progress bar (white fill on `#27272A` track); 10dp gap; “N of M” 13sp muted.
+- The bar animates every update over 320ms `FastOutSlowIn`, and the displayed count is interpolated from the same fraction (no per-item jump). On completion it holds at 100% for 360ms before the modal exits.
+- Enter: scrim 180ms fade + card 0.94→1 scale / 220ms + fade. Exit: 0.96 scale / 180ms + 140ms fade.
+
+### 4.6 Confirmation dialog (shared)
 
 - Full-screen black 70% scrim; tap outside dismisses (no ripple).
-- Card: full-width with 32dp side margins, 16dp corners, `#09090B`, no shadow. Inner 24dp.
+- Card: full-width with 32dp side margins, 16dp corners, `#09090B`, 1dp `Border` stroke, no shadow. Inner 24dp.
 - Title 18sp SemiBold, 8dp gap, message 14sp muted 20sp line-height, 24dp gap, two equal buttons 44dp tall, 10dp corners, 12dp gap.
 - Cancel (left): transparent fill, `#FAFAFA` 14sp Medium “Cancel”.
 - Confirm (right): red `#EF4444` + white 14sp SemiBold for destructive; else light `#FAFAFA` + black for neutral.
 - Enter: scrim fades 180ms; card scales 0.92→1 over 240ms `FastOutSlowIn` + fades 180ms. No exit animation.
 
-### 4.6 Option dialog (sort/grid)
+### 4.7 Option dialog (sort/grid)
 
-- Same scrim/card geometry as confirm (70% scrim, 32dp margins, 16dp corners, 20dp inner, 18sp title + 8dp gap).
+- Same scrim/card geometry as confirm (70% scrim, 32dp margins, 16dp corners, 1dp `Border`, 20dp inner, 18sp title + 8dp gap).
 - Each option: full-width 8dp corners, 8dp horizontal / 12dp vertical padding. Label 15sp (current: `#FAFAFA` SemiBold; others: muted Normal) + current shows 18dp Check `#FAFAFA` (“Selected”).
 - Tap selects, persists, closes (sort also reloads gallery).
 
-### 4.7 Thumbnail & shimmer
+### 4.8 Thumbnail & shimmer
 
 - Images: center-crop; animated GIF/WebP plays inline. Video tiles/posters: fast frame-0 poster, crossfades 120ms when async loads.
 - While loading (not error, not cached): shimmer — linear gradient `[base60%, base, base60%]`, 400px bright band sweeping horizontally, 1200ms linear infinite. Base `#09090B` (images) / `#18181B` (video posters).
 - Error / empty slot: `EmptyPreview` — `#18181B` 12dp (0dp in viewer) + centered `BrokenImage` outlined icon muted at 32% size.
 
-### 4.8 Video badge
+### 4.9 Video badge
 
 - 26dp circle, black 60%, centered 18dp white `PlayArrow` (“Video”). Bottom-end of tile with 8dp inset, drawn on top.
 
-### 4.9 Thumbnail sync pill (“Caching previews”)
+### 4.10 Thumbnail sync pill (“Caching previews”)
 
 - Top-center, 64dp below status-bar top, above Albums + album. Content-sized pill: 50dp round, `#09090B`, 1dp `#27272A` stroke, 12dp shadow. Row 16dp horizontal / 9dp vertical.
-- Leading: 15dp circular progress (2dp round, white on `#27272A` track) while working; else 15dp `Sync` outlined white. 10dp gap → “Caching previews · NN%” 13sp Medium white. 8dp gap → “done/total” 12sp muted.
-- Slides+fades from top on enter/exit; visible only while indexing; hides at 100%.
+- Leading: 15dp circular progress (2dp round, white on `#27272A` track) while `done < total`; else 15dp `Sync` outlined white. 10dp gap → “Caching previews” 13sp Medium white. 8dp gap → `done/total` 12sp muted.
+- No percentage is shown: the total can grow while discovery is still running, so a percentage would jump backwards. The count is the only progress readout.
+- Slides+fades from top on enter/exit; visible only while indexing; hides when `done == total`.
 
-### 4.10 File-size formatting
+### 4.11 Pull-to-refresh
+
+- Available on the Albums grid and every album level. Drag down from the top; Material3 `PullToRefreshBox` with the default circular indicator.
+- Indicator container `#09090B`, spinner `#FAFAFA`; positioned at top-center, below the frosted header (status bar + 56dp + 8dp) so it never overlaps the title row.
+- Release triggers a media/preview reload. The indicator stays for at least 300ms so an instant provider response still reads as a refresh. Empty states are scrollable `LazyColumn`s, so pull-to-refresh works even when the grid has no items.
+- This reloads library content only; it does not clear the thumbnail cache (that is Settings → Storage → Clear thumbnail cache).
+
+### 4.12 File-size formatting
 
 - ≥1GB: `%.2f GB`; ≥1MB: `%.1f MB`; ≥1KB: `%.0f KB`; else `%d B`. US locale.
 
@@ -197,8 +223,8 @@ No custom font family; system default with Material3 defaults. Exact usages:
 ### 6.1 Header
 
 - Frosted bar (scrim + blur). Row: status-bar padding + 56dp + 20dp sides, centered vertically.
-- Normal: left “Albums” 28sp SemiBold white −0.5sp tracking (weight 1); right two icon buttons 24dp white: `Search` outlined (“Search”) + `Settings` outlined (“Settings”).
-- Selection mode (replaces title): left `Close` outlined (“Exit selection”) → exits; 4dp gap + “N selected” 16sp SemiBold white (weight 1); right `SelectAll` outlined (“Select all”) → toggles all.
+- Normal: left “Albums” 28sp SemiBold white −0.5sp tracking (weight 1); right three 24dp white icon buttons: `FilterList` (“Filter”) opens a dark dropdown with “Sort order” and “Grid size” sections (check on the current option), then `Search` (“Search”) and `Settings` (“Settings”).
+- Selection mode (replaces title): left `Close` outlined (“Exit selection”) → exits; 4dp gap + “N selected” 16sp SemiBold white (weight 1); right `SelectAll` outlined (“Select all”) → toggles all. Filter/search/settings are hidden.
 
 ### 6.2 Folder stack tile
 
@@ -219,7 +245,8 @@ No custom font family; system default with Material3 defaults. Exact usages:
 ### 6.4 States
 
 - Loading (`null`): centered white spinner.
-- Empty library: centered “No media found” 14sp muted.
+- Empty library: centered “No media found” 14sp muted, inside a scrollable `LazyColumn` so pull-to-refresh still works.
+- Pull-to-refresh: drag down anywhere at the top; indicator sits below the frosted header (see §4.11).
 - Deletes animate reflow + a 180ms fade; grid bottom reserves 68dp when the compact selection bar is visible so the last row clears it.
 
 ---
@@ -241,14 +268,14 @@ No custom font family; system default with Material3 defaults. Exact usages:
 
 ### 7.2 Sub-header
 - Frosted overlay top, same scrim/conditional blur, status-bar + 56dp + 4dp sides.
-- Normal: `ArrowBack` (auto-mirrored rounded) white (“Back”) → animated close; 4dp gap; column: folder name 16sp SemiBold 1 line + “N items” 12sp muted.
-- Selection: `Close` → exit; “N selected” 16sp SemiBold (weight 1); `SelectAll` → select all display items / deselect.
+- Normal: `ArrowBack` (auto-mirrored rounded) white (“Back”) → animated close; 4dp gap; column: folder name 16sp SemiBold 1 line + “N items” 12sp muted; right `FilterList` 24dp white opens the same sort/grid dropdown as Albums.
+- Selection: `Close` → exit; “N selected” 16sp SemiBold (weight 1); `SelectAll` → select all display items / deselect. Filter is hidden.
 - Content top padding clears it (56dp+12dp+status-bar). Empty album: centered “No items” 14sp muted.
 
-### 7.3 Tag pills (content filter)
-- Full-span row at the top of the grid (scrolls with content, below the app bar): horizontally scrollable pills, 8dp spacing, 2dp vertical padding. Shown once the first tags land; while background indexing runs, a leading “Finding tags…” 12sp muted caption shows.
-- Pill: 50dp round, `#09090B` with 1dp `#27272A` border, “Label · N” 12sp Medium white (N = matching photos); selected = white fill + black text. Tap toggles the filter (tap again clears); a11y “Filter by X[, selected]”.
-- Filter keeps only photos whose tags include the concept (score ≥ 0.20); folders always stay visible. Tapping a tile opens the viewer over the filtered list. Empty-after-filter: same “No items” state.
+### 7.3 Nested folders & pull-to-refresh
+- Child folders appear first in the album grid using the same stack tile; tapping one pushes another album level with the same deck-unpack motion. Back pops one level and returns to the parent folder.
+- Pull down on any album level to reload media and previews; the indicator sits below the frosted header (see §4.11). Empty states are scrollable so refresh still works.
+- There are no tag/content filters in the album grid; search is name-only (see §8).
 
 ---
 
@@ -256,13 +283,9 @@ No custom font family; system default with Material3 defaults. Exact usages:
 
 **Opens:** magnifier in Albums header. Slides+fades from right (parent). System back closes. No shared-element; viewer opens via tile-zoom.
 
-**Header (frosted, black bg):** row status-bar+56dp+4dp sides: back arrow white (“Back”) → close; decorative muted search icon; input weight 1 (12dp padding box): overlay placeholder “Search file names” 16sp muted when empty + auto-focused text field 16sp white, white cursor, Search IME; when non-empty right `Close` muted (“Clear”) clears query.
+**Header (frosted, black bg):** row status-bar+56dp+4dp sides: back arrow white (“Back”) → close; decorative muted `Search` icon; input weight 1 (12dp horizontal padding box): overlay placeholder “Search file names” 16sp muted when empty + auto-focused text field 16sp white, white cursor, Search IME; when non-empty right `Close` muted (“Clear”) clears query.
 
-**Mode switch:** below the frosted header, full-width row (16dp sides, 12dp top clearing the bar): two pills “Names” | “Content” (50dp round, selected = white fill + black 13sp Medium, unselected = black fill + white text + 1dp border).
-
-**Behavior (Names):** trims query; empty = no list. Tokenized AND-match over name + type + album + path (case-insensitive). Tap tile hides keyboard, opens viewer.
-
-**Behavior (Content):** query is embedded on-device (300ms debounce) and indexed photos rank by cosine similarity (floor 0.20, top 200). Photos without vectors are excluded and counted in a 12sp muted footnote (“N photos not indexed yet” — indexing happens as albums open). While embedding/loading: centered spinner + “Indexing photos for content search…”.
+**Behavior:** names only. The query is trimmed; an empty query shows no results. Case-insensitive substring match over the display name only (not album, path, type, or image content). Results update immediately — there is no mode switch, debounce, or on-device embedding. Tapping a tile hides the keyboard and opens the viewer at that result.
 
 **Results:** adaptive grid (same density/spacing as gallery; top clears frosted bar; 12dp sides; 8dp spacing). First full-span caption “Matches file names across your whole library” 13sp muted (4dp start/top). Groups by “MMMM yyyy” from date-added else “Unknown date” (encounter order); per-group full-span header 13sp SemiBold muted (4dp start, 8dp top, 2dp bottom). Tiles identical to gallery (12dp, badge, shimmer/error, no selection).
 
@@ -288,9 +311,9 @@ No custom font family; system default with Material3 defaults. Exact usages:
 
 ### 9.3 Bottom action drawer
 
-- Full black 55% scrim (tap closes). Sheet bottom-center full-width, top 16dp corners, `#09090B`, nav-bar padding, 12dp top / 24dp bottom.
+- Full black 55% scrim fades in/out independently (tap closes). Sheet bottom-center full-width, top 16dp corners, `#09090B`, nav-bar padding, 12dp top / 24dp bottom.
 - Handle 40×4dp muted-40% centered, 20dp gap, single `SpaceEvenly` row.
-- Items: Share, Info, Delete, Crop (Crop omitted on video). Each: 54dp black well 14dp corners with 26dp outlined icon + 6dp gap + 12sp Medium white label. Delete red; others white. Tap closes drawer then runs action. Slides+fades from bottom.
+- Items: Share, Info, Delete, Crop (Crop omitted on video). Each: 54dp black well 14dp corners with 26dp outlined icon + 6dp gap + 12sp Medium white label. Delete red; others white. Tap closes drawer then runs action. The sheet slides+fades from the bottom; the scrim only fades and never slides.
 
 ### 9.4 Gestures (images)
 
@@ -309,10 +332,13 @@ No custom font family; system default with Material3 defaults. Exact usages:
 
 ### 9.6 Crop editor
 
-- Full-screen black surface: close + title + Reset on top; Free / 1:1 / 4:5 / 16:9 ratio chips, Cancel and **Save copy** at the bottom. The original is never modified.
-- Source is decoded upright (EXIF orientation applied) and downsampled to at most 3072px on its long edge, so large photos do not exhaust memory. The save format follows the source (PNG/WebP preserved; JPEG/HEIC/AVIF/GIF become JPEG).
+- Full-screen black surface. Top bar: 22dp Close icon (“Cancel”), “Crop” 20sp SemiBold, 22dp Reset icon (disabled until the image loads); Close/Reset dim to muted when saving.
+- Ratio chips row: Free / 1:1 / 4:5 / 16:9, 50dp round, 13sp Medium, 14dp/8dp padding; selected = white fill + black text, unselected = transparent + 1dp `Border`.
+- Canvas: 20dp horizontal / 8dp vertical breathing room, image Fit centered. Crop border 1.5dp white, thirds grid 1dp white 35%, outside scrim black 58%; corner handles 20dp long × 3dp thick, plus 22dp centered edge handles in Free mode.
+- Bottom: hint “Drag the corners to choose what to keep” 12sp muted, then Cancel (outlined 1dp `Border`) and **Save copy** (white fill, black label) as 48dp-tall, 16dp-corner buttons; footer “The original photo is kept” 12sp muted. Save failure is 13sp Medium red. The original is never modified.
+- Source is decoded upright (EXIF orientation applied) and downsampled to at most 3072px on its long edge, so large photos do not exhaust memory. The save format follows the source (PNG/WebP preserved; JPEG/HEIC/AVIF/GIF become JPEG) at quality 92, named `<stem>_cropped.<ext>`.
 - Crop rectangle is stored in normalized image coordinates. Corner handles resize (edges too in Free mode), dragging inside moves it, and a thirds grid plus dark scrim outside the crop preview the result. Fixed ratios anchor the opposite corner so the crop never distorts.
-- Output is written beside the original for normal MediaStore folders (DCIM/Pictures/Download/Documents) or through the same SAF tree grant; otherwise it falls back to `Pictures/Foto/`. Saving swaps the viewer to the new copy, reloads the grid, and shows a blocking **Preparing preview…** loader until the reload returns the item and its thumbnail is queued; then “Cropped copy saved”.
+- Output is written beside the original for normal MediaStore folders (DCIM/Pictures/Download/Documents) or through the same SAF tree grant; otherwise it falls back to `Pictures/Foto/`. While encoding, a blocking **Saving crop…** busy overlay is shown. Saving swaps the viewer to the new copy, reloads the grid, and shows a blocking **Preparing preview…** loader until the reload returns the item and its thumbnail is queued; then “Cropped copy saved”.
 
 ---
 
@@ -334,7 +360,7 @@ Real playback via single ExoPlayer per viewer session (no per-page players). Aud
 
 **Poster veil + surface:** active page: full-bleed texture (Fit) + black shutter + identical Fit poster veil fading 150ms on first frame (2.5s timeout fades anyway) + entry bridge poster. All inside shared correction layer; HUD outside (never distorts). Memory cache avoids placeholder on re-open.
 
-**Gestures:** single tap on upper area toggles HUD. Double-tap left/right seeks ∓10s + shows HUD. No pinch/double-zoom, no swipe-down dismiss, no swipe-up drawer on video. Pager swipe locked while playing (pause to swipe). Long-press still summons radial (pauses + hides HUD).
+**Gestures:** single tap on upper area toggles HUD. Double-tap left/right seeks ∓10s + shows HUD. No pinch/double-zoom. Vertical swipes are handled by the host viewer: up opens the action drawer, down dismisses. Pager swipe locked while playing (pause to swipe). Long-press still summons radial (pauses + hides HUD).
 
 **Center button:** 56dp circle black 60%, 30dp white Play/Pause, alpha follows HUD; disabled when hidden.
 
@@ -369,7 +395,7 @@ Real playback via single ExoPlayer per viewer session (no per-page players). Aud
 
 **Action bar (bottom-center):** compact full-width `#09090B` 12dp elevation + nav-bar padding. Single row 16dp/4dp `SpaceEvenly`: Delete (outlined, white) / Copy / Move / Share — each 10dp round clickable 12dp/6dp padding: 22dp white icon + 4dp gap + 11sp Medium muted label. The selection count and Close live only in the top header, so the bar stays short and leaves more grid visible.
 
-**Behaviors:** Delete → system trash request for MediaStore items, private trash for SAF documents (in-app confirm for the latter) → Undo. Single SAF deletes show a blocking “Deleting…” spinner; bulk deletes show a blocking “Deleting items…” modal with a smooth animated progress bar, “N of M”, scale+fade entry/exit and a 1dp `Border` stroke. Pull down on the root Albums grid or an album grid to reload media and previews (spinner sits below the frosted header). Selection chrome animates: header cross-fades, badges fade+scale in, action bar slides up. Copy/Move → system directory picker (SAF) + busy overlay (“Copying/Moving N items…”) → toasts (“Copied/Moved N items” or partial “Moved X, copied Y”). Share → chooser with grants.
+**Behaviors:** Delete → system trash request for MediaStore items, private trash for SAF documents (in-app confirm for the latter) → Undo. Single SAF deletes show a blocking “Deleting…” spinner; bulk deletes show the blocking “Deleting items…” progress modal (see §4.5). Pull down on the root Albums grid or an album grid to reload media and previews; the indicator sits below the frosted header and stays at least 300ms. Selection chrome animates: header cross-fades, badges fade+scale in, action bar slides up. Copy/Move → system directory picker (SAF) + busy overlay (“Copying/Moving N items…”) → toasts (“Copied/Moved N items” or partial “Moved X, copied Y”). Share → chooser with grants.
 
 ---
 
@@ -414,7 +440,7 @@ Same frosted header (“Folders”). Hint 13sp/18sp muted 4dp start: allow-mode 
 Merged list of Android's system trash (MediaStore `QUERY_ARG_MATCH_TRASHED`, API 30+) and Foto's private SAF trash, newest first. System entries also appear in the platform's own trash UI. Same slide/frosted chrome (“Trash” 22sp + back + “Empty” text-button with `DeleteSweep` icon: white when non-empty, muted when empty; while the Empty request is pending 16dp spinner + “Emptying…”).
 
 - Empty: centered “Trash is empty” 14sp muted. Else list 16dp sides, top status+56+8dp, bottom 8dp, 8dp spacing: summary 12sp muted (“N · size”) 4dp start/bottom.
-- Row card 12dp `#111113` with a 1dp `Border` stroke (grey accent against AMOLED black), 8dp padding: 52dp thumb 9dp corners (real image thumbnail, or video poster with a small play affordance; glyph sits behind as a fallback; private entries read the app-private copy) + 12dp gap + name 14sp Medium 1 line + size 12sp muted (weight 1) + `Restore` outlined white (“Restore”) → system `createTrashRequest(value=false)` or private restore + reloads + `onChanged`; `Delete` outlined red (“Delete”) → system `createDeleteRequest` or a permanent-delete confirm for private entries + reloads. Tapping the row opens the item in a read-only viewer/player (no action wheel, drawer, delete, share, info or crop), zooming from the row thumbnail.
+- Row card 12dp `RaisedSurface` (`#111113`) with a 1dp `Border` stroke (grey accent against AMOLED black), 8dp padding: 52dp thumb 9dp corners (real image thumbnail, or video poster with a small play affordance; glyph sits behind as a fallback; private entries read the app-private copy) + 12dp gap + name 14sp Medium 1 line + size 12sp muted (weight 1) + `Restore` outlined white (“Restore”) → system `createTrashRequest(value=false)` or private restore + reloads + `onChanged`; `Delete` outlined red (“Delete”) → system `createDeleteRequest` or a permanent-delete confirm for private entries + reloads. Tapping the row opens the item in a read-only viewer/player (no action wheel, drawer, delete, share, info or crop), zooming from the row thumbnail.
 - “Empty” → destructive confirm (“Empty trash?” / “Items in the trash will be permanently deleted. This can’t be undone.” / Cancel + Empty red) → system `createDeleteRequest` for system entries and direct removal of private entries → reloads while “Emptying…”. Provider requests are approved in the system dialog; private entries need no prompt.
 
 ---
@@ -434,13 +460,14 @@ Overlay on gallery when permissions granted + unseen; replayable via Settings (a
 2. “Find your photos” / “Open an album to see everything inside, or tap the search icon to find a file by name.” — mock pill search (12×96dp `Border` + 20dp Search) over 2×3 grid.
 3. “View and zoom” / “Swipe between photos, double-tap or pinch to zoom, and swipe down to close.” — portrait rect (`Border` 16dp 62%×74%) + 52dp ring (2dp white) + 8dp dot + 28dp `KeyboardArrowDown` muted.
 4. “Actions in one motion” / “Long-press anywhere, slide to Delete, Info, Share or Crop, then release to run it.” — 180dp radial (black-35% disc, `Border` rings/spokes) + 4 icons 90°×54dp (Delete red, others white 22dp/26dp boxes) + center Close 20dp + finger dot (16dp ring 2dp white offset 70dp@30°).
-5. “Select and stay safe” / “Long-press a tile to enter selection mode, then glide your finger across tiles to select many in one motion. Delete, copy, move or share them; deletes go to the Android trash — undo right away, or empty it from Settings.” — 2×3 grid (3 checked: 16dp white circle + 11dp black Check) + bottom Delete(red)/Copy/Move/Share 20dp + floating Undo pill (white 50dp, bottom 16dp, 11sp black “Moved to trash  ·  Undo” 14dp/7dp).
+5. “Select and stay safe” / “Long-press a tile to enter selection mode, then glide your finger across tiles to select many in one motion. Delete, copy, move or share them; deletes go to the trash — undo right away, or empty it from Settings.” — 2×3 grid (3 checked: 16dp white circle + 11dp black Check) + bottom Delete(red)/Copy/Move/Share 20dp + floating Undo pill (white 50dp, bottom 16dp, 11sp black “Moved to trash  ·  Undo” 14dp/7dp).
 
 ---
 
 ## 16. Motion System (repro recipe)
 
-- Tweens `FastOutSlowInEasing` unless noted: dialog scrim 180ms fade / card 240ms scale 0.92→1 + 180ms fade; deck forward 320ms / reverse 260ms; viewer entry 280ms / exit 240ms; delete/restore slide 280ms; chrome fade 200ms; poster veil 150ms; poster fade 120ms; seeker thicken 150ms; video HUD hide 200ms.
+- Tweens `FastOutSlowInEasing` unless noted: dialog scrim 180ms fade / card 240ms scale 0.92→1 + 180ms fade; delete-progress bar 320ms per update + 360ms hold at 100%; deck forward 320ms / reverse 260ms; viewer entry 280ms / exit 240ms; delete/restore slide 280ms; chrome fade 200ms; poster veil 150ms; poster fade 120ms; seeker thicken 150ms; video HUD hide 200ms; pull-to-refresh minimum 300ms.
+- Bottom action drawer: the sheet slides 260ms up / 200ms down and fades; its full-screen scrim only fades (180/140ms). Never slide the scrim with the sheet — a sliding tint reads as a second page entering from the bottom.
 - Springs: radial open `MediumBouncy/MediumLow`, close `NoBouncy/Medium`, bloom allows 1.2 overshoot; double-tap zoom `NoBouncy/MediumLow`.
 - Shimmer 1200ms linear infinite; sync slide from top + fade (defaults); settings/folders/trash/search slide from right + fade; drawer slide from bottom + fade; toast slide half-height + fade.
 - Draw-phase transforms (`graphicsLayer`) for deck/viewer/zoom/blur so frames don’t recompose; album blur gated to phase ≥0.98; viewer blur 16dp×radial progress; momentum decay friction 0.6 threshold 0.5; double-tap 1↔3× (pinch 1–5×); swipe threshold 56dp; tap vs long-press via press-timeout + touch-slop.
@@ -454,14 +481,16 @@ Overlay on gallery when permissions granted + unseen; replayable via Settings (a
 - Respect `.nomedia` on: hides marked dirs incl. inside added folders; off: shows them (outside added dirs still hidden — scanner never indexes; would need All-files access which app intentionally avoids).
 - Allow-list on: only inside added dirs shown (each with media = album); empty list = nothing. Off: all except added dirs.
 - Added dirs browsed via SAF tree (recursive) + MediaStore merged/deduped by path; picker persists read+write so deletes survive restart. Primary-volume matching assumed.
-- Cache: thumbnails + video frame-0 posters (720px) unified (grid = viewer = player first frame, pixel-identical crossfade); LRU 48/96MB → disk → extract → MediaStore → Coil. Progress pill counts real work.
+- Cache: thumbnails + video frame-0 posters (720px) unified (grid = viewer = player first frame, pixel-identical crossfade); LRU 48/96MB → disk → extract → MediaStore → Coil. Progress pill reports done/total only; the total may grow during discovery, so no percentage is shown.
+- Crop: always writes a new file; the original is untouched. Working bitmap capped at 3072px; PNG/WebP preserved, other formats become JPEG quality 92; output goes beside the original or falls back to `Pictures/Foto/`.
+- Pull-to-refresh reloads the current library view; it does not clear the thumbnail cache.
 - Trash: MediaStore items go to the system trash; SAF documents copy into app-private trash then remove the original. Both are undoable/restorable; uninstall wipes private trash (backup disabled).
 
 ---
 
 ## 18. Accessibility & Edge Cases
 
-- Content descriptions: Search/Settings/Back/Clear/Selected/Select all/Exit selection/Video/Restore/Delete/Remove.
+- Content descriptions: Search/Settings/Filter/Back/Clear/Selected/Select all/Exit selection/Video/Restore/Delete/Remove/Crop reset.
 - Live-region polite on toast/undo; switches expose Role.Switch (whole row toggleable); action rows Role.Button; radial hint announces “Release to X”.
 - Touch targets: header icons 40dp+ (viewer back 40dp, actions 44dp), drawer wells 54dp, video controls 44dp, tutorial CTA 50dp.
 - Empty/error/loading covered per screen (§6.4, §8, §11 error, permission fallback, cache “Nothing cached”, trash “empty”, folders “No folders added”).
