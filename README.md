@@ -180,11 +180,12 @@ edge-to-edge rendering.
     `Pictures/Foto/`) without modifying the original. The viewer swaps to the cropped
     result immediately; a **Preparing preview…** loader stays up until the reload
     returns the new item and its thumbnail has been queued.
-  - **Wallpaper:** full-screen picker with a Portrait/Landscape frame matching the
-    screen, pinch-to-zoom and drag-to-reposition, and icon toggles for the Home and
-    Lock targets. Nothing is written to storage: the crop goes straight to the
-    system wallpaper service (`WallpaperManager.setBitmap`), so the original is
-    untouched.
+  - **Wallpaper:** full-screen picker whose device-shaped preview is the crop
+    itself (portrait or landscape frame matching the screen), with a simulated
+    lock/home screen for the Lock / Home / Both target tabs, pinch-to-zoom and
+    drag-to-reposition. Nothing is written to storage: the crop goes straight to
+    the system wallpaper service (`WallpaperManager.setBitmap`), so the original
+    is untouched.
 
 ### 5.4.1 Video playback
 - Tapping a **video** tile opens the viewer with **real playback** via
