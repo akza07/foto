@@ -186,7 +186,8 @@ edge-to-edge rendering.
     Preview action that drops all chrome and the system bars to show the wallpaper
     edge to edge. Nothing is written to
     storage: the crop goes straight to the system wallpaper service
-    (`WallpaperManager.setBitmap`), so the original is untouched.
+    (`WallpaperManager.setBitmap`) at display resolution, so the original is
+    untouched.
 
 ### 5.4.1 Video playback
 - Tapping a **video** tile opens the viewer with **real playback** via

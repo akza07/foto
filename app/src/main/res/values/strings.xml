@@ -241,6 +241,8 @@
     <string name="tutorial_skip">Skip</string>
     <string name="tutorial_next">Next</string>
     <string name="tutorial_start">Get started</string>
+    <string name="settings_crash_log_title">Share crash log</string>
+    <string name="settings_crash_log_subtitle">Send the last crash report</string>
     <string name="settings_replay_tutorial">Replay tutorial</string>
     <string name="settings_replay_tutorial_subtitle">Show the walkthrough again.</string>
 </resources>

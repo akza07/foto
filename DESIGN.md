@@ -350,7 +350,8 @@ No custom font family; system default with Material3 defaults. Exact usages:
 - Gestures: pinch shrinks/enlarges the crop window around the gesture centroid (minimum 8% width) and drag pans the image 1:1, so the crop moves against the finger; the focus is clamped to the frame, so dragging past the edge keeps panning instead of jumping to a bound. The window is always clamped inside the photo and refits on orientation change.
 - Motion: the editor fades in while rising 64dp (300ms `FastOutSlowInEasing`) and drops out over 200ms before handing control back, so dismissal and a successful apply animate out instead of vanishing. The frame fades/scales in from 0.97 once the bitmap decodes (`AnimatedContent`, 280ms). Aspect morphs the frame across 300ms with the crop refitted to the animated shape every frame (gestures suspended while it runs, so the photo is never stretched). The target pill slides between tabs in 240ms; the save error expands/collapses; option and primary buttons scale to 0.97 on press; Preview fades in while scaling from 1.04 (and back to 0.98 on exit) as the system bars hide.
 - Back handling: the picker owns back presses for as long as it is mounted. While the wallpaper is being applied or the close animation runs the press is swallowed instead of falling through to the viewer's handler (which would close the viewer and drop the user on the grid); the fullscreen preview handles its own press first.
-- Nothing is written to storage: the crop is handed to `WallpaperManager.setBitmap(..., FLAG_SYSTEM / FLAG_LOCK / both)` under the normal `SET_WALLPAPER` permission, so the original and the library are untouched. The source is decoded upright and capped at 3072px like the crop editor.
+- Nothing is written to storage: the crop is handed to `WallpaperManager.setBitmap(..., FLAG_SYSTEM / FLAG_LOCK / both)` under the normal `SET_WALLPAPER` permission, so the original and the library are untouched. The source is decoded upright at the display's long edge (capped at 2560px) and the crop is scaled to the display before it is handed over: `setBitmap` PNG-encodes the bitmap on the calling thread, so full-resolution crops cost memory and seconds.
+- Apply lifecycle: a new wallpaper re-themes the system overlay, which arrives as `CONFIG_ASSETS_PATHS`. `MainActivity` declares `assetsPaths` in `android:configChanges`; without it Android recreates the activity mid-apply, which wipes Compose state and looks like a crash back to the album grid. The bitmap work also catches `Throwable`, so an OOM becomes an inline error instead of a dead process.
 
 ---
 
@@ -440,6 +441,7 @@ Real playback via single ExoPlayer per viewer session (no per-page players). Aud
 6. **About**
    - Dead row “Foto” / “Version X” (package version, fallback “1.0”), no chevron.
    - Row “Replay tutorial” / “Show the walkthrough again.” no chevron → unmarks tutorial so overlay appears immediately.
+   - Row “Share crash log” / “Send the last crash report” appears only when a Java crash was captured (`CrashLog`, written from the default uncaught-exception handler); tapping shares the trace and clears it. Native crashes never reach it.
 
 **Transitions:** root slides+fades from right over gallery; Folders/Trash slide+fade from right over Settings (opaque black); system back returns inward. Only Library changes re-query media; Display/Playback apply live via state.
 

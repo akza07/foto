@@ -36,6 +36,10 @@ class MainActivity : ComponentActivity() {
         // and the navigation bar/pill, with content inset via Compose insets.
         enableEdgeToEdge()
 
+        // Keep the last Java crash on disk so a device-only failure can be
+        // shared from Settings instead of guessed at.
+        CrashLog.install(this)
+
         // Initialize settings so the persisted "prefer 120Hz" flag is available to
         // the composition below (GalleryScreen also calls init — it's idempotent).
         SettingsRepository.init(this)

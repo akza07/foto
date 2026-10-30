@@ -93,6 +93,7 @@ import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
@@ -122,6 +123,9 @@ import kotlinx.coroutines.launch
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
+
+/** Decoding cap for the wallpaper source, whatever the display reports. */
+private const val MAX_WALLPAPER_SOURCE_DIMENSION = 2560
 
 private val PreviewShape = RoundedCornerShape(30.dp)
 private val PanelShape = RoundedCornerShape(16.dp)
@@ -167,6 +171,15 @@ internal fun WallpaperScreen(
     val scope = rememberCoroutineScope()
     val configuration = LocalConfiguration.current
 
+    // Decode at the display's long edge so the applied wallpaper is native
+    // resolution without holding the full photo in memory; the service has to
+    // PNG-encode whatever it is given, which is slow and memory-hungry.
+    val sourceDimension = remember(context) {
+        val metrics = context.resources.displayMetrics
+        max(metrics.widthPixels, metrics.heightPixels)
+            .coerceIn(1024, MAX_WALLPAPER_SOURCE_DIMENSION)
+    }
+
     val bitmapState = remember(item.uri) { mutableStateOf<Bitmap?>(null) }
     var loadFailed by remember(item.uri) { mutableStateOf(false) }
     var orientation by remember(item.uri) { mutableStateOf(WallpaperOrientation.Portrait) }
@@ -174,7 +187,7 @@ internal fun WallpaperScreen(
     var crop by remember(item.uri) { mutableStateOf(NormalizedCrop(0f, 0f, 1f, 1f)) }
     var previewing by remember(item.uri) { mutableStateOf(false) }
     var saving by remember(item.uri) { mutableStateOf(false) }
-    var saveFailed by remember(item.uri) { mutableStateOf(false) }
+    var saveFailure by remember(item.uri) { mutableStateOf<String?>(null) }
     // The host drops us from the tree as soon as it is told to close, so the
     // exit animation has to play here and call back when it is done.
     var entered by remember { mutableStateOf(false) }
@@ -203,7 +216,11 @@ internal fun WallpaperScreen(
     val morphing = frameAspectAnim.isRunning
 
     LaunchedEffect(item.uri) {
-        val loaded = ImageCropper.loadEditableBitmap(context, item.uri)
+        val loaded = ImageCropper.loadEditableBitmap(
+            context = context,
+            uri = item.uri,
+            maxDimension = sourceDimension,
+        )
         bitmapState.value = loaded
         loadFailed = loaded == null
     }
@@ -213,7 +230,7 @@ internal fun WallpaperScreen(
     LaunchedEffect(bitmapState.value, frameAspect) {
         val source = bitmapState.value ?: return@LaunchedEffect
         crop = fitWallpaperCrop(frameAspect, source.width.toFloat() / source.height.toFloat())
-        saveFailed = false
+        saveFailure = null
     }
 
     // Registered for as long as the picker is mounted, so a back press while the
@@ -312,7 +329,7 @@ internal fun WallpaperScreen(
                             gesturesEnabled = !morphing,
                             onCropChange = {
                                 crop = it
-                                saveFailed = false
+                                saveFailure = null
                             },
                         )
                         loadFailed -> Text(
@@ -347,21 +364,21 @@ internal fun WallpaperScreen(
                 orientation = orientation,
                 enabled = enabled,
                 saving = saving,
-                saveFailed = saveFailed,
+                saveFailure = saveFailure,
                 onTargetChange = {
                     target = it
-                    saveFailed = false
+                    saveFailure = null
                 },
                 onOrientationChange = {
                     orientation = it
-                    saveFailed = false
+                    saveFailure = null
                 },
                 onPreview = { previewing = true },
                 onSet = set@{
                     val source = bitmapState.value ?: return@set
                     if (saving) return@set
                     saving = true
-                    saveFailed = false
+                    saveFailure = null
                     scope.launch {
                         val result = WallpaperSetter.apply(
                             context = context,
@@ -375,7 +392,7 @@ internal fun WallpaperScreen(
                                 applied = true
                                 closing = true
                             }
-                            is WallpaperResult.Failed -> saveFailed = true
+                            is WallpaperResult.Failed -> saveFailure = result.reason ?: "unknown error"
                         }
                     }
                 },
@@ -731,7 +748,7 @@ private fun WallpaperControlPanel(
     orientation: WallpaperOrientation,
     enabled: Boolean,
     saving: Boolean,
-    saveFailed: Boolean,
+    saveFailure: String?,
     onTargetChange: (WallpaperTarget) -> Unit,
     onOrientationChange: (WallpaperOrientation) -> Unit,
     onPreview: () -> Unit,
@@ -783,19 +800,34 @@ private fun WallpaperControlPanel(
             )
         }
 
+        // The reason line is deliberately small and muted: it is there so a
+        // device-only failure (OOM, denied permission, OEM lock screen refusing
+        // the bitmap) can be reported instead of guessed at.
         AnimatedVisibility(
-            visible = saveFailed,
+            visible = saveFailure != null,
             enter = fadeIn(tween(160)) +
                 expandVertically(tween(180, easing = FastOutSlowInEasing)),
             exit = fadeOut(tween(120)) +
                 shrinkVertically(tween(160, easing = FastOutSlowInEasing)),
         ) {
-            Text(
-                text = stringResource(R.string.wallpaper_set_failed),
-                color = DeleteRed,
-                fontSize = 13.sp,
-                fontWeight = FontWeight.Medium,
-            )
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(
+                    text = stringResource(R.string.wallpaper_set_failed),
+                    color = DeleteRed,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Medium,
+                )
+                val reason = saveFailure
+                if (!reason.isNullOrBlank()) {
+                    Text(
+                        text = reason,
+                        color = TextMuted,
+                        fontSize = 11.sp,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
         }
 
         SetWallpaperButton(

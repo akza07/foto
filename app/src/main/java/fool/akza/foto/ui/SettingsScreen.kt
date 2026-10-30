@@ -54,6 +54,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import fool.akza.foto.CrashLog
 import fool.akza.foto.R
 import fool.akza.foto.data.AppSettings
 import fool.akza.foto.data.GalleryEvents
@@ -159,6 +160,12 @@ private fun SettingsRoot(
     // App-private trash summary; null while loading.
     var trashCount by remember { mutableStateOf<Int?>(null) }
     var trashBytes by remember { mutableStateOf(0L) }
+    // Last captured crash, if the process died since it was written.
+    var crashLog by remember { mutableStateOf<String?>(null) }
+
+    LaunchedEffect(Unit) {
+        crashLog = withContext(Dispatchers.IO) { CrashLog.read(context) }
+    }
 
     suspend fun refreshTrash() {
         // Android's system trash is a single MediaStore query, so this stays
@@ -337,6 +344,30 @@ private fun SettingsRoot(
                         showChevron = false,
                         onClick = { SettingsRepository.setTutorialSeen(false) },
                     )
+                    val log = crashLog
+                    if (log != null) {
+                        SettingsDivider()
+                        SettingsActionRow(
+                            title = stringResource(R.string.settings_crash_log_title),
+                            subtitle = stringResource(R.string.settings_crash_log_subtitle),
+                            showChevron = false,
+                            onClick = {
+                                val send = Intent(Intent.ACTION_SEND).apply {
+                                    type = "text/plain"
+                                    putExtra(Intent.EXTRA_SUBJECT, "Foto crash log")
+                                    putExtra(Intent.EXTRA_TEXT, log)
+                                }
+                                runCatching {
+                                    context.startActivity(
+                                        Intent.createChooser(send, null)
+                                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                                    )
+                                }
+                                CrashLog.clear(context)
+                                crashLog = null
+                            },
+                        )
+                    }
                 }
             }
         }
