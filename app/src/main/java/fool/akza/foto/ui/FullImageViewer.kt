@@ -861,35 +861,30 @@ fun FullImageViewer(
             )
         }
 
-        // Sliding bottom action drawer.
-        AnimatedVisibility(
+        // Sliding bottom action drawer. The full-screen scrim fades on its own;
+        // only the sheet slides, so opening the drawer never looks like a second
+        // black page sliding over the viewer.
+        ActionSheet(
             visible = drawerVisible && !previewOnly,
-            enter = slideInVertically(initialOffsetY = { it }) + fadeIn(),
-            exit = slideOutVertically(targetOffsetY = { it }) + fadeOut(),
-        ) {
-            if (currentItem != null) {
-                ActionSheet(
-                    item = currentItem,
-                    onCloseDrawer = { drawerVisible = false },
-                    onDelete = {
-                        drawerVisible = false
-                        if (!deleteInProgress) onDelete(currentItem)
-                    },
-                    onShare = {
-                        drawerVisible = false
-                        onShare(currentItem)
-                    },
-                    onInfo = {
-                        drawerVisible = false
-                        onInfo(currentItem)
-                    },
-                    onCrop = {
-                        drawerVisible = false
-                        onCrop(currentItem)
-                    },
-                )
-            }
-        }
+            item = currentItem,
+            onCloseDrawer = { drawerVisible = false },
+            onDelete = {
+                drawerVisible = false
+                if (!deleteInProgress) currentItem?.let(onDelete)
+            },
+            onShare = {
+                drawerVisible = false
+                currentItem?.let(onShare)
+            },
+            onInfo = {
+                drawerVisible = false
+                currentItem?.let(onInfo)
+            },
+            onCrop = {
+                drawerVisible = false
+                currentItem?.let(onCrop)
+            },
+        )
     }
 }
 
@@ -1209,53 +1204,83 @@ private fun ZoomableImage(
 
 @Composable
 private fun ActionSheet(
-    item: MediaItem,
+    visible: Boolean,
+    item: MediaItem?,
     onCloseDrawer: () -> Unit,
     onDelete: () -> Unit,
     onShare: () -> Unit,
     onInfo: () -> Unit,
     onCrop: () -> Unit,
 ) {
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(AmoledBlack.copy(alpha = 0.55f))
-            .clickable(onClick = onCloseDrawer, indication = null, interactionSource = null),
-    ) {
-        Surface(
+    val target = item ?: return
+    Box(modifier = Modifier.fillMaxSize()) {
+        // Backdrop: a full-screen fade only. It must never be part of the
+        // sheet's slide, otherwise the tint reads as a page sliding up.
+        AnimatedVisibility(
+            visible = visible,
+            enter = fadeIn(tween(180)),
+            exit = fadeOut(tween(140)),
+            modifier = Modifier.fillMaxSize(),
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(AmoledBlack.copy(alpha = 0.55f))
+                    .clickable(
+                        onClick = onCloseDrawer,
+                        indication = null,
+                        interactionSource = null,
+                    ),
+            )
+        }
+
+        AnimatedVisibility(
+            visible = visible,
+            enter = slideInVertically(
+                initialOffsetY = { it },
+                animationSpec = tween(260, easing = FastOutSlowInEasing),
+            ) + fadeIn(tween(180)),
+            exit = slideOutVertically(
+                targetOffsetY = { it },
+                animationSpec = tween(200, easing = FastOutSlowInEasing),
+            ) + fadeOut(tween(140)),
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth(),
-            shape = SheetRadius,
-            color = ThemeSurface,
-            shadowElevation = 0.dp,
         ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .navigationBarsPadding()
-                    .padding(top = 12.dp, bottom = 24.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = SheetRadius,
+                color = ThemeSurface,
+                shadowElevation = 0.dp,
             ) {
-                // Drag handle.
-                Box(
+                Column(
                     modifier = Modifier
-                        .size(width = 40.dp, height = 4.dp)
-                        .clip(RoundedCornerShape(2.dp))
-                        .background(TextMuted.copy(alpha = 0.4f)),
-                )
-                Spacer(Modifier.height(20.dp))
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceEvenly,
+                        .fillMaxWidth()
+                        .navigationBarsPadding()
+                        .padding(top = 12.dp, bottom = 24.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
-                    ActionItem(Icons.Outlined.Share, stringResource(R.string.action_share), TextPrimary, onShare)
-                    ActionItem(Icons.Outlined.Info, stringResource(R.string.info_title), TextPrimary, onInfo)
-                    ActionItem(Icons.Outlined.Delete, stringResource(R.string.action_delete), DeleteRed, onDelete)
-                    // Videos have no crop action.
-                    if (!item.isVideo) {
-                        ActionItem(Icons.Outlined.Crop, stringResource(R.string.action_crop), TextPrimary, onCrop)
+                    // Drag handle.
+                    Box(
+                        modifier = Modifier
+                            .size(width = 40.dp, height = 4.dp)
+                            .clip(RoundedCornerShape(2.dp))
+                            .background(TextMuted.copy(alpha = 0.4f)),
+                    )
+                    Spacer(Modifier.height(20.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceEvenly,
+                    ) {
+                        ActionItem(Icons.Outlined.Share, stringResource(R.string.action_share), TextPrimary, onShare)
+                        ActionItem(Icons.Outlined.Info, stringResource(R.string.info_title), TextPrimary, onInfo)
+                        ActionItem(Icons.Outlined.Delete, stringResource(R.string.action_delete), DeleteRed, onDelete)
+                        // Videos have no crop action.
+                        if (!target.isVideo) {
+                            ActionItem(Icons.Outlined.Crop, stringResource(R.string.action_crop), TextPrimary, onCrop)
+                        }
                     }
                 }
             }
