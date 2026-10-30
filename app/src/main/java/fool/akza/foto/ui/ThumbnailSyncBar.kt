@@ -87,7 +87,7 @@ fun ThumbnailSyncBar(modifier: Modifier = Modifier) {
                 }
                 Spacer(Modifier.width(10.dp))
                 Text(
-                    text = stringResource(R.string.caching_previews, (progress.fraction * 100).toInt()),
+                    text = stringResource(R.string.caching_previews),
                     color = TextPrimary,
                     fontSize = 13.sp,
                     fontWeight = FontWeight.Medium,

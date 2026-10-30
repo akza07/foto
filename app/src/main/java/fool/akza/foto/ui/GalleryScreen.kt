@@ -225,6 +225,8 @@ fun GalleryScreen(
     // Set when the pager should animate back to a restored item.
     var viewerRestoreUri by remember { mutableStateOf<android.net.Uri?>(null) }
     var infoItem by remember { mutableStateOf<MediaItem?>(null) }
+    // Image currently open in the full-screen crop editor (images only).
+    var cropItem by remember { mutableStateOf<MediaItem?>(null) }
     // URIs this session has deleted. MediaStore can keep serving the row for a
     // while after the file is gone (SAF deletes especially), which would otherwise
     // resurrect the item in folder covers/counts on the next reload — so every
@@ -274,6 +276,7 @@ fun GalleryScreen(
             )
         }
     }
+    val storageFolderLabel = stringResource(R.string.folder_storage)
     val hierarchy = remember(
         visibleContent,
         appSettings.sortOrder,
@@ -289,7 +292,7 @@ fun GalleryScreen(
             visibleContent?.allItems.orEmpty(),
             appSettings.sortOrder,
             selectedRoots,
-            context.getString(R.string.folder_storage),
+            storageFolderLabel,
         )
     }
     fun findDirectory(path: String, dirs: List<GalleryDirectory> = hierarchy.directories): GalleryDirectory? {
@@ -335,7 +338,7 @@ fun GalleryScreen(
     // covers and loose items carry full MediaItems, so the warm pass uses the
     // same identity-derived keys the UI reads. Folder contents are then
     // AoT-warmed so opening any album is instant — all of this drives the same
-    // "Caching previews · N%" progress pill (only real work is counted).
+    // "Caching previews" progress pill (only real work is counted).
     LaunchedEffect(visibleContent) {
         val snapshot = visibleContent ?: return@LaunchedEffect
         snapshot.folders.forEach { folder ->
@@ -951,11 +954,6 @@ fun GalleryScreen(
         context.startActivity(Intent.createChooser(send, null))
     }
 
-    val showComingSoonToast = {
-        toastKey += 1
-        toastMessage = UiText.Res(R.string.coming_soon)
-    }
-
     // The root Albums grid stays composed underneath the album, so when the album
     // fades on back, the folder stack is already exactly where the collapsing tiles
     // land — the "after" state is the real top-level view, never a swap-in.
@@ -1132,9 +1130,29 @@ fun GalleryScreen(
                 },
                 onShare = { shareItem(it) },
                 onInfo = { infoItem = it },
-                onCrop = { showComingSoonToast() },
+                onCrop = { item -> cropItem = item },
                 loopVideos = appSettings.loopVideos,
             )
+
+            // Crop is a full-screen editor layered above the viewer. Saving writes
+            // a new copy, so swap the viewer's page to the result and reload the
+            // grid; the original photo remains untouched.
+            val cropTarget = cropItem
+            if (cropTarget != null) {
+                CropScreen(
+                    item = cropTarget,
+                    onDismiss = { cropItem = null },
+                    onSaved = { cropped ->
+                        cropItem = null
+                        viewerItems = viewerItems?.map { current ->
+                            if (current.uri == cropTarget.uri) cropped else current
+                        }
+                        reload()
+                        toastKey += 1
+                        toastMessage = UiText.Res(R.string.crop_saved)
+                    },
+                )
+            }
         }
 
         val deleteTarget = pendingDeleteItem

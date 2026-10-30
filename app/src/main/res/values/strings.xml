@@ -122,6 +122,20 @@
     <string name="action_move">Move</string>
     <string name="action_share">Share</string>
     <string name="action_crop">Crop</string>
+    <string name="crop_title">Crop</string>
+    <string name="crop_reset">Reset crop</string>
+    <string name="crop_loading">Loading image…</string>
+    <string name="crop_load_failed">Couldn\'t load this image</string>
+    <string name="crop_hint">Drag the corners to choose what to keep</string>
+    <string name="crop_aspect_free">Free</string>
+    <string name="crop_aspect_square">1:1</string>
+    <string name="crop_aspect_portrait">4:5</string>
+    <string name="crop_aspect_wide">16:9</string>
+    <string name="crop_save_copy">Save copy</string>
+    <string name="crop_saving">Saving crop…</string>
+    <string name="crop_save_failed">Couldn\'t save the crop. Try again.</string>
+    <string name="crop_saved">Cropped copy saved</string>
+    <string name="crop_original_kept">The original photo is kept</string>
     <string name="release_to">Release to %1$s</string>
 
     <!-- Video player -->
@@ -135,7 +149,7 @@
     <!-- Feedback -->
     <string name="undo_moved_to_trash">Moved to trash</string>
     <string name="action_undo">Undo</string>
-    <string name="caching_previews">Caching previews · %1$d%%</string>
+    <string name="caching_previews">Caching previews</string>
     <string name="caching_progress_count">%1$d/%2$d</string>
     <string name="video_badge">Video</string>
     <string name="media_photo">Photo</string>

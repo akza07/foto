@@ -218,7 +218,7 @@ fun FullImageViewer(
     onDelete: (MediaItem) -> Unit,
     onShare: (MediaItem) -> Unit,
     onInfo: (MediaItem) -> Unit,
-    onCrop: () -> Unit,
+    onCrop: (MediaItem) -> Unit,
     loopVideos: Boolean = false,
     pendingRemoval: MediaItem? = null,
     /** A file delete has been accepted but has not yet completed. */
@@ -469,7 +469,7 @@ fun FullImageViewer(
                 ViewerAction.Delete -> if (!deleteInProgress) onDelete(item)
                 ViewerAction.Info -> onInfo(item)
                 ViewerAction.Share -> onShare(item)
-                ViewerAction.Crop -> if (!item.isVideo) onCrop()
+                ViewerAction.Crop -> if (!item.isVideo) onCrop(item)
             }
         }
     }
@@ -837,7 +837,7 @@ fun FullImageViewer(
                     },
                     onCrop = {
                         drawerVisible = false
-                        onCrop()
+                        onCrop(currentItem)
                     },
                 )
             }

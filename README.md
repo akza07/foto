@@ -163,7 +163,7 @@ edge-to-edge rendering.
 - **Zoomed panning:** 1:1 while dragging, then a low-friction **momentum glide**
   on release, clamped to the image bounds.
 - **Top-left:** back button + counter pill (`3/12`).
-- **Drawer actions:** Delete (red), Share, Info, Crop ("Coming soon" shadcn toast).
+- **Drawer actions:** Delete (red), Share, Info, Crop.
   - **Delete:** videos always ask first; other items only show the in-app modal
     when the delete is permanent (SAF documents, or a device without the system
     trash). Otherwise the file is moved into **Android's system trash**
@@ -173,6 +173,11 @@ edge-to-edge rendering.
     with restore and permanent delete.
   - **Share:** `ACTION_SEND` chooser with URI grant.
   - **Info:** sheet with name, size, and date.
+  - **Crop:** full-screen editor with drag handles, a thirds grid and Free/1:1/4:5/16:9
+    ratios. It decodes upright (EXIF applied), caps the working bitmap at 3072px for
+    large sources, and saves a new copy beside the original (falling back to
+    `Pictures/Foto/`) without modifying the original. The viewer swaps to the cropped
+    result immediately and the grid reloads.
 
 ### 5.4.1 Video playback
 - Tapping a **video** tile opens the viewer with **real playback** via
@@ -354,7 +359,7 @@ apk-output/foto-arm64-android16-release.apk
   restoring them on the next install.
 - UI strings live in `res/values/strings.xml` (with `plurals` for counts); only the
   default locale is shipped so far.
-- Crop is a placeholder ("Coming soon" toast).
+- Crop saves a non-destructive copy (the original is never modified).
 - `.nomedia` content is reachable only inside directories the user explicitly adds.
   **Respect .nomedia** controls whether those markers are honored there (on by default):
   with it off, `.nomedia` content inside granted directories is shown. Content outside

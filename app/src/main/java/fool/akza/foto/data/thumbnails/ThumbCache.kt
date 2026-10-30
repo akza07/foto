@@ -66,7 +66,6 @@ object ThumbCache {
         val done: Int = 0,
     ) {
         val isIndexing: Boolean get() = total > 0 && done < total
-        val fraction: Float get() = if (total == 0) 1f else (done.toFloat() / total)
     }
 
     @Volatile private var initialized = false

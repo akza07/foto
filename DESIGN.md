@@ -304,8 +304,15 @@ No custom font family; system default with Material3 defaults. Exact usages:
 ### 9.5 Delete / share / info / crop
 
 - Drawer Delete (red): video deletes always confirm; other items only show the in-app confirm when the delete is permanent (SAF, or no system trash) — the provider's trash prompt is the confirmation otherwise. Deleting trashes through `MediaStore.createTrashRequest` (no copy) → “Moved to trash” Undo bar (6s) + slide to neighbor (280ms `FastOutSlowIn`; next if exists else prev; last item dismisses). Undo untrashes and slides back. The Trash screen lists everything in the system trash.
-- Share: system chooser with URI grant. Info: bottom sheet (see §11). Crop: “Coming soon” light toast (placeholder).
+- Share: system chooser with URI grant. Info: bottom sheet (see §11). Crop: full-screen crop editor (see §9.6).
 - Page change updates settled index; list shrink clamps pager; input gated during slide.
+
+### 9.6 Crop editor
+
+- Full-screen black surface: close + title + Reset on top; Free / 1:1 / 4:5 / 16:9 ratio chips, Cancel and **Save copy** at the bottom. The original is never modified.
+- Source is decoded upright (EXIF orientation applied) and downsampled to at most 3072px on its long edge, so large photos do not exhaust memory. The save format follows the source (PNG/WebP preserved; JPEG/HEIC/AVIF/GIF become JPEG).
+- Crop rectangle is stored in normalized image coordinates. Corner handles resize (edges too in Free mode), dragging inside moves it, and a thirds grid plus dark scrim outside the crop preview the result. Fixed ratios anchor the opposite corner so the crop never distorts.
+- Output is written beside the original for normal MediaStore folders (DCIM/Pictures/Download/Documents) or through the same SAF tree grant; otherwise it falls back to `Pictures/Foto/`. Saving swaps the viewer to the new copy, reloads the grid and shows “Cropped copy saved”.
 
 ---
 

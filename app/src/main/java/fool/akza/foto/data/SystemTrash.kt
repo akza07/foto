@@ -1,6 +1,5 @@
 package fool.akza.foto.data
 
-import android.content.ContentResolver
 import android.content.Context
 import android.content.IntentSender
 import android.net.Uri
@@ -37,34 +36,39 @@ object SystemTrash {
     val supported: Boolean get() = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R
 
     /** Moves [uris] into the system trash (restorable by the user). */
-    fun trashRequest(context: Context, uris: Collection<Uri>): IntentSender? =
-        request(context, uris) { resolver, list ->
-            MediaStore.createTrashRequest(resolver, list, true)
-        }
-
-    /** Takes [uris] back out of the system trash (restore). */
-    fun restoreRequest(context: Context, uris: Collection<Uri>): IntentSender? =
-        request(context, uris) { resolver, list ->
-            MediaStore.createTrashRequest(resolver, list, false)
-        }
-
-    /** Permanently deletes [uris], bypassing the trash. */
-    fun deleteRequest(context: Context, uris: Collection<Uri>): IntentSender? =
-        request(context, uris) { resolver, list ->
-            MediaStore.createDeleteRequest(resolver, list)
-        }
-
-    private inline fun request(
-        context: Context,
-        uris: Collection<Uri>,
-        build: (ContentResolver, List<Uri>) -> android.app.PendingIntent,
-    ): IntentSender? {
-        if (!supported) return null
+    fun trashRequest(context: Context, uris: Collection<Uri>): IntentSender? {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return null
         val list = uris.distinct()
         if (list.isEmpty()) return null
-        return runCatching { build(context.contentResolver, list).intentSender }
-            .onFailure { AppLog.w("system trash request failed for ${list.size} item(s)", it) }
-            .getOrNull()
+        return runCatching {
+            MediaStore.createTrashRequest(context.contentResolver, list, true).intentSender
+        }.onFailure {
+            AppLog.w("system trash request failed for ${list.size} item(s)", it)
+        }.getOrNull()
+    }
+
+    /** Takes [uris] back out of the system trash (restore). */
+    fun restoreRequest(context: Context, uris: Collection<Uri>): IntentSender? {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return null
+        val list = uris.distinct()
+        if (list.isEmpty()) return null
+        return runCatching {
+            MediaStore.createTrashRequest(context.contentResolver, list, false).intentSender
+        }.onFailure {
+            AppLog.w("system trash restore failed for ${list.size} item(s)", it)
+        }.getOrNull()
+    }
+
+    /** Permanently deletes [uris], bypassing the trash. */
+    fun deleteRequest(context: Context, uris: Collection<Uri>): IntentSender? {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return null
+        val list = uris.distinct()
+        if (list.isEmpty()) return null
+        return runCatching {
+            MediaStore.createDeleteRequest(context.contentResolver, list).intentSender
+        }.onFailure {
+            AppLog.w("system delete request failed for ${list.size} item(s)", it)
+        }.getOrNull()
     }
 
     /** Everything currently in the system trash, newest first. */
