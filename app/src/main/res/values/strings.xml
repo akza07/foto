@@ -143,14 +143,12 @@
 
     <!-- Wallpaper -->
     <string name="wallpaper_title">Wallpaper Editor</string>
-    <string name="wallpaper_reset">Reset crop</string>
     <string name="wallpaper_orientation_portrait">Portrait</string>
     <string name="wallpaper_orientation_landscape">Landscape</string>
     <string name="wallpaper_target_home">Home</string>
     <string name="wallpaper_target_lock">Lock</string>
-    <string name="wallpaper_target_both">Both</string>
     <string name="wallpaper_aspect">Aspect: %1$s</string>
-    <string name="wallpaper_toggle_grid">Toggle crop grid</string>
+    <string name="wallpaper_preview">Preview</string>
     <string name="wallpaper_hint">Pinch to zoom • Drag to reposition</string>
     <string name="wallpaper_set">Set wallpaper</string>
     <string name="wallpaper_setting">Setting wallpaper…</string>

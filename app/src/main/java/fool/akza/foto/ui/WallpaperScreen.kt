@@ -36,12 +36,11 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.AspectRatio
 import androidx.compose.material.icons.outlined.Close
-import androidx.compose.material.icons.outlined.Devices
-import androidx.compose.material.icons.outlined.GridGoldenratio
 import androidx.compose.material.icons.outlined.GridView
 import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.Pinch
-import androidx.compose.material.icons.outlined.RestartAlt
+import androidx.compose.material.icons.outlined.Visibility
+import androidx.compose.material.icons.outlined.VisibilityOff
 import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
@@ -92,6 +91,8 @@ import fool.akza.foto.data.transformWallpaperCrop
 import fool.akza.foto.ui.theme.AmoledBlack
 import fool.akza.foto.ui.theme.Border
 import fool.akza.foto.ui.theme.DeleteRed
+import fool.akza.foto.ui.theme.EmptySurface
+import fool.akza.foto.ui.theme.Surface
 import fool.akza.foto.ui.theme.TextMuted
 import fool.akza.foto.ui.theme.TextPrimary
 import java.time.LocalDateTime
@@ -102,21 +103,21 @@ import kotlin.math.min
 import kotlin.math.roundToInt
 
 private val PreviewShape = RoundedCornerShape(30.dp)
-private val PanelShape = RoundedCornerShape(16.dp)
-private val TrackShape = RoundedCornerShape(12.dp)
-private val OptionShape = RoundedCornerShape(10.dp)
-private val PrimaryShape = RoundedCornerShape(12.dp)
+private val PanelShape = RoundedCornerShape(12.dp)
+private val TrackShape = RoundedCornerShape(8.dp)
+private val TabShape = RoundedCornerShape(6.dp)
+private val OptionShape = RoundedCornerShape(8.dp)
 
-/** Panel surfaces, one step above the pure-black page background. */
-private val PanelColor = Color(0xFF1C1B1D)
-private val PanelTrack = Color(0xFF0E0E10)
-private val PanelRaised = Color(0xFF2A2A2C)
-
-/** Target tabs, ordered the way the picker presents them. */
+/** Targets offered by the picker, in tab order. */
 private val WallpaperTargets = listOf(
-    WallpaperTarget.Lock,
-    WallpaperTarget.Home,
-    WallpaperTarget.Both,
+    TargetTab(WallpaperTarget.Lock, R.string.wallpaper_target_lock, Icons.Outlined.Lock),
+    TargetTab(WallpaperTarget.Home, R.string.wallpaper_target_home, Icons.Outlined.GridView),
+)
+
+private data class TargetTab(
+    val target: WallpaperTarget,
+    @StringRes val labelRes: Int,
+    val icon: ImageVector,
 )
 
 /** The orientation of the wallpaper frame, independent of the device's rotation. */
@@ -125,29 +126,15 @@ private enum class WallpaperOrientation(val labelRes: Int) {
     Landscape(R.string.wallpaper_orientation_landscape),
 }
 
-private val WallpaperTarget.tabLabelRes: Int
-    get() = when (this) {
-        WallpaperTarget.Home -> R.string.wallpaper_target_home
-        WallpaperTarget.Lock -> R.string.wallpaper_target_lock
-        WallpaperTarget.Both -> R.string.wallpaper_target_both
-    }
-
-private val WallpaperTarget.tabIcon: ImageVector
-    get() = when (this) {
-        WallpaperTarget.Home -> Icons.Outlined.GridView
-        WallpaperTarget.Lock -> Icons.Outlined.Lock
-        WallpaperTarget.Both -> Icons.Outlined.Devices
-    }
-
 /**
  * Full-screen wallpaper picker for one image.
  *
  * The preview is a device-shaped frame filled with the crop: the frame takes the
  * aspect of the screen in the chosen [WallpaperOrientation], and the user pans
- * and pinches to choose which part of the photo fills it. A simulated lock/home
- * screen sits on top so the [WallpaperTarget] choice is visible before it is
- * applied. Nothing is written to storage — the crop goes straight to the system
- * wallpaper service.
+ * and pinches to choose which part of the photo fills it. With the preview on, a
+ * simulated lock/home screen sits on top so the [WallpaperTarget] choice is
+ * visible; with it off the frame shows the crop grid instead. Nothing is written
+ * to storage — the crop goes straight to the system wallpaper service.
  */
 @Composable
 internal fun WallpaperScreen(
@@ -165,7 +152,7 @@ internal fun WallpaperScreen(
     var orientation by remember(item.uri) { mutableStateOf(WallpaperOrientation.Portrait) }
     var target by remember(item.uri) { mutableStateOf(WallpaperTarget.Home) }
     var crop by remember(item.uri) { mutableStateOf(NormalizedCrop(0f, 0f, 1f, 1f)) }
-    var gridVisible by remember(item.uri) { mutableStateOf(true) }
+    var preview by remember(item.uri) { mutableStateOf(true) }
     var saving by remember(item.uri) { mutableStateOf(false) }
     var saveFailed by remember(item.uri) { mutableStateOf(false) }
 
@@ -225,17 +212,7 @@ internal fun WallpaperScreen(
         ) {
             WallpaperTopBar(
                 enabled = !saving,
-                canReset = bitmap != null,
                 onDismiss = onDismiss,
-                onReset = {
-                    bitmap?.let { source ->
-                        crop = fitWallpaperCrop(
-                            frameAspect,
-                            source.width.toFloat() / source.height.toFloat(),
-                        )
-                    }
-                    saveFailed = false
-                },
             )
 
             Box(
@@ -251,7 +228,7 @@ internal fun WallpaperScreen(
                         crop = crop,
                         frameAspect = frameAspect,
                         target = target,
-                        gridVisible = gridVisible,
+                        preview = preview,
                         onCropChange = {
                             crop = it
                             saveFailed = false
@@ -286,7 +263,7 @@ internal fun WallpaperScreen(
                     .padding(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 12.dp),
                 target = target,
                 orientation = orientation,
-                gridVisible = gridVisible,
+                preview = preview,
                 enabled = enabled,
                 saving = saving,
                 saveFailed = saveFailed,
@@ -298,7 +275,7 @@ internal fun WallpaperScreen(
                     orientation = it
                     saveFailed = false
                 },
-                onToggleGrid = { gridVisible = !gridVisible },
+                onPreviewChange = { preview = it },
                 onSet = set@{
                     val source = bitmapState.value ?: return@set
                     if (saving) return@set
@@ -328,16 +305,11 @@ internal fun WallpaperScreen(
     }
 }
 
-/**
- * Cancel on the left, editor title in the middle, reset on the right. The title
- * stays optically centred because the side slots share one weight.
- */
+/** Ghost cancel on the left, editor title centred. */
 @Composable
 private fun WallpaperTopBar(
     enabled: Boolean,
-    canReset: Boolean,
     onDismiss: () -> Unit,
-    onReset: () -> Unit,
 ) {
     Box(
         modifier = Modifier
@@ -348,7 +320,7 @@ private fun WallpaperTopBar(
         Row(
             modifier = Modifier
                 .align(Alignment.CenterStart)
-                .clip(RoundedCornerShape(10.dp))
+                .clip(RoundedCornerShape(8.dp))
                 .clickable(
                     enabled = enabled,
                     role = Role.Button,
@@ -368,7 +340,7 @@ private fun WallpaperTopBar(
             )
             Text(
                 text = stringResource(R.string.action_cancel),
-                color = if (enabled) TextPrimary else TextMuted.copy(alpha = 0.4f),
+                color = if (enabled) TextMuted else TextMuted.copy(alpha = 0.4f),
                 fontSize = 13.sp,
                 fontWeight = FontWeight.Medium,
             )
@@ -377,43 +349,17 @@ private fun WallpaperTopBar(
         Text(
             text = stringResource(R.string.wallpaper_title),
             color = TextPrimary,
-            fontSize = 17.sp,
+            fontSize = 16.sp,
             fontWeight = FontWeight.Medium,
             modifier = Modifier.align(Alignment.Center),
         )
-
-        Box(
-            modifier = Modifier
-                .align(Alignment.CenterEnd)
-                .size(40.dp)
-                .clip(CircleShape)
-                .clickable(
-                    enabled = enabled && canReset,
-                    role = Role.Button,
-                    onClick = onReset,
-                    indication = null,
-                    interactionSource = null,
-                ),
-            contentAlignment = Alignment.Center,
-        ) {
-            Icon(
-                imageVector = Icons.Outlined.RestartAlt,
-                contentDescription = stringResource(R.string.wallpaper_reset),
-                tint = when {
-                    !enabled -> TextMuted.copy(alpha = 0.3f)
-                    canReset -> TextPrimary
-                    else -> TextMuted.copy(alpha = 0.45f)
-                },
-                modifier = Modifier.size(20.dp),
-            )
-        }
     }
 }
 
 /**
  * Device-shaped preview: the crop is drawn straight into the frame, so what the
- * frame shows is exactly what gets applied. The simulated lock/home screen and
- * the crop grid are painted on top; the hint sits under the frame.
+ * frame shows is exactly what gets applied. The simulated screen (or the crop
+ * grid, when the preview is off) is painted on top; the hint sits under it.
  */
 @Composable
 private fun WallpaperPreview(
@@ -421,7 +367,7 @@ private fun WallpaperPreview(
     crop: NormalizedCrop,
     frameAspect: Float,
     target: WallpaperTarget,
-    gridVisible: Boolean,
+    preview: Boolean,
     onCropChange: (NormalizedCrop) -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -454,7 +400,7 @@ private fun WallpaperPreview(
                     .size(frameWidth, frameHeight)
                     .clip(PreviewShape)
                     .background(AmoledBlack)
-                    .border(1.dp, Color.White.copy(alpha = 0.10f), PreviewShape),
+                    .border(1.dp, Border, PreviewShape),
             ) {
                 Canvas(
                     modifier = Modifier
@@ -483,14 +429,16 @@ private fun WallpaperPreview(
                         },
                 ) {
                     drawWallpaperCrop(image, bitmap.width, bitmap.height, crop)
-                    drawPreviewChrome(gridVisible)
+                    drawPreviewChrome(gridVisible = !preview)
                 }
 
-                WallpaperHud(
-                    target = target,
-                    frameWidth = frameWidth,
-                    frameHeight = frameHeight,
-                )
+                if (preview) {
+                    WallpaperHud(
+                        target = target,
+                        frameWidth = frameWidth,
+                        frameHeight = frameHeight,
+                    )
+                }
             }
 
             Spacer(Modifier.height(gap))
@@ -569,7 +517,7 @@ private fun DrawScope.drawPreviewChrome(gridVisible: Boolean) {
 
 /**
  * Simulated screen content: a clock for the lock screen, a faint app grid and
- * dock for the home screen, and both (home dimmed) for the pair.
+ * dock for the home screen. Only shown while the preview is on.
  */
 @Composable
 private fun WallpaperHud(
@@ -582,9 +530,7 @@ private fun WallpaperHud(
             HomeScreenHud(
                 frameWidth = frameWidth,
                 frameHeight = frameHeight,
-                modifier = Modifier
-                    .fillMaxSize()
-                    .alpha(if (target == WallpaperTarget.Both) 0.35f else 1f),
+                modifier = Modifier.fillMaxSize(),
             )
         }
         if (target != WallpaperTarget.Home) {
@@ -710,7 +656,8 @@ private fun HintPill() {
     Row(
         modifier = Modifier
             .clip(CircleShape)
-            .background(PanelColor)
+            .background(Surface)
+            .border(1.dp, Border, CircleShape)
             .padding(horizontal = 10.dp, vertical = 5.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -730,29 +677,30 @@ private fun HintPill() {
 }
 
 /**
- * One raised card: target tabs, the aspect/grid options, and the primary action,
- * so the picker reads as a single tool instead of a stack of chip rows.
+ * One card: target tabs, preview/aspect options, and the primary action, so the
+ * picker reads as a single tool instead of a stack of chip rows.
  */
 @Composable
 private fun WallpaperControlPanel(
     target: WallpaperTarget,
     orientation: WallpaperOrientation,
-    gridVisible: Boolean,
+    preview: Boolean,
     enabled: Boolean,
     saving: Boolean,
     saveFailed: Boolean,
     onTargetChange: (WallpaperTarget) -> Unit,
     onOrientationChange: (WallpaperOrientation) -> Unit,
-    onToggleGrid: () -> Unit,
+    onPreviewChange: (Boolean) -> Unit,
     onSet: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Column(
         modifier = modifier
             .clip(PanelShape)
-            .background(PanelColor)
+            .background(Surface)
+            .border(1.dp, Border, PanelShape)
             .padding(12.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         TargetTabs(
             target = target,
@@ -770,8 +718,7 @@ private fun WallpaperControlPanel(
                     R.string.wallpaper_aspect,
                     stringResource(orientation.labelRes),
                 ),
-                // The label shows the current state, so it always reads as active.
-                active = true,
+                active = false,
                 enabled = enabled,
                 onClick = {
                     onOrientationChange(
@@ -785,13 +732,12 @@ private fun WallpaperControlPanel(
                 modifier = Modifier.weight(1f),
             )
             PanelOption(
-                icon = Icons.Outlined.GridGoldenratio,
-                label = null,
-                active = gridVisible,
+                icon = if (preview) Icons.Outlined.Visibility else Icons.Outlined.VisibilityOff,
+                label = stringResource(R.string.wallpaper_preview),
+                active = preview,
                 enabled = enabled,
-                onClick = onToggleGrid,
-                contentDescription = stringResource(R.string.wallpaper_toggle_grid),
-                modifier = Modifier.width(40.dp),
+                onClick = { onPreviewChange(!preview) },
+                modifier = Modifier.weight(1f),
             )
         }
 
@@ -822,15 +768,15 @@ private fun TargetTabs(
         modifier = Modifier
             .fillMaxWidth()
             .clip(TrackShape)
-            .background(PanelTrack)
+            .background(EmptySurface)
             .padding(4.dp)
             .selectableGroup(),
         horizontalArrangement = Arrangement.spacedBy(4.dp),
     ) {
         WallpaperTargets.forEach { option ->
-            val selected = option == target
+            val selected = option.target == target
             val background by animateColorAsState(
-                targetValue = if (selected) PanelRaised else Color.Transparent,
+                targetValue = if (selected) Border else Color.Transparent,
                 animationSpec = tween(180, easing = FastOutSlowInEasing),
                 label = "tabBackground",
             )
@@ -846,14 +792,14 @@ private fun TargetTabs(
             Row(
                 modifier = Modifier
                     .weight(1f)
-                    .height(34.dp)
-                    .clip(OptionShape)
+                    .height(36.dp)
+                    .clip(TabShape)
                     .background(background)
                     .selectable(
                         selected = selected,
                         enabled = enabled,
                         role = Role.Tab,
-                        onClick = { onChange(option) },
+                        onClick = { onChange(option.target) },
                         indication = null,
                         interactionSource = null,
                     ),
@@ -861,16 +807,16 @@ private fun TargetTabs(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Icon(
-                    imageVector = option.tabIcon,
+                    imageVector = option.icon,
                     contentDescription = null,
                     tint = content,
                     modifier = Modifier.size(16.dp),
                 )
                 Spacer(Modifier.width(6.dp))
                 Text(
-                    text = stringResource(option.tabLabelRes),
+                    text = stringResource(option.labelRes),
                     color = content,
-                    fontSize = 12.sp,
+                    fontSize = 13.sp,
                     fontWeight = FontWeight.Medium,
                     maxLines = 1,
                 )
@@ -882,13 +828,17 @@ private fun TargetTabs(
 @Composable
 private fun PanelOption(
     icon: ImageVector,
-    label: String?,
+    label: String,
     active: Boolean,
     enabled: Boolean,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
-    contentDescription: String? = null,
 ) {
+    val background by animateColorAsState(
+        targetValue = if (active) Border else EmptySurface,
+        animationSpec = tween(180, easing = FastOutSlowInEasing),
+        label = "optionBackground",
+    )
     val content by animateColorAsState(
         targetValue = when {
             !enabled -> TextMuted.copy(alpha = 0.45f)
@@ -898,38 +848,45 @@ private fun PanelOption(
         animationSpec = tween(180, easing = FastOutSlowInEasing),
         label = "optionContent",
     )
+    val labelColor by animateColorAsState(
+        targetValue = when {
+            !enabled -> TextMuted.copy(alpha = 0.45f)
+            else -> TextPrimary
+        },
+        animationSpec = tween(180, easing = FastOutSlowInEasing),
+        label = "optionLabel",
+    )
     Row(
         modifier = modifier
             .height(40.dp)
             .clip(OptionShape)
-            .background(PanelRaised)
+            .background(background)
+            // The active pill is a solid step up, so it drops the hairline.
+            .then(if (active) Modifier else Modifier.border(1.dp, Border, OptionShape))
             .clickable(
                 enabled = enabled,
                 role = Role.Button,
                 onClick = onClick,
                 indication = null,
                 interactionSource = null,
-            )
-            .padding(horizontal = if (label == null) 0.dp else 12.dp),
+            ),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.Center,
     ) {
         Icon(
             imageVector = icon,
-            contentDescription = contentDescription,
+            contentDescription = null,
             tint = content,
-            modifier = Modifier.size(18.dp),
+            modifier = Modifier.size(17.dp),
         )
-        if (label != null) {
-            Spacer(Modifier.width(8.dp))
-            Text(
-                text = label,
-                color = content,
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Medium,
-                maxLines = 1,
-            )
-        }
+        Spacer(Modifier.width(7.dp))
+        Text(
+            text = label,
+            color = labelColor,
+            fontSize = 13.sp,
+            fontWeight = FontWeight.Medium,
+            maxLines = 1,
+        )
     }
 }
 
@@ -941,20 +898,20 @@ private fun SetWallpaperButton(
     modifier: Modifier = Modifier,
 ) {
     val container by animateColorAsState(
-        targetValue = if (enabled) TextPrimary else PanelRaised,
+        targetValue = if (enabled) TextPrimary else EmptySurface,
         animationSpec = tween(180, easing = FastOutSlowInEasing),
         label = "setContainer",
     )
     val content by animateColorAsState(
-        targetValue = if (enabled) AmoledBlack else TextMuted,
+        targetValue = if (enabled) Surface else TextMuted,
         animationSpec = tween(180, easing = FastOutSlowInEasing),
         label = "setContent",
     )
     Surface(
         modifier = modifier
             .fillMaxWidth()
-            .heightIn(min = 48.dp)
-            .clip(PrimaryShape)
+            .heightIn(min = 46.dp)
+            .clip(OptionShape)
             .clickable(
                 enabled = enabled && !saving,
                 role = Role.Button,
@@ -962,7 +919,7 @@ private fun SetWallpaperButton(
                 indication = null,
                 interactionSource = null,
             ),
-        shape = PrimaryShape,
+        shape = OptionShape,
         color = container,
         border = if (enabled) null else BorderStroke(1.dp, Border),
     ) {
@@ -975,13 +932,13 @@ private fun SetWallpaperButton(
                 imageVector = Icons.Rounded.CheckCircle,
                 contentDescription = null,
                 tint = content,
-                modifier = Modifier.size(20.dp),
+                modifier = Modifier.size(18.dp),
             )
             Spacer(Modifier.width(8.dp))
             Text(
                 text = stringResource(R.string.wallpaper_set),
                 color = content,
-                fontSize = 17.sp,
+                fontSize = 14.sp,
                 fontWeight = FontWeight.SemiBold,
                 maxLines = 1,
             )
