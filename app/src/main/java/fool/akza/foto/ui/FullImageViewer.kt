@@ -72,6 +72,7 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.AwaitPointerEventScope
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.PointerInputScope
 import androidx.compose.ui.input.pointer.pointerInput
@@ -198,16 +199,31 @@ internal suspend fun PointerInputScope.detectVerticalSwipe(
             if (vertical) {
                 if (totalDy <= -threshold) {
                     onSwipeUp()
+                    // The drawer opens mid-gesture. Keep consuming the rest of
+                    // this pointer stream so the pager cannot page with the
+                    // leftover diagonal movement.
                     drag.consume()
+                    drainUntilUp(down.id)
                     return@awaitEachGesture
                 } else if (totalDy >= threshold) {
                     onSwipeDown()
                     drag.consume()
+                    drainUntilUp(down.id)
                     return@awaitEachGesture
                 }
                 drag.consume()
             }
         }
+    }
+}
+
+/** Consume every remaining change for [pointerId] until it lifts. */
+private suspend fun AwaitPointerEventScope.drainUntilUp(pointerId: androidx.compose.ui.input.pointer.PointerId) {
+    while (true) {
+        val event = awaitPointerEvent(PointerEventPass.Initial)
+        val change = event.changes.firstOrNull { it.id == pointerId } ?: break
+        change.consume()
+        if (!change.pressed) break
     }
 }
 
