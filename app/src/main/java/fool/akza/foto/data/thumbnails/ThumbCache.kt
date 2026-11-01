@@ -20,11 +20,12 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.channels.ReceiveChannel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 
 /**
@@ -50,6 +51,20 @@ object ThumbCache {
     private const val DISK_CACHE_MAX_BYTES = 512L * 1024 * 1024 // 512 MB
     // Our own persisted thumbnail JPEGs (Coil won't persist content-URI sources).
     private const val THUMB_CACHE_DIR = "thumb_cache"
+
+    /**
+     * Thumbnails decoding at once during a warm pass. Decoding a full-size photo
+     * down to a tile is CPU work, so the useful width is roughly the core count;
+     * the ceiling leaves headroom for the grid, which asks Coil for the same
+     * decoders while the user scrolls.
+     */
+    private val ImageWorkers = Runtime.getRuntime().availableProcessors().coerceIn(2, 6)
+
+    /**
+     * Video posters at once. Each one holds a `MediaMetadataRetriever` and a full
+     * frame bitmap, so this is bounded by memory rather than throughput.
+     */
+    private const val VideoWorkers = 2
 
     /** Long-edge target (px) for grid tiles. Drives Coil's `.size(...)` hint. */
     const val THUMB_LONG_EDGE_PX = 320
@@ -318,26 +333,59 @@ object ThumbCache {
      *    doesn't count as pending work on every launch.
      *  - Images: the persisted thumb file, else a fresh failure marker.
      */
-    fun enqueueAllIfMissing(
-        items: List<MediaItem>,
-        // Video poster extraction (MediaMetadataRetriever seek) is heavier than
-        // a Coil image decode, so the AoT pass works in smaller chunks.
-        chunkSize: Int = 6,
-        delayMs: Long = 50,
-    ) {
+    fun enqueueAllIfMissing(items: List<MediaItem>) {
         if (shutdown || !initialized) return
         val ctx = appContext ?: return
 
         scope.launch {
-            val seen = HashSet<Uri>()
-            for (chunk in items.chunked(chunkSize)) {
-                for (item in chunk) {
+            val startedAt = System.currentTimeMillis()
+            val before = snapshot()
+            // Two bounded pools instead of a coroutine per item: images are a
+            // decode plus a JPEG encode, while a video poster needs a native
+            // retriever and a full frame in memory, so videos get far fewer
+            // slots. Bounding the pool is also what keeps memory flat — the old
+            // per-item launch could have the whole library decoding at once.
+            val images = Channel<MediaItem>(capacity = ImageWorkers * 4)
+            val videos = Channel<MediaItem>(capacity = VideoWorkers * 2)
+            val workers = buildList {
+                repeat(ImageWorkers) { add(launch(Dispatchers.IO) { warmFrom(images, ctx) }) }
+                repeat(VideoWorkers) { add(launch(Dispatchers.IO) { warmFrom(videos, ctx) }) }
+            }
+            try {
+                // Dedupe by URI here (cheap), leave the on-disk checks to the
+                // workers so they run in parallel with the decoding.
+                val seen = HashSet<Uri>()
+                for (item in items) {
                     if (!seen.add(item.uri)) continue
-                    if (isAlreadyCached(ctx, item, keyFor(item))) continue
-                    bumpTotal()
-                    enqueueOne(ctx, item, keyFor(item), null)
+                    if (item.isVideo) videos.send(item) else images.send(item)
                 }
-                if (delayMs > 0) delay(delayMs)
+            } finally {
+                images.close()
+                videos.close()
+            }
+            workers.forEach { it.join() }
+            val after = snapshot()
+            AppLog.d(
+                "previews: warmed ${after.done - before.done} thumbs in " +
+                    "${System.currentTimeMillis() - startedAt}ms at " +
+                    "$ImageWorkers image / $VideoWorkers video workers",
+            )
+        }
+    }
+
+    /**
+     * One worker of the warm pass. The on-disk freshness check happens here, in
+     * parallel with the decodes, and only real work bumps the progress totals.
+     */
+    private suspend fun warmFrom(queue: ReceiveChannel<MediaItem>, ctx: Context) {
+        for (item in queue) {
+            val key = keyFor(item)
+            if (isAlreadyCached(ctx, item, key)) continue
+            bumpTotal()
+            try {
+                produce(ctx, item, key, loader = null)
+            } finally {
+                bumpDone()
             }
         }
     }
@@ -361,29 +409,41 @@ object ThumbCache {
     ) {
         scope.launch {
             try {
-                if (item.isVideo) {
-                    extractAndSavePoster(ctx, item)
-                } else {
-                    val request = buildRequest(ctx, item, key, animated = false, targetSize = THUMB_LONG_EDGE_PX)
-                    val result = (loader ?: SingletonImageLoader.get(ctx)).execute(request)
-                    val persisted = if (result is coil3.request.SuccessResult) {
-                        persistThumbnail(key, result.image)
-                    } else {
-                        false
-                    }
-                    if (!persisted) {
-                        // No thumbnail was written; without a marker this item
-                        // would count as pending work on every launch.
-                        markFailed(key)
-                    }
-                }
-            } catch (e: Exception) {
-                if (!item.isVideo) markFailed(key)
-                // Best-effort: cache miss is fine, the next render will retry.
-                AppLog.w("thumbnail decode failed for ${item.uri}", e)
+                produce(ctx, item, key, loader)
             } finally {
                 bumpDone()
             }
+        }
+    }
+
+    /** Decodes (or extracts) one thumbnail and persists it; suspends until done. */
+    private suspend fun produce(
+        ctx: Context,
+        item: MediaItem,
+        key: String,
+        loader: ImageLoader?,
+    ) {
+        try {
+            if (item.isVideo) {
+                extractAndSavePoster(ctx, item)
+            } else {
+                val request = buildRequest(ctx, item, key, animated = false, targetSize = THUMB_LONG_EDGE_PX)
+                val result = (loader ?: SingletonImageLoader.get(ctx)).execute(request)
+                val persisted = if (result is coil3.request.SuccessResult) {
+                    persistThumbnail(key, result.image)
+                } else {
+                    false
+                }
+                if (!persisted) {
+                    // No thumbnail was written; without a marker this item
+                    // would count as pending work on every launch.
+                    markFailed(key)
+                }
+            }
+        } catch (e: Exception) {
+            if (!item.isVideo) markFailed(key)
+            // Best-effort: cache miss is fine, the next render will retry.
+            AppLog.w("thumbnail decode failed for ${item.uri}", e)
         }
     }
 
@@ -567,5 +627,9 @@ object ThumbCache {
 
     private fun emit() {
         _progress.value = Progress(total = pendingTotal, done = pendingDone)
+    }
+
+    private fun snapshot(): Progress = synchronized(totalLock) {
+        Progress(total = pendingTotal, done = pendingDone)
     }
 }

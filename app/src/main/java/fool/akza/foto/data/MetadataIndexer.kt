@@ -6,30 +6,38 @@ import android.content.pm.PackageManager
 import fool.akza.foto.AppLog
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.channels.ReceiveChannel
 import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.channels.SendChannel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
-import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * Keeps [MetadataStore] in step with the library.
  *
- * Indexing opens every file's header, and that is a stall on storage rather than
- * work this process does, so a pass runs in waves: [BatchSize] files are read
- * concurrently (up to [Parallelism] at a time), the wave is then written in a
- * single transaction, and the pass pauses before the next wave so thumbnails and
- * scrolling keep breathing.
+ * Indexing opens every file's header, which is a stall on storage plus a CPU-side
+ * parse, so a pass is a small pipeline rather than a loop: a handful of readers
+ * work through the backlog in parallel, and one writer commits their results in
+ * batches (SQLite has a single writer anyway, so the readers never wait on a
+ * commit). Nothing sleeps between files — the number of readers is the throttle.
+ *
+ * That number tunes itself. The reads are a mix of storage waits and EXIF parsing,
+ * so the useful concurrency is not a property of the CPU alone: the pass measures
+ * its own throughput every [TuneChunk] files, adds a reader while that keeps
+ * making it faster, and settles on the fastest setting it found. A phone whose
+ * flash collapses under parallel reads ends up with fewer readers; one with fast
+ * storage and spare cores ends up with more.
  *
  * Only files whose index stamp changed since the last pass are read. One [sync]
  * call always works through the whole backlog: a partial pass would leave search
@@ -40,21 +48,24 @@ import kotlinx.coroutines.withContext
  */
 object MetadataIndexer {
 
-    /**
-     * Files per wave: read concurrently, then written in one transaction. The
-     * pause after a wave is what keeps the background pass out of the way.
-     */
-    private const val BatchSize = 25
+    /** Ceiling for reads in flight: past this the flash and the EXIF parse queue up. */
+    private val MaxParallelism = Runtime.getRuntime().availableProcessors().coerceIn(2, 6)
+
+    /** Reads in flight to open with, before the pass has measured anything. */
+    private val SeedParallelism = (MaxParallelism - 1).coerceAtLeast(2)
+
+    /** Files read between two throughput measurements of the pass. */
+    private const val TuneChunk = 200
 
     /**
-     * Header reads in flight per wave. Reading a file header is mostly waiting on
-     * storage, so a few in parallel hide that latency; past four the flash and the
-     * CPU-side EXIF parsing are the bottleneck, and more concurrency would only
-     * compete with thumbnail decoding for the same queue.
+     * Entries coalesced into one write transaction. Large on purpose: under WAL a
+     * commit costs one append, so a whole pass should cost a handful of them
+     * rather than one commit per file (or per few files).
      */
-    private val Parallelism = Runtime.getRuntime().availableProcessors().coerceIn(2, 4)
+    private const val WriteBatchSize = 256
 
-    private const val PauseMs = 60L
+    /** Files between two progress publications; the pill only needs to move. */
+    private const val ProgressEvery = 25
 
     /**
      * Files still to read in the current pass. Indexing is invisible work that
@@ -108,75 +119,172 @@ object MetadataIndexer {
         val pending = items.filter { keys[it.uri.toString()] != known[it.uri.toString()] }
 
         val startedAt = System.currentTimeMillis()
-        var indexed = 0
-        var done = 0
-        val batches = pending.chunked(BatchSize)
-        val gate = Semaphore(Parallelism)
-        if (pending.isNotEmpty()) _progress.value = Progress(total = pending.size, done = 0)
-        batches.forEachIndexed { batchIndex, batch ->
-            // Read the wave in parallel, write it in one transaction. A read that
-            // fails records nothing, so the file stays pending and is retried on
-            // the next pass instead of being silently dropped from search.
-            val read = coroutineScope {
-                batch.map { item ->
-                    val stamp = keys.getValue(item.uri.toString())
-                    async(Dispatchers.IO) {
-                        gate.withPermit { readEntry(context, item, stamp) }
-                    }
-                }.awaitAll()
-            }
-            MetadataStore.upsertAll(context, read.mapNotNull { it.entry })
-            indexed += read.count { it.readable }
-            done += batch.size
-            // Publish per wave rather than per file: the pill only needs to move.
-            _progress.value = Progress(total = pending.size, done = done)
-            _generation.update { it + 1 }
-            if (batchIndex < batches.lastIndex) delay(PauseMs)
+        if (pending.isEmpty()) {
+            pruneIfSafe(context, items, keys.keys)
+            _progress.value = Progress()
+            return 0
         }
 
-        // Everything in the library is current now, so anything else in the table
-        // is a deleted or renamed-away file. An empty list is *not* proof of an
-        // empty library — settings (require-explicit, .nomedia) and transient
-        // provider misses can filter everything out — so never prune on it.
-        if (items.isNotEmpty()) MetadataStore.prune(context, keys.keys)
-        _progress.value = Progress()
-        if (pending.isNotEmpty()) {
-            AppLog.d(
-                "metadata: indexed $indexed/${pending.size} files in " +
-                    "${System.currentTimeMillis() - startedAt}ms",
-            )
+        _progress.value = Progress(total = pending.size, done = 0)
+        val readable = AtomicInteger(0)
+        var parallelism = SeedParallelism
+        var applied = parallelism
+
+        val writes: WriteStats
+        coroutineScope {
+            // One writer, many readers: results flow over a channel so a commit
+            // never blocks the reads and the reads never race over the write lock.
+            val entries = Channel<MetadataStore.Entry>(capacity = WriteBatchSize * 2)
+            val writer = async(Dispatchers.IO) { drain(context, entries, pending.size) }
+            try {
+                var bestRate = 0.0
+                var bestParallelism = parallelism
+                var probing = true
+                var offset = 0
+                while (offset < pending.size) {
+                    val chunk = pending.subList(offset, minOf(offset + TuneChunk, pending.size))
+                    offset += chunk.size
+                    val started = System.nanoTime()
+                    readChunk(context, chunk, keys, parallelism, entries, readable)
+                    val elapsedMs =
+                        ((System.nanoTime() - started) / 1_000_000.0).coerceAtLeast(1.0)
+                    applied = parallelism
+                    // Hill-climb on throughput: add a reader while that makes the
+                    // pass faster, and go back to the best setting once it doesn't.
+                    val rate = chunk.size * 1_000.0 / elapsedMs
+                    if (rate > bestRate * 1.02) {
+                        bestRate = rate
+                        bestParallelism = parallelism
+                        if (probing && parallelism < MaxParallelism) parallelism++
+                    } else if (parallelism > bestParallelism) {
+                        parallelism = bestParallelism
+                        probing = false
+                    } else {
+                        probing = false
+                    }
+                }
+            } finally {
+                entries.close()
+            }
+            writes = writer.await()
         }
-        return indexed
+
+        pruneIfSafe(context, items, keys.keys)
+        _progress.value = Progress()
+        AppLog.d(
+            "metadata: indexed ${readable.get()}/${pending.size} files in " +
+                "${System.currentTimeMillis() - startedAt}ms at $applied readers " +
+                "(writes ${writes.writeMs}ms, ${writes.transactions} transactions)",
+        )
+        return readable.get()
     }
 
-    /** One wave item: the entry to write, plus whether the file itself was readable. */
-    private class ReadResult(val entry: MetadataStore.Entry?, val readable: Boolean)
+    /**
+     * Reads [chunk] with [parallelism] workers. Workers pull from a queue instead
+     * of splitting the chunk up front, so a slow video cannot leave the others
+     * idle while it finishes.
+     */
+    private suspend fun readChunk(
+        context: Context,
+        chunk: List<MediaItem>,
+        keys: Map<String, String>,
+        parallelism: Int,
+        out: SendChannel<MetadataStore.Entry>,
+        readable: AtomicInteger,
+    ) = coroutineScope {
+        val queue = Channel<MediaItem>(capacity = parallelism * 2)
+        repeat(parallelism) {
+            launch(Dispatchers.IO) {
+                for (item in queue) {
+                    out.send(readEntry(context, item, keys.getValue(item.uri.toString()), readable))
+                }
+            }
+        }
+        for (item in chunk) queue.send(item)
+        queue.close()
+    }
 
     /** Reads one file's metadata and reduces it to words, off the main thread. */
     private suspend fun readEntry(
         context: Context,
         item: MediaItem,
         stamp: String,
-    ): ReadResult {
+        readable: AtomicInteger,
+    ): MetadataStore.Entry {
         // Cancellation must unwind, not be logged as a per-file failure.
         currentCoroutineContext().ensureActive()
         return try {
-            val info = MediaRepository.loadInfo(context, item)
-            // Unreadable (locked, denied SAF grant, corrupt) files still record
-            // their name so they stay findable and are not re-opened on every pass;
-            // a real change updates the stamp.
-            val words = if (info != null) {
-                MetadataStore.buildSearchWords(context::getString, item, info)
-            } else {
-                MetadataStore.buildItemWords(item)
-            }
-            ReadResult(MetadataStore.Entry(item, words, stamp), info != null)
+            // Only the embedded metadata is indexed: the file facts are already on
+            // the item, and the info sheet's dimension reads (a MediaMetadataRetriever
+            // for every video) are not worth repeating just to build search words.
+            val sections = MetadataReader.read(context, item.uri, item.isVideo, item.mimeType)
+            if (sections.isNotEmpty()) readable.incrementAndGet()
+            MetadataStore.Entry(
+                item = item,
+                words = MetadataStore.buildSearchWords(context::getString, item, sections),
+                stamp = stamp,
+            )
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
             AppLog.w("metadata: index failed for ${item.uri}", e)
-            ReadResult(null, false)
+            // Still record the name: an unreadable file should stay findable and
+            // should not be re-opened on every pass.
+            MetadataStore.Entry(item, MetadataStore.buildItemWords(item), stamp)
         }
+    }
+
+    /** What a pass's writes actually cost, for the debug summary. */
+    private class WriteStats(val writeMs: Long, val transactions: Int)
+
+    /**
+     * Writes finished entries in batches and publishes progress as they land, so a
+     * whole pass costs a few transactions instead of one commit per file.
+     */
+    private suspend fun drain(
+        context: Context,
+        incoming: ReceiveChannel<MetadataStore.Entry>,
+        total: Int,
+    ): WriteStats {
+        val batch = ArrayList<MetadataStore.Entry>(WriteBatchSize)
+        var done = 0
+        var writeMs = 0L
+        var transactions = 0
+        for (entry in incoming) {
+            batch += entry
+            done++
+            if (batch.size >= WriteBatchSize) {
+                writeMs += commit(context, batch)
+                transactions++
+                batch.clear()
+            }
+            if (done % ProgressEvery == 0) {
+                _progress.value = Progress(total = total, done = done)
+                _generation.update { it + 1 }
+            }
+        }
+        if (batch.isNotEmpty()) {
+            writeMs += commit(context, batch)
+            transactions++
+        }
+        _progress.value = Progress(total = total, done = done)
+        return WriteStats(writeMs, transactions)
+    }
+
+    /** One write transaction, timed so the summary can say where a pass spends it. */
+    private suspend fun commit(context: Context, batch: List<MetadataStore.Entry>): Long {
+        val started = System.nanoTime()
+        MetadataStore.upsertAll(context, batch)
+        return (System.nanoTime() - started) / 1_000_000L
+    }
+
+    /**
+     * Drops rows for files that no longer exist. An empty list is *not* proof of
+     * an empty library — settings (require-explicit, .nomedia) and transient
+     * provider misses can filter everything out — so never prune on it.
+     */
+    private suspend fun pruneIfSafe(context: Context, items: List<MediaItem>, keep: Set<String>) {
+        if (items.isNotEmpty()) MetadataStore.prune(context, keep)
     }
 
     /**

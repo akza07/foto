@@ -307,13 +307,11 @@ object MetadataStore {
     internal fun buildSearchWords(
         label: (Int) -> String,
         item: MediaItem,
-        info: MediaInfo,
+        sections: List<MetadataSection>,
     ): List<String> {
         val words = LinkedHashSet(buildItemWords(item))
         val extra = LinkedHashSet<String>()
-        tokenizeForSearch(info.name.takeIf { it != item.displayName }.orEmpty()).forEach { extra += it }
-        tokenizeForSearch(info.mimeType ?: item.mimeType.orEmpty()).forEach { extra += it }
-        metadataWords(label, info.metadata).forEach { extra += it }
+        metadataWords(label, sections).forEach { extra += it }
         words += extra.take(MaxWordsPerFile - words.size).filter { it.length <= MaxTokenLength }
         return words.take(MaxWordsPerFile)
     }
@@ -354,6 +352,24 @@ object MetadataStore {
     }
 
     private class Helper(context: Context) : SQLiteOpenHelper(context, DB_NAME, null, DB_VERSION) {
+
+        init {
+            // The index is written in the background while the search screen may be
+            // reading it, so run in WAL: readers then see the last committed
+            // snapshot instead of waiting for the writer to finish, and commits are
+            // an append rather than a journal rewrite.
+            setWriteAheadLoggingEnabled(true)
+        }
+
+        override fun onConfigure(db: SQLiteDatabase) {
+            // Every row here is derived from a file we can read again, so a
+            // crash or power loss may cost the last few seconds of indexing but
+            // must never cost a corrupt index. That is exactly what NORMAL under
+            // WAL guarantees, and it drops the fsync per commit that made a pass
+            // wait on storage.
+            db.execSQL("PRAGMA synchronous = NORMAL")
+        }
+
         override fun onCreate(db: SQLiteDatabase) {
             db.execSQL(
                 """
