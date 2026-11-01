@@ -21,8 +21,10 @@ android {
         applicationId = "fool.akza.foto"
         minSdk = 29
         targetSdk = 37
-        versionCode = 3
-        versionName = "1.2"
+        // Date-based versioning (see AGENTS.md): YYMMDD * 100 + daily build
+        // number (00 for the first build of the day).
+        versionCode = 26110100
+        versionName = "2026.11.01"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 

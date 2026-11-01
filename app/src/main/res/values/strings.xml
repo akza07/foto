@@ -5,6 +5,7 @@
     <string name="action_back">Back</string>
     <string name="action_cancel">Cancel</string>
     <string name="action_clear">Clear</string>
+    <string name="action_rename">Rename</string>
     <string name="action_remove">Remove</string>
     <string name="selection_selected">Selected</string>
 
@@ -204,6 +205,13 @@
     <string name="deleted">Deleted</string>
     <string name="restored">Restored</string>
     <string name="error_open_file">Couldn\'t open file</string>
+    <string name="rename_title">Rename</string>
+    <string name="rename_hint">The file extension stays the same.</string>
+    <string name="rename_error_empty">Enter a name</string>
+    <string name="rename_error_invalid">A name can\'t contain / or \\</string>
+    <string name="renamed">Renamed</string>
+    <string name="rename_canceled">Rename canceled</string>
+    <string name="error_rename">Couldn\'t rename. Try a different name.</string>
     <string name="error_delete">Couldn\'t delete</string>
     <string name="error_restore">Couldn\'t restore</string>
     <string name="error_copy">Couldn\'t copy</string>

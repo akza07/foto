@@ -172,7 +172,7 @@ No custom font family; system default with Material3 defaults. Exact usages:
 - Enter: scrim fades 180ms; card scales 0.92→1 over 240ms `FastOutSlowIn` + fades 180ms. No exit animation.
 - Back dismisses the dialog first: the shared `AnimatedDialog` owns a `BackHandler` calling the same `onDismiss` as the scrim/Cancel, so the settings/trash screen (or viewer) behind it never consumes the press while a modal is up.
 
-### 4.7 Option dialog (sort/grid)
+### 4.7 Option dialog (sort/grid/selection actions)
 
 - Same scrim/card geometry as confirm (70% scrim, 32dp margins, 16dp corners, 1dp `Border`, 20dp inner, 18sp title + 8dp gap). Enter: same bloom as the confirm dialog (180ms scrim fade, card 0.92→1 scale / 240ms + 180ms fade).
 - Each option: full-width 8dp corners, 8dp horizontal / 12dp vertical padding. Label 15sp (current: `#FAFAFA` SemiBold; others: muted Normal) + current shows 18dp Check `#FAFAFA` (“Selected”).
@@ -207,6 +207,16 @@ No custom font family; system default with Material3 defaults. Exact usages:
 - ≥1GB: `%.2f GB`; ≥1MB: `%.1f MB`; ≥1KB: `%.0f KB`; else `%d B`. US locale.
 
 ---
+
+### 4.8 Rename dialog
+
+- Uses the shared `AnimatedDialog` (scrim fade + card scale, back dismisses) with an `imePadding` wrapper so the keyboard never covers it.
+- Card: full-width with 32dp side margins, 16dp corners, `#09090B`, 1dp `Border`, 24dp inner padding.
+- Title “Rename” 18sp SemiBold; 6dp gap; hint “The file extension stays the same.” 14sp/20sp muted; 18dp gap.
+- Field: full-width 10dp black well with a 1dp `Border`, 12dp padding; white 16sp `BasicTextField` (auto-focused, base name selected) + the fixed extension as a 16sp muted suffix. Done on the IME submits.
+- Validation: blank → “Enter a name”; `/`, `\`, `.`/`..` → “A name can't contain / or \” in red 12sp below the field; otherwise submit.
+- Buttons: Cancel outlined (transparent, 1dp `Border`) and Rename as the light primary, both 44dp / 10dp corners; submitting an unchanged name just dismisses.
+- MediaStore rename uses a system write-consent request (or the API 29 `RecoverableSecurityException` intent) and retries once after approval; SAF uses `DocumentsContract.renameDocument`, accepting a provider-adjusted name. Success updates the viewer + grid + Insights key and toasts “Renamed”; failure/cancel toast.
 
 ## 5. Permission Gate (first launch)
 
@@ -315,7 +325,7 @@ No custom font family; system default with Material3 defaults. Exact usages:
 
 - Full black 55% scrim fades in/out independently (tap closes). Sheet bottom-center full-width, top 16dp corners, `#09090B`, nav-bar padding, 12dp top / 24dp bottom.
 - Handle 40×4dp muted-40% centered, 20dp gap, single `SpaceEvenly` row.
-- Items: Share, Info, Delete, Crop, Wallpaper (Crop and Wallpaper omitted on video). Wallpaper is sheet-only — it was removed from the long-press wheel as a low-frequency action. Each: 54dp black well 14dp corners with 26dp outlined icon + 6dp gap + 12sp Medium white label. Delete red; others white. Tap closes drawer then runs action. The sheet slides+fades from the bottom; the scrim only fades and never slides. System back closes the drawer before the viewer.
+- Items: Share, Info, Rename, Delete, Crop, Wallpaper (Crop and Wallpaper omitted on video; Rename applies to both). Wallpaper is sheet-only — it was removed from the long-press wheel as a low-frequency action. Each: 54dp black well 14dp corners with 26dp outlined icon + 6dp gap + 12sp Medium white label. Delete red; others white. Tap closes drawer then runs action. The sheet slides+fades from the bottom; the scrim only fades and never slides. System back closes the drawer before the viewer.
 
 ### 9.4 Gestures (images)
 
@@ -326,10 +336,10 @@ No custom font family; system default with Material3 defaults. Exact usages:
 - **Long-press anywhere:** radial menu (see §10). **No rotation gesture** (ignored).
 - Pager locked when zoomed (>1.01×), 2+ fingers, radial open, delete/restore slide, or delete in progress.
 
-### 9.5 Delete / share / info / crop / wallpaper
+### 9.5 Delete / share / info / rename / crop / wallpaper
 
 - Drawer Delete (red): video deletes always confirm; other MediaStore items rely on the provider's trash prompt. SAF documents get the in-app confirm because they go to Foto's private trash instead. MediaStore deletes use `MediaStore.createTrashRequest` (no copy); SAF deletes copy bytes into app storage then remove the document. Both show the “Moved to trash” Undo bar (6s) + slide to neighbor (280ms `FastOutSlowIn`; next if exists else prev; last item dismisses). Undo restores from the matching trash and slides back.
-- Share: system chooser with URI grant. Info: bottom sheet (see §11). Crop: full-screen crop editor (see §9.6). Wallpaper: full-screen picker (see §9.7).
+- Share: system chooser with URI grant. Info: bottom sheet (see §11). Rename: dialog (see §4.8) that keeps the extension; MediaStore goes through a write-consent request when Foto doesn't own the file, SAF renames through its tree grant. Success swaps the viewer item + reloads + “Renamed” toast and re-keys the Insights history; failure shows a toast. Crop: full-screen crop editor (see §9.6). Wallpaper: full-screen picker (see §9.7).
 - Page change updates settled index; list shrink clamps pager; input gated during slide.
 
 ### 9.6 Crop editor

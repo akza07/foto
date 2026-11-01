@@ -165,7 +165,12 @@ edge-to-edge rendering.
   on release, clamped to the image bounds.
 - **Immersive viewer:** the status and navigation bars are hidden while an image or video is open (swipe from an edge reveals them transiently) and come back when the viewer closes.
 - **Top-left:** back button + counter pill (`3/12`).
-- **Drawer actions:** Delete (red), Share, Info, Crop, Wallpaper.
+- **Drawer actions:** Delete (red), Share, Info, Rename, Crop, Wallpaper (Rename
+  works for videos too).
+  - **Rename:** edits the file name while keeping the original extension. MediaStore
+    files rename through the provider (a one-time system write-consent prompt for
+    files Foto doesn't own); SAF documents use their folder grant. The viewer, the
+    grid and the Insights history are updated in place.
   - **Delete:** videos always ask first; other items only show the in-app modal
     when there is no system prompt to confirm (SAF documents, or a device without
     the system trash). MediaStore files move into **Android's system trash**

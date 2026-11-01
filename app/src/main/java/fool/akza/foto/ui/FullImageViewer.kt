@@ -46,6 +46,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.outlined.Crop
 import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material.icons.outlined.Wallpaper
@@ -266,6 +267,7 @@ fun FullImageViewer(
     onDelete: (MediaItem) -> Unit,
     onShare: (MediaItem) -> Unit,
     onInfo: (MediaItem) -> Unit,
+    onRename: (MediaItem) -> Unit,
     onCrop: (MediaItem) -> Unit,
     onWallpaper: (MediaItem) -> Unit,
     loopVideos: Boolean = false,
@@ -974,6 +976,10 @@ fun FullImageViewer(
                 drawerVisible = false
                 currentItem?.let(onInfo)
             },
+            onRename = {
+                drawerVisible = false
+                currentItem?.let(onRename)
+            },
             onCrop = {
                 drawerVisible = false
                 currentItem?.let(onCrop)
@@ -1308,6 +1314,7 @@ private fun ActionSheet(
     onDelete: () -> Unit,
     onShare: () -> Unit,
     onInfo: () -> Unit,
+    onRename: () -> Unit,
     onCrop: () -> Unit,
     onWallpaper: () -> Unit,
 ) {
@@ -1375,6 +1382,7 @@ private fun ActionSheet(
                     ) {
                         ActionItem(Icons.Outlined.Share, stringResource(R.string.action_share), TextPrimary, onShare)
                         ActionItem(Icons.Outlined.Info, stringResource(R.string.info_title), TextPrimary, onInfo)
+                        ActionItem(Icons.Outlined.Edit, stringResource(R.string.action_rename), TextPrimary, onRename)
                         ActionItem(Icons.Outlined.Delete, stringResource(R.string.action_delete), DeleteRed, onDelete)
                         // Videos have no crop or wallpaper actions.
                         if (!target.isVideo) {

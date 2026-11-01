@@ -366,6 +366,7 @@ fun TrashScreen(onBack: () -> Unit, onChanged: () -> Unit) {
             onDelete = {},
             onShare = {},
             onInfo = {},
+            onRename = {},
             onCrop = {},
             onWallpaper = {},
             previewOnly = true,

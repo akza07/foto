@@ -1,11 +1,13 @@
 package fool.akza.foto.data
 
 import android.content.ContentUris
+import android.content.ContentValues
 import android.content.Context
 import android.net.Uri
 import android.os.Build
 import android.provider.DocumentsContract
 import android.provider.MediaStore
+import android.content.IntentSender
 import fool.akza.foto.AppLog
 import fool.akza.foto.R
 import kotlinx.coroutines.Dispatchers
@@ -35,6 +37,16 @@ sealed interface DeleteResult {
     data class Consent(val intentSender: android.content.IntentSender) : DeleteResult
     /** Nothing was deleted and there is no consent path (e.g. SAF read-only). */
     data object Failed : DeleteResult
+}
+
+/** Outcome of a [MediaRepository.rename] attempt. */
+sealed interface RenameResult {
+    /** Renamed; [item] carries the new URI and display name. */
+    data class Renamed(val item: MediaItem) : RenameResult
+    /** The provider requires explicit user consent: launch [intentSender]. */
+    data class Consent(val intentSender: IntentSender) : RenameResult
+    /** The rename was refused (duplicate name, unsupported provider, ...). */
+    data object Failed : RenameResult
 }
 
 /** Outcome of a [MediaRepository.moveTo] batch. */
@@ -597,6 +609,70 @@ object MediaRepository {
         }
     } catch (_: Exception) {
         0 to 0
+    }
+
+    /**
+     * Renames [item] to [newDisplayName] (which must include the extension).
+     *
+     * MediaStore rows are updated through the provider; because the app does not
+     * own most files, the system may require a write-consent dialog (returned as
+     * [RenameResult.Consent], then retried by the caller). SAF documents rename
+     * through their tree grant with [DocumentsContract.renameDocument], which can
+     * return a provider-adjusted name/URI (e.g. a “(1)” suffix).
+     */
+    suspend fun rename(
+        context: Context,
+        item: MediaItem,
+        newDisplayName: String,
+    ): RenameResult = withContext(Dispatchers.IO) {
+        val name = newDisplayName.trim()
+        if (name.isEmpty()) return@withContext RenameResult.Failed
+        try {
+            if (DocumentsContract.isDocumentUri(context, item.uri)) {
+                val renamed = DocumentsContract.renameDocument(context.contentResolver, item.uri, name)
+                    ?: return@withContext RenameResult.Failed
+                val actualName = runCatching {
+                    DocumentsContract.getDocumentId(renamed)
+                        .substringAfter(':')
+                        .substringAfterLast('/')
+                }.getOrNull()?.takeIf { it.isNotBlank() } ?: name
+                RenameResult.Renamed(item.copy(uri = renamed, displayName = actualName))
+            } else {
+                val values = ContentValues().apply {
+                    put(MediaStore.MediaColumns.DISPLAY_NAME, name)
+                }
+                // MediaStore items are discovered through the generic `file`
+                // collection, which is read-only for apps. Rename through the
+                // type-specific collection (the same URI the write-consent
+                // request covers), like delete does.
+                val uri = if (item.id != 0L) mediaCollectionUri(item.isVideo, item.id) else item.uri
+                val updated = context.contentResolver.update(uri, values, null, null)
+                if (updated <= 0) {
+                    RenameResult.Failed
+                } else {
+                    RenameResult.Renamed(item.copy(displayName = name))
+                }
+            }
+        } catch (e: android.app.RecoverableSecurityException) {
+            // API 29: the provider hands back the exact consent intent to launch.
+            RenameResult.Consent(e.userAction.actionIntent.intentSender)
+        } catch (e: SecurityException) {
+            // API 30+: consent is obtained via MediaStore.createWriteRequest.
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                runCatching {
+                    val pending = MediaStore.createWriteRequest(
+                        context.contentResolver,
+                        listOf(mediaCollectionUri(item.isVideo, item.id)),
+                    )
+                    RenameResult.Consent(pending.intentSender)
+                }.getOrDefault(RenameResult.Failed)
+            } else {
+                RenameResult.Failed
+            }
+        } catch (e: Exception) {
+            AppLog.w("rename failed for ${item.uri}", e)
+            RenameResult.Failed
+        }
     }
 
     /** Removes the media item from the gallery. */

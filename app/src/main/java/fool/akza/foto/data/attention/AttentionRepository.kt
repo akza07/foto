@@ -8,6 +8,7 @@ import android.database.sqlite.SQLiteOpenHelper
 import android.net.Uri
 import fool.akza.foto.AppLog
 import fool.akza.foto.data.MediaItem
+import fool.akza.foto.data.attention.attentionKey
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -142,6 +143,42 @@ object AttentionRepository {
             AppLog.w("attention: summary failed", it)
         }.getOrDefault(AttentionSummary(0, 0))
     }
+
+    /**
+     * Moves the history of a renamed item to its new identity (canonical path /
+     * URI), so a rename does not split or orphan its Insights entry.
+     */
+    suspend fun rekey(context: Context, oldMediaKey: String, item: MediaItem) =
+        withContext(Dispatchers.IO) {
+            val newKey = item.attentionKey()
+            if (oldMediaKey == newKey) return@withContext
+            runCatching {
+                val values = ContentValues().apply {
+                    put("media_key", newKey)
+                    put("uri", item.uri.toString())
+                    put("media_id", item.id)
+                    put("display_name", item.displayName)
+                    put("bucket_id", item.bucketId)
+                    put("bucket_name", item.bucketName)
+                    put("relative_path", item.relativePath)
+                    put("saf_tree_uri", item.safTreeUri)
+                    put("mime_type", item.mimeType)
+                    put("last_modified", item.lastModified)
+                    put("size_bytes", item.sizeBytes)
+                    put("date_added", item.dateAdded)
+                }
+                helper(context).writableDatabase.update(
+                    TABLE,
+                    values,
+                    "media_key = ?",
+                    arrayOf(oldMediaKey),
+                )
+            }.onSuccess {
+                _version.update { it + 1 }
+            }.onFailure {
+                AppLog.w("attention: rekey failed", it)
+            }
+        }
 
     /** Wipes the whole history. */
     suspend fun clear(context: Context) = withContext(Dispatchers.IO) {

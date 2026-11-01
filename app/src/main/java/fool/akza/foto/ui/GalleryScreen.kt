@@ -120,6 +120,7 @@ import fool.akza.foto.R
 import fool.akza.foto.data.MediaFolder
 import fool.akza.foto.data.MediaItem
 import fool.akza.foto.data.MediaRepository
+import fool.akza.foto.data.RenameResult
 import fool.akza.foto.data.PrivateTrash
 import fool.akza.foto.data.SettingsRepository
 import fool.akza.foto.data.attention.AttentionRepository
@@ -164,6 +165,13 @@ private data class DeleteProgress(val done: Int, val total: Int)
 
 /** The source tile for one level of directory navigation. */
 private data class DirectoryLevel(val path: String, val sourceRect: Rect)
+
+/** A rename waiting on the system write-consent dialog. */
+private data class PendingRename(
+    val item: MediaItem,
+    val newName: String,
+    val afterConsent: Boolean = false,
+)
 
 // Transition timings.
 private const val ForwardDurationMs = 320
@@ -653,6 +661,11 @@ fun GalleryScreen(
     var pendingRestoreItems by remember { mutableStateOf<List<MediaItem>>(emptyList()) }
     // API 29 has no system trash; its consent is per item (RecoverableSecurityException).
     var pendingDeleteItems by remember { mutableStateOf<List<MediaItem>>(emptyList()) }
+    // Rename waiting on a system write-consent dialog, plus its retry trigger.
+    var pendingRename by remember { mutableStateOf<PendingRename?>(null) }
+    var renameAfterConsent by remember { mutableStateOf<PendingRename?>(null) }
+    // Viewer item currently shown in the rename dialog.
+    var renameItem by remember { mutableStateOf<MediaItem?>(null) }
     // Items the Undo bar can put back into the library.
     var undoItems by remember { mutableStateOf<List<MediaItem>?>(null) }
     var undoKey by remember { mutableStateOf(0) }
@@ -767,6 +780,25 @@ fun GalleryScreen(
         toastMessage = UiText.Res(R.string.error_delete)
     }
 
+    // Applies a successful rename: swap the viewer item, drop the old derived
+    // preview if the URI changed, migrate the Insights history to the new
+    // identity, and reload the library.
+    val applyRename = { oldItem: MediaItem, renamed: MediaItem ->
+        if (oldItem.uri != renamed.uri) {
+            ThumbCache.evict(oldItem.uri)
+            VideoPosterMemory.remove(oldItem.uri)
+        }
+        scope.launch {
+            AttentionRepository.rekey(context, oldItem.attentionKey(), renamed)
+        }
+        viewerItems = viewerItems?.map { if (it.uri == oldItem.uri) renamed else it }
+        if (viewerOpenerUri == oldItem.uri) viewerOpenerUri = renamed.uri
+        if (pendingViewerRemoval?.uri == oldItem.uri) pendingViewerRemoval = renamed
+        toastKey += 1
+        toastMessage = UiText.Res(R.string.renamed)
+        reload()
+    }
+
     // API 29 only: MediaStore requires a per-item RecoverableSecurityException
     // consent, and there is no trash to fall back on. Walk [queue] deleting
     // directly; the first item that needs approval arms the launcher.
@@ -804,9 +836,11 @@ fun GalleryScreen(
         val trashing = pendingTrashItems
         val restoring = pendingRestoreItems
         val api29 = pendingDeleteItems
+        val renaming = pendingRename
         pendingTrashItems = emptyList()
         pendingRestoreItems = emptyList()
         pendingDeleteItems = emptyList()
+        pendingRename = null
         // The app-side copy work (if any) is done once the provider dialog returns.
         deleteProgress = null
         busyMessage = null
@@ -817,9 +851,16 @@ fun GalleryScreen(
                 reportDeleteFailure()
                 clearSelection()
             }
+            if (renaming != null) {
+                toastKey += 1
+                toastMessage = UiText.Res(R.string.rename_canceled)
+            }
             return@rememberLauncherForActivityResult
         }
         when {
+            // The write consent was granted: retry the rename once. A second
+            // consent request is treated as a failure instead of looping.
+            renaming != null -> renameAfterConsent = renaming.copy(afterConsent = true)
             // The provider has already moved these into the system trash.
             trashing.isNotEmpty() -> {
                 removeDeletedBatch(trashing)
@@ -847,6 +888,35 @@ fun GalleryScreen(
             consentLauncher.launch(it)
             nextConsentLaunch = null
         }
+    }
+
+    // Rename a viewer item. MediaStore may first return a write-consent request;
+    // the launcher above arms [renameAfterConsent] so exactly one retry follows.
+    suspend fun performRename(target: MediaItem, newName: String, afterConsent: Boolean) {
+        when (val result = MediaRepository.rename(context, target, newName)) {
+            is RenameResult.Renamed -> applyRename(target, result.item)
+            is RenameResult.Consent -> {
+                if (afterConsent) {
+                    toastKey += 1
+                    toastMessage = UiText.Res(R.string.error_rename)
+                } else {
+                    pendingRename = PendingRename(target, newName)
+                    consentLauncher.launch(
+                        androidx.activity.result.IntentSenderRequest.Builder(result.intentSender).build(),
+                    )
+                }
+            }
+            RenameResult.Failed -> {
+                toastKey += 1
+                toastMessage = UiText.Res(R.string.error_rename)
+            }
+        }
+    }
+
+    LaunchedEffect(renameAfterConsent) {
+        val request = renameAfterConsent ?: return@LaunchedEffect
+        renameAfterConsent = null
+        performRename(request.item, request.newName, afterConsent = true)
     }
 
     // Undo restores both kinds of trash: SAF documents come back from Foto's
@@ -1345,6 +1415,7 @@ fun GalleryScreen(
                 },
                 onShare = { shareItem(it) },
                 onInfo = { infoItem = it },
+                onRename = { renameItem = it },
                 onCrop = { item -> cropItem = item },
                 onWallpaper = { item -> wallpaperItem = item },
                 loopVideos = appSettings.loopVideos,
@@ -1487,6 +1558,18 @@ fun GalleryScreen(
         val infoTarget = infoItem
         if (infoTarget != null) {
             InfoSheet(item = infoTarget, onClose = { infoItem = null })
+        }
+
+        val renameTarget = renameItem
+        if (renameTarget != null) {
+            RenameDialog(
+                item = renameTarget,
+                onDismiss = { renameItem = null },
+                onRename = { newName ->
+                    renameItem = null
+                    scope.launch { performRename(renameTarget, newName, afterConsent = false) }
+                },
+            )
         }
 
         toastMessage?.let { message ->
