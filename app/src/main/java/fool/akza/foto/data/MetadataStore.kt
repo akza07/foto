@@ -97,42 +97,66 @@ object MetadataStore {
         }.getOrDefault(emptyMap())
     }
 
-    /** Replaces the words of [item]. */
-    suspend fun upsert(
-        context: Context,
-        item: MediaItem,
-        words: List<String>,
-        stamp: String,
-    ) = withContext(Dispatchers.IO) {
+    /**
+     * One file's finished words, waiting to be written. The indexer reads a wave
+     * of files in parallel and hands the results over as a list, so the writes
+     * land in one transaction instead of one commit (and one fsync) per file.
+     */
+    data class Entry(
+        val item: MediaItem,
+        val words: List<String>,
+        val stamp: String,
+    )
+
+    /**
+     * Replaces the words of every [entries] item in a single transaction.
+     *
+     * SQLite has one writer anyway, so batching is both faster and simpler than
+     * letting the parallel readers commit on their own: the caller keeps writing
+     * on one thread while the reads fan out.
+     */
+    suspend fun upsertAll(context: Context, entries: List<Entry>) = withContext(Dispatchers.IO) {
+        if (entries.isEmpty()) return@withContext
         runCatching {
             val db = helper(context).writableDatabase
-            val uri = item.uri.toString()
+            val indexedAt = System.currentTimeMillis()
             db.beginTransaction()
             try {
-                db.insertWithOnConflict(
-                    ENTRY,
-                    null,
-                    ContentValues().apply {
-                        put("uri", uri)
-                        put("display_name", item.displayName)
-                        put("bucket_name", item.bucketName)
-                        put("mime_type", item.mimeType)
-                        put("stamp", stamp)
-                        put("indexed_at", System.currentTimeMillis())
-                    },
-                    SQLiteDatabase.CONFLICT_REPLACE,
-                )
-                db.delete(WORD, "uri = ?", arrayOf(uri))
+                val clearWords = db.compileStatement("DELETE FROM $WORD WHERE uri = ?")
                 val insertWord = db.compileStatement(
                     "INSERT OR IGNORE INTO $WORD(word, uri) VALUES(?, ?)",
                 )
                 val insertLexicon = db.compileStatement(
                     "INSERT OR IGNORE INTO $LEXICON(word) VALUES(?)",
                 )
-                words.forEach { word ->
-                    insertWord.bindString(1, word)
-                    insertWord.bindString(2, uri)
-                    insertWord.executeInsert()
+                // A wave shares most of its words (same camera, same album), so the
+                // lexicon is filled once per distinct word rather than once per file.
+                val waveWords = LinkedHashSet<String>()
+                entries.forEach { entry ->
+                    val uri = entry.item.uri.toString()
+                    db.insertWithOnConflict(
+                        ENTRY,
+                        null,
+                        ContentValues().apply {
+                            put("uri", uri)
+                            put("display_name", entry.item.displayName)
+                            put("bucket_name", entry.item.bucketName)
+                            put("mime_type", entry.item.mimeType)
+                            put("stamp", entry.stamp)
+                            put("indexed_at", indexedAt)
+                        },
+                        SQLiteDatabase.CONFLICT_REPLACE,
+                    )
+                    clearWords.bindString(1, uri)
+                    clearWords.executeUpdateDelete()
+                    entry.words.forEach { word ->
+                        insertWord.bindString(1, word)
+                        insertWord.bindString(2, uri)
+                        insertWord.executeInsert()
+                        waveWords.add(word)
+                    }
+                }
+                waveWords.forEach { word ->
                     insertLexicon.bindString(1, word)
                     insertLexicon.executeInsert()
                 }
@@ -141,7 +165,7 @@ object MetadataStore {
                 db.endTransaction()
             }
         }.onFailure {
-            AppLog.w("metadata: write failed for ${item.uri}", it)
+            AppLog.w("metadata: write failed for ${entries.size} entries", it)
         }
     }
 

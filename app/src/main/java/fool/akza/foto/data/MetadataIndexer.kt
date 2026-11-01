@@ -6,6 +6,9 @@ import android.content.pm.PackageManager
 import fool.akza.foto.AppLog
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
@@ -14,25 +17,42 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 
 /**
  * Keeps [MetadataStore] in step with the library.
  *
- * Indexing opens every file's header, so it runs in the background in small
- * batches with a pause between them, and only for files whose index stamp
- * changed since the last pass. One [sync] call always works through the whole
- * backlog: a partial pass would leave search silently incomplete until the
- * library happened to change again.
+ * Indexing opens every file's header, and that is a stall on storage rather than
+ * work this process does, so a pass runs in waves: [BatchSize] files are read
+ * concurrently (up to [Parallelism] at a time), the wave is then written in a
+ * single transaction, and the pass pauses before the next wave so thumbnails and
+ * scrolling keep breathing.
+ *
+ * Only files whose index stamp changed since the last pass are read. One [sync]
+ * call always works through the whole backlog: a partial pass would leave search
+ * silently incomplete until the library happened to change again.
  *
  * A finished pass also drops rows for files that no longer exist, which is safe
  * because at that point every item in the library is known.
  */
 object MetadataIndexer {
 
-    /** Files read between pauses; the pause lets thumbnails and scrolling breathe. */
+    /**
+     * Files per wave: read concurrently, then written in one transaction. The
+     * pause after a wave is what keeps the background pass out of the way.
+     */
     private const val BatchSize = 25
+
+    /**
+     * Header reads in flight per wave. Reading a file header is mostly waiting on
+     * storage, so a few in parallel hide that latency; past four the flash and the
+     * CPU-side EXIF parsing are the bottleneck, and more concurrency would only
+     * compete with thumbnail decoding for the same queue.
+     */
+    private val Parallelism = Runtime.getRuntime().availableProcessors().coerceIn(2, 4)
 
     private const val PauseMs = 60L
 
@@ -87,39 +107,28 @@ object MetadataIndexer {
         }
         val pending = items.filter { keys[it.uri.toString()] != known[it.uri.toString()] }
 
+        val startedAt = System.currentTimeMillis()
         var indexed = 0
         var done = 0
         val batches = pending.chunked(BatchSize)
+        val gate = Semaphore(Parallelism)
         if (pending.isNotEmpty()) _progress.value = Progress(total = pending.size, done = 0)
         batches.forEachIndexed { batchIndex, batch ->
-            batch.forEach { item ->
-                // Cancellation must unwind, not be logged as a per-file failure.
-                currentCoroutineContext().ensureActive()
-                try {
-                    val info = MediaRepository.loadInfo(context, item)
-                    // Unreadable (locked, denied SAF grant, corrupt) files still
-                    // record their name so they stay findable and are not
-                    // re-opened on every pass; a real change updates the stamp.
-                    val words = if (info != null) {
-                        MetadataStore.buildSearchWords(context::getString, item, info)
-                    } else {
-                        MetadataStore.buildItemWords(item)
+            // Read the wave in parallel, write it in one transaction. A read that
+            // fails records nothing, so the file stays pending and is retried on
+            // the next pass instead of being silently dropped from search.
+            val read = coroutineScope {
+                batch.map { item ->
+                    val stamp = keys.getValue(item.uri.toString())
+                    async(Dispatchers.IO) {
+                        gate.withPermit { readEntry(context, item, stamp) }
                     }
-                    MetadataStore.upsert(
-                        context,
-                        item,
-                        words,
-                        keys.getValue(item.uri.toString()),
-                    )
-                    if (info != null) indexed++
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (e: Exception) {
-                    AppLog.w("metadata: index failed for ${item.uri}", e)
-                }
-                done++
+                }.awaitAll()
             }
-            // Publish per batch rather than per file: the pill only needs to move.
+            MetadataStore.upsertAll(context, read.mapNotNull { it.entry })
+            indexed += read.count { it.readable }
+            done += batch.size
+            // Publish per wave rather than per file: the pill only needs to move.
             _progress.value = Progress(total = pending.size, done = done)
             _generation.update { it + 1 }
             if (batchIndex < batches.lastIndex) delay(PauseMs)
@@ -131,7 +140,43 @@ object MetadataIndexer {
         // provider misses can filter everything out — so never prune on it.
         if (items.isNotEmpty()) MetadataStore.prune(context, keys.keys)
         _progress.value = Progress()
+        if (pending.isNotEmpty()) {
+            AppLog.d(
+                "metadata: indexed $indexed/${pending.size} files in " +
+                    "${System.currentTimeMillis() - startedAt}ms",
+            )
+        }
         return indexed
+    }
+
+    /** One wave item: the entry to write, plus whether the file itself was readable. */
+    private class ReadResult(val entry: MetadataStore.Entry?, val readable: Boolean)
+
+    /** Reads one file's metadata and reduces it to words, off the main thread. */
+    private suspend fun readEntry(
+        context: Context,
+        item: MediaItem,
+        stamp: String,
+    ): ReadResult {
+        // Cancellation must unwind, not be logged as a per-file failure.
+        currentCoroutineContext().ensureActive()
+        return try {
+            val info = MediaRepository.loadInfo(context, item)
+            // Unreadable (locked, denied SAF grant, corrupt) files still record
+            // their name so they stay findable and are not re-opened on every pass;
+            // a real change updates the stamp.
+            val words = if (info != null) {
+                MetadataStore.buildSearchWords(context::getString, item, info)
+            } else {
+                MetadataStore.buildItemWords(item)
+            }
+            ReadResult(MetadataStore.Entry(item, words, stamp), info != null)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            AppLog.w("metadata: index failed for ${item.uri}", e)
+            ReadResult(null, false)
+        }
     }
 
     /**
