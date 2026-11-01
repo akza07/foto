@@ -9,6 +9,9 @@ data class MediaItem(
     val bucketName: String,
     val relativePath: String?,
     val dateAdded: Long,
+    /** Capture time in epoch milliseconds (MediaStore DATE_TAKEN); 0 when the
+     *  provider/SAF has none, in which case sorting falls back to [dateAdded]. */
+    val dateTaken: Long = 0L,
     val isVideo: Boolean,
     /** File name (MediaStore DISPLAY_NAME). Used for SAF/MediaStore dedup. */
     val displayName: String? = null,

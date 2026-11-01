@@ -88,6 +88,7 @@ object MediaRepository {
         MediaStore.Files.FileColumns.RELATIVE_PATH,
         MediaStore.Files.FileColumns.DISPLAY_NAME,
         MediaStore.Files.FileColumns.DATE_ADDED,
+        MediaStore.Files.FileColumns.DATE_TAKEN,
         MediaStore.Files.FileColumns.MIME_TYPE,
         MediaStore.Files.FileColumns.DATE_MODIFIED,
         MediaStore.Files.FileColumns.SIZE,
@@ -263,6 +264,7 @@ object MediaRepository {
                                 bucketName = parentName,
                                 relativePath = null,
                                 dateAdded = mod,
+                                dateTaken = mod * 1000L,
                                 isVideo = mime.startsWith("video/"),
                                 displayName = name,
                                 safTreeUri = treeUri,
@@ -326,6 +328,7 @@ object MediaRepository {
                             bucketName = parentName,
                             relativePath = null,
                             dateAdded = mod,
+                            dateTaken = mod * 1000L,
                             isVideo = mime.startsWith("video/"),
                             displayName = name,
                             safTreeUri = treeUri,
@@ -437,6 +440,7 @@ object MediaRepository {
                         MediaStore.MediaColumns._ID,
                         MediaStore.MediaColumns.DISPLAY_NAME,
                         MediaStore.MediaColumns.DATE_ADDED,
+                        MediaStore.MediaColumns.DATE_TAKEN,
                         MediaStore.MediaColumns.DATE_MODIFIED,
                         MediaStore.MediaColumns.SIZE,
                         MediaStore.MediaColumns.MIME_TYPE,
@@ -454,11 +458,12 @@ object MediaRepository {
                             val id = cursor.getLong(0)
                             val name = cursor.getString(1)
                             val added = cursor.getLong(2)
-                            val modified = cursor.getLong(3)
-                            val size = cursor.getLong(4)
-                            val m = cursor.getString(5) ?: mime
-                            val rel = cursor.getString(6)
-                            val type = cursor.getInt(7)
+                            val taken = cursor.getLong(3)
+                            val modified = cursor.getLong(4)
+                            val size = cursor.getLong(5)
+                            val m = cursor.getString(6) ?: mime
+                            val rel = cursor.getString(7)
+                            val type = cursor.getInt(8)
                             MediaItem(
                                 id = id,
                                 uri = uri,
@@ -466,6 +471,7 @@ object MediaRepository {
                                 bucketName = rel?.trimEnd('/')?.substringAfterLast('/') ?: "",
                                 relativePath = rel,
                                 dateAdded = added,
+                                dateTaken = taken,
                                 isVideo = type == MediaStore.Files.FileColumns.MEDIA_TYPE_VIDEO,
                                 displayName = name,
                                 mimeType = m,
@@ -909,6 +915,7 @@ object MediaRepository {
             val pathCol = cursor.getColumnIndexOrThrow(MediaStore.Files.FileColumns.RELATIVE_PATH)
             val nameCol = cursor.getColumnIndexOrThrow(MediaStore.Files.FileColumns.DISPLAY_NAME)
             val dateCol = cursor.getColumnIndexOrThrow(MediaStore.Files.FileColumns.DATE_ADDED)
+            val takenCol = cursor.getColumnIndexOrThrow(MediaStore.Files.FileColumns.DATE_TAKEN)
             val mimeCol = cursor.getColumnIndexOrThrow(MediaStore.Files.FileColumns.MIME_TYPE)
             val modifiedCol = cursor.getColumnIndexOrThrow(MediaStore.Files.FileColumns.DATE_MODIFIED)
             val sizeCol = cursor.getColumnIndexOrThrow(MediaStore.Files.FileColumns.SIZE)
@@ -924,6 +931,7 @@ object MediaRepository {
                         bucketName = cursor.getString(bucketNameCol) ?: "Unknown",
                         relativePath = cursor.getString(pathCol),
                         dateAdded = cursor.getLong(dateCol),
+                        dateTaken = cursor.getLong(takenCol),
                         isVideo = mediaType == MediaStore.Files.FileColumns.MEDIA_TYPE_VIDEO,
                         displayName = cursor.getString(nameCol),
                         mimeType = cursor.getString(mimeCol),

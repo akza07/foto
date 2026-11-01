@@ -194,6 +194,9 @@
 
     <!-- Gallery -->
     <string name="albums">Albums</string>
+    <string name="photos_title">Photos</string>
+    <string name="timeline_today">Today</string>
+    <string name="timeline_yesterday">Yesterday</string>
     <string name="action_search">Search</string>
     <string name="action_filter">Filter and sort</string>
     <string name="action_settings">Settings</string>

@@ -96,8 +96,10 @@ internal fun buildFolders(
                 bucketId = dir,
                 name = dir.substringAfterLast("/").ifBlank { storageDirName },
                 count = bucket.size,
-                previews = bucket.sortedByDescending { it.latestTimestamp() }.take(3),
-                dateAdded = sorted.first().dateAdded,
+                // The cover follows the album's own display order so the front
+                // image is always the first tile the user sees inside.
+                previews = sorted.take(3),
+                dateAdded = bucket.maxOf { it.dateAdded },
                 safTreeUri = safTrees[key],
                 safDocId = safDocIds[key],
                 mediaStoreBucketId = mediaStoreBucketIds[key],
@@ -185,17 +187,23 @@ internal fun buildDirectoryHierarchy(
         parent?.directItems?.add(item) ?: run { rootItems += item }
     }
     fun freeze(node: MutableDirectory): GalleryDirectory {
-        val children = node.children.values.map(::freeze).sortedWith { a, b ->
-            folderComparator(sort).compare(a.folder, b.folder)
-        }
+        val children = node.children.values.map(::freeze)
+            .filter { it.items.isNotEmpty() }
+            .sortedWith { a, b -> folderComparator(sort).compare(a.folder, b.folder) }
         val direct = node.directItems.sortedWith(itemComparator(sort))
         val descendants = (direct + children.flatMap { it.items }).sortedWith(itemComparator(sort))
+        // Cover previews follow the album grid order (child folders first, then
+        // direct items), so the front image is exactly the first tile the user
+        // sees when opening the directory, for every sort order.
+        val previews = (
+            children.mapNotNull { it.folder.previews.firstOrNull() } + direct
+        ).take(3)
         val folder = MediaFolder(
             bucketId = node.path,
             name = node.name,
             count = descendants.size,
-            previews = descendants.sortedByDescending { it.latestTimestamp() }.take(3),
-            dateAdded = descendants.firstOrNull()?.dateAdded ?: 0L,
+            previews = previews,
+            dateAdded = descendants.maxOfOrNull { it.dateAdded } ?: 0L,
         )
         return GalleryDirectory(folder, children, direct, descendants)
     }
@@ -266,14 +274,21 @@ internal fun isUnderNoMedia(dir: String?, markers: Set<String>): Boolean {
 
 
 /** Latest activity timestamp for a media item: whichever of added/modified is newer. */
-internal fun MediaItem.latestTimestamp(): Long =
-    if (dateAdded >= lastModified) dateAdded else lastModified
+/**
+ * Timestamp used for date sorting/grouping, in epoch milliseconds. Prefers the
+ * capture time (MediaStore DATE_TAKEN / SAF last-modified) and falls back to the
+ * import time so items without metadata still sort sensibly.
+ */
+internal fun sortTimestampMs(dateTaken: Long, dateAdded: Long): Long =
+    if (dateTaken > 0L) dateTaken else dateAdded * 1000L
+
+internal fun MediaItem.sortTimestampMs(): Long = sortTimestampMs(dateTaken, dateAdded)
 
 
 /** Ordering for media within a folder. */
 internal fun itemComparator(sort: MediaSort): Comparator<MediaItem> = when (sort) {
-    MediaSort.DATE_NEWEST -> Comparator { a, b -> b.dateAdded.compareTo(a.dateAdded) }
-    MediaSort.DATE_OLDEST -> Comparator { a, b -> a.dateAdded.compareTo(b.dateAdded) }
+    MediaSort.DATE_NEWEST -> Comparator { a, b -> b.sortTimestampMs().compareTo(a.sortTimestampMs()) }
+    MediaSort.DATE_OLDEST -> Comparator { a, b -> a.sortTimestampMs().compareTo(b.sortTimestampMs()) }
     MediaSort.NAME_ASC -> compareBy(String.CASE_INSENSITIVE_ORDER) { it.displayName.orEmpty() }
     MediaSort.NAME_DESC -> compareByDescending(String.CASE_INSENSITIVE_ORDER) { it.displayName.orEmpty() }
 }

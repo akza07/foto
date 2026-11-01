@@ -26,6 +26,7 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -43,10 +44,13 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
+import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.itemsIndexed
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
@@ -90,6 +94,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.layout.boundsInWindow
@@ -101,6 +106,7 @@ import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
@@ -129,6 +135,8 @@ import fool.akza.foto.data.attention.attentionKey
 import fool.akza.foto.data.SystemTrash
 import fool.akza.foto.data.mediaCollectionUri
 import fool.akza.foto.data.MediaSort
+import fool.akza.foto.data.itemComparator
+import fool.akza.foto.data.sortTimestampMs
 import fool.akza.foto.data.GridSize
 import fool.akza.foto.data.SelectionActionPlacement
 import fool.akza.foto.data.canonicalPath
@@ -153,6 +161,12 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.time.Instant
+import java.time.LocalDate
+import java.time.YearMonth
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+import java.util.Locale
 
 private val TileShape = RoundedCornerShape(12.dp)
 private val GridSpacing = 8.dp
@@ -165,6 +179,67 @@ private data class DeleteProgress(val done: Int, val total: Int)
 
 /** The source tile for one level of directory navigation. */
 private data class DirectoryLevel(val path: String, val sourceRect: Rect)
+
+/** Root surfaces: the chronological library or the folder grid. */
+private enum class RootTab { PHOTOS, ALBUMS }
+
+/** One row in the Photos timeline: a month header, a day header or a tile. */
+private sealed interface TimelineEntry {
+    val key: String
+
+    data class Month(val label: String, override val key: String) : TimelineEntry
+    data class Day(val label: String, override val key: String) : TimelineEntry
+    data class Media(val item: MediaItem, val index: Int) : TimelineEntry {
+        override val key: String get() = "timeline:${item.uri}"
+    }
+}
+
+/** Groups [items] (already sorted) into month/day headers for the Photos tab. */
+@Composable
+private fun rememberTimelineEntries(
+    items: List<MediaItem>,
+    chronological: Boolean,
+): List<TimelineEntry> {
+    val todayLabel = stringResource(R.string.timeline_today)
+    val yesterdayLabel = stringResource(R.string.timeline_yesterday)
+    return remember(items, chronological, todayLabel, yesterdayLabel) {
+        if (!chronological) {
+            // Name sorts are shown as a flat grid; date headers would jump.
+            items.mapIndexed { index, item -> TimelineEntry.Media(item, index) }
+        } else {
+            val zone = ZoneId.systemDefault()
+            val today = LocalDate.now(zone)
+            val yesterday = today.minusDays(1)
+            val monthFormat = DateTimeFormatter.ofPattern("MMMM yyyy", Locale.getDefault())
+            val dayFormat = DateTimeFormatter.ofPattern("MMM d", Locale.getDefault())
+            buildList(items.size + 32) {
+                var lastMonth: YearMonth? = null
+                var lastDay: LocalDate? = null
+                items.forEachIndexed { index, item ->
+                    val date = Instant.ofEpochMilli(item.sortTimestampMs())
+                        .atZone(zone)
+                        .toLocalDate()
+                    val month = YearMonth.from(date)
+                    if (month != lastMonth) {
+                        add(TimelineEntry.Month(date.format(monthFormat), "month:$month"))
+                        lastMonth = month
+                        lastDay = null
+                    }
+                    if (date != lastDay) {
+                        val label = when (date) {
+                            today -> todayLabel
+                            yesterday -> yesterdayLabel
+                            else -> date.format(dayFormat)
+                        }
+                        add(TimelineEntry.Day(label, "day:$date"))
+                        lastDay = date
+                    }
+                    add(TimelineEntry.Media(item, index))
+                }
+            }
+        }
+    }
+}
 
 /** A rename waiting on the system write-consent dialog. */
 private data class PendingRename(
@@ -278,6 +353,9 @@ fun GalleryScreen(
     var selection by remember { mutableStateOf<SelectionState>(SelectionState()) }
     var showSearch by remember { mutableStateOf(false) }
     var showInsights by remember { mutableStateOf(false) }
+    // Root surface: the chronological Photos timeline is the default gallery
+    // view; Albums keeps the folder-first grid (and the Insights tile).
+    var rootTab by remember { mutableStateOf(RootTab.PHOTOS) }
     // Smart-tile snapshot, refreshed whenever a viewing session is written or
     // the history is cleared, so the tile appears/disappears on its own.
     val attentionVersion by AttentionRepository.version.collectAsState()
@@ -1227,7 +1305,9 @@ fun GalleryScreen(
                 if (directoryStack.isEmpty()) openViewer(list, index, rect)
             },
             onSettingsClick = { if (directoryStack.isEmpty()) showSettings = true },
-            onSearchClick = { if (directoryStack.isEmpty()) showSearch = true },
+            onSearchClick = { showSearch = true },
+            tab = rootTab,
+            onTabChange = { rootTab = it },
             insights = insightsTile,
             onInsightsClick = { if (directoryStack.isEmpty()) showInsights = true },
             minTileSize = appSettings.gridSize.minTileDp.dp,
@@ -1242,19 +1322,31 @@ fun GalleryScreen(
             onToggleSelect = { if (directoryStack.isEmpty()) toggleSelect(it) },
             onToggleFolder = { if (directoryStack.isEmpty()) toggleSelectFolder(it) },
             onSelectAll = {
-                val loose = visibleContent?.looseItems.orEmpty()
-                val folders = rootGalleryContent?.folders.orEmpty()
-                val allSelected = selection.selected.toSet() == loose.toSet() &&
-                    selection.selectedDirectories.map { it.folder.bucketId }.toSet() == folders.map { it.bucketId }.toSet()
-                if (selection.active && allSelected && (loose.isNotEmpty() || folders.isNotEmpty())) {
-                    // Already all selected: deselect everything.
-                    SelectionState(active = true)
+                if (rootTab == RootTab.PHOTOS) {
+                    val items = rootGalleryContent?.allItems.orEmpty()
+                    if (selection.active && items.isNotEmpty() &&
+                        selection.selected.toSet() == items.toSet()
+                    ) {
+                        SelectionState(active = true)
+                    } else {
+                        SelectionState(active = true, selected = items)
+                    }
                 } else {
-                    SelectionState(
-                        active = true,
-                        selected = loose,
-                        selectedDirectories = hierarchy.directories,
-                    )
+                    val loose = visibleContent?.looseItems.orEmpty()
+                    val folders = rootGalleryContent?.folders.orEmpty()
+                    val allSelected = selection.selected.toSet() == loose.toSet() &&
+                        selection.selectedDirectories.map { it.folder.bucketId }.toSet() ==
+                        folders.map { it.bucketId }.toSet()
+                    if (selection.active && allSelected && (loose.isNotEmpty() || folders.isNotEmpty())) {
+                        // Already all selected: deselect everything.
+                        SelectionState(active = true)
+                    } else {
+                        SelectionState(
+                            active = true,
+                            selected = loose,
+                            selectedDirectories = hierarchy.directories,
+                        )
+                    }
                 }
             },
             onExitSelection = clearSelection,
@@ -1287,21 +1379,6 @@ fun GalleryScreen(
         }
 
         androidx.compose.animation.AnimatedVisibility(
-            visible = showSearch,
-            enter = slideInHorizontally(initialOffsetX = { it }) + fadeIn(),
-            exit = slideOutHorizontally(targetOffsetX = { it }) + fadeOut(),
-        ) {
-            SearchScreen(
-                items = allItems,
-                onBack = { showSearch = false },
-                onItemClick = { list, index, rect -> openViewer(list, index, rect) },
-                minTileSize = appSettings.gridSize.minTileDp.dp,
-                onTilePositioned = registerTileRect,
-                onTileDisposed = unregisterTileRect,
-            )
-        }
-
-        androidx.compose.animation.AnimatedVisibility(
             visible = showInsights,
             enter = slideInHorizontally(initialOffsetX = { it }) + fadeIn(),
             exit = slideOutHorizontally(targetOffsetX = { it }) + fadeOut(),
@@ -1330,6 +1407,7 @@ fun GalleryScreen(
                     sourceRect = level.sourceRect,
                     reverse = isTopLevel && closing,
                     onBack = { if (isTopLevel) closeFolder() },
+                    onSearchClick = { showSearch = true },
                     onItemClick = { list, index, rect ->
                         if (isTopLevel && !closing) openViewer(list, index, rect)
                     },
@@ -1364,6 +1442,21 @@ fun GalleryScreen(
                     onRefresh = refresh,
                 )
             }
+        }
+
+        androidx.compose.animation.AnimatedVisibility(
+            visible = showSearch,
+            enter = slideInHorizontally(initialOffsetX = { it }) + fadeIn(),
+            exit = slideOutHorizontally(targetOffsetX = { it }) + fadeOut(),
+        ) {
+            SearchScreen(
+                items = allItems,
+                onBack = { showSearch = false },
+                onItemClick = { list, index, rect -> openViewer(list, index, rect) },
+                minTileSize = appSettings.gridSize.minTileDp.dp,
+                onTilePositioned = registerTileRect,
+                onTileDisposed = unregisterTileRect,
+            )
         }
 
         val viewing = viewerItems
@@ -1660,7 +1753,9 @@ private fun SelectionHeader(
 
 /** Top bar while browsing: title plus filter/sort, search and settings. */
 @Composable
-private fun AlbumsHeader(
+private fun RootTabsHeader(
+    tab: RootTab,
+    onTabChange: (RootTab) -> Unit,
     sortOrder: MediaSort,
     gridSize: GridSize,
     onSortOrderChange: (MediaSort) -> Unit,
@@ -1673,15 +1768,38 @@ private fun AlbumsHeader(
         modifier = modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(
-            text = stringResource(R.string.albums),
-            color = TextPrimary,
-            fontSize = 28.sp,
-            fontWeight = FontWeight.SemiBold,
-            letterSpacing = (-0.5).sp,
-            maxLines = 1,
-            modifier = Modifier.weight(1f),
-        )
+        RootTab.entries.forEach { entry ->
+            val selected = entry == tab
+            Column(
+                modifier = Modifier
+                    // Wrap the label so the underline spans only the tab text
+                    // and the second tab/actions keep their space in the row.
+                    .width(IntrinsicSize.Max)
+                    .clip(RoundedCornerShape(8.dp))
+                    .selectable(selected = selected, role = Role.Tab) { onTabChange(entry) }
+                    .padding(horizontal = 6.dp, vertical = 2.dp),
+            ) {
+                Text(
+                    text = stringResource(
+                        if (entry == RootTab.PHOTOS) R.string.photos_title else R.string.albums,
+                    ),
+                    color = if (selected) TextPrimary else TextMuted,
+                    fontSize = 24.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    letterSpacing = (-0.5).sp,
+                    maxLines = 1,
+                )
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(2.dp)
+                        .clip(RoundedCornerShape(1.dp))
+                        .background(if (selected) TextPrimary else Color.Transparent),
+                )
+            }
+            Spacer(Modifier.width(12.dp))
+        }
+        Spacer(Modifier.weight(1f))
         FilterMenuButton(
             sortOrder = sortOrder,
             gridSize = gridSize,
@@ -1807,6 +1925,139 @@ private fun GalleryPullToRefresh(
     }
 }
 
+/**
+ * Chronological Photos grid: month/day headers interleaved with the same
+ * [ImageTile]s, long-press glide and viewer hand-off used by the album grids.
+ * The tile keys are `timeline:<uri>` so hit-testing stays isolated from the
+ * album grid's `item:`/`album:` keys.
+ */
+@Composable
+private fun TimelineGrid(
+    items: List<MediaItem>,
+    selection: SelectionState,
+    selectionActionPlacement: SelectionActionPlacement,
+    minTileSize: Dp,
+    sortOrder: MediaSort,
+    gridState: LazyGridState,
+    onToggleSelect: (MediaItem) -> Unit,
+    onGlideItem: (MediaItem, Boolean) -> Unit,
+    onItemClick: (List<MediaItem>, Int, Rect) -> Unit,
+    onTilePositioned: (Uri, Rect) -> Unit,
+    onTileDisposed: (Uri) -> Unit,
+) {
+    val chronological = sortOrder == MediaSort.DATE_NEWEST || sortOrder == MediaSort.DATE_OLDEST
+    val entries = rememberTimelineEntries(items, chronological)
+    val tileBounds = remember { mutableMapOf<String, Rect>() }
+    val haptics = LocalHapticFeedback.current
+    var gridCoordinates by remember { mutableStateOf<LayoutCoordinates?>(null) }
+    val glideDeselectsAt: (Offset) -> Boolean = glideDeselectsAt@{ position ->
+        val key = hitTestTile(gridCoordinates, tileBounds, position) ?: return@glideDeselectsAt false
+        val item = items.firstOrNull { "timeline:${it.uri}" == key } ?: return@glideDeselectsAt false
+        item in selection.selected
+    }
+    val glideAt: (Offset, Boolean) -> Unit = glideAt@{ position, deselect ->
+        val key = hitTestTile(gridCoordinates, tileBounds, position) ?: return@glideAt
+        val item = items.firstOrNull { "timeline:${it.uri}" == key } ?: return@glideAt
+        onGlideItem(item, deselect)
+    }
+    val glidePosition by rememberUpdatedState(glideAt)
+    val glideDeselects by rememberUpdatedState(glideDeselectsAt)
+    val statusBarTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
+
+    LazyVerticalGrid(
+        state = gridState,
+        columns = GridCells.Adaptive(minSize = minTileSize),
+        modifier = Modifier
+            .fillMaxSize()
+            .onGloballyPositioned { gridCoordinates = it }
+            .pointerInput(Unit) {
+                // One owner for long-press + glide, with the press-time tile
+                // deciding select vs deselect (see MainGalleryGrid).
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false)
+                    val longPress = awaitLongPressOrCancellation(down.id) ?: return@awaitEachGesture
+                    haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                    val deselect = glideDeselects(longPress.position)
+                    glidePosition(longPress.position, deselect)
+                    var pointerId = longPress.id
+                    while (true) {
+                        val event = awaitPointerEvent(PointerEventPass.Initial)
+                        val change = event.changes.firstOrNull { it.id == pointerId }
+                            ?: event.changes.firstOrNull { it.pressed }
+                            ?: break
+                        pointerId = change.id
+                        if (!change.pressed) {
+                            change.consume()
+                            break
+                        }
+                        change.consume()
+                        glidePosition(change.position, deselect)
+                    }
+                }
+            },
+        contentPadding = PaddingValues(
+            start = 12.dp,
+            top = statusBarTop + AppBarHeight + 12.dp,
+            end = 12.dp,
+            bottom = if (selection.active) {
+                selectionActionPlacement.reservedEndSpace() + 12.dp +
+                    WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
+            } else {
+                12.dp + WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
+            },
+        ),
+        horizontalArrangement = Arrangement.spacedBy(GridSpacing),
+        verticalArrangement = Arrangement.spacedBy(GridSpacing),
+    ) {
+        itemsIndexed(
+            items = entries,
+            key = { _, entry -> entry.key },
+            span = { _, entry ->
+                if (entry is TimelineEntry.Media) GridItemSpan(1) else GridItemSpan(maxLineSpan)
+            },
+        ) { _, entry ->
+            when (entry) {
+                is TimelineEntry.Month -> Text(
+                    text = entry.label,
+                    color = TextMuted,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(start = 4.dp, top = 16.dp, bottom = 4.dp),
+                )
+                is TimelineEntry.Day -> Text(
+                    text = entry.label,
+                    color = TextMuted,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Medium,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(start = 4.dp, top = 8.dp, bottom = 2.dp),
+                )
+                is TimelineEntry.Media -> ImageTile(
+                    item = entry.item,
+                    selection = selection,
+                    onToggleSelect = onToggleSelect,
+                    modifier = Modifier.animateItem(
+                        fadeInSpec = tween(180),
+                        fadeOutSpec = tween(180),
+                    ),
+                    onTilePositioned = { uri, rect ->
+                        onTilePositioned(uri, rect)
+                        tileBounds["timeline:$uri"] = rect
+                    },
+                    onTileDisposed = { uri ->
+                        onTileDisposed(uri)
+                        tileBounds.remove("timeline:$uri")
+                    },
+                    onClick = { rect -> onItemClick(items, entry.index, rect) },
+                )
+            }
+        }
+    }
+}
+
 @Composable
 private fun MainGalleryGrid(
     content: GalleryContent?,
@@ -1814,6 +2065,8 @@ private fun MainGalleryGrid(
     onItemClick: (List<MediaItem>, Int, Rect) -> Unit,
     onSettingsClick: () -> Unit,
     onSearchClick: () -> Unit,
+    tab: RootTab,
+    onTabChange: (RootTab) -> Unit,
     minTileSize: Dp,
     selection: SelectionState,
     selectionActionPlacement: SelectionActionPlacement = SelectionActionPlacement.BOTTOM,
@@ -1837,6 +2090,7 @@ private fun MainGalleryGrid(
     onInsightsClick: () -> Unit = {},
 ) {
     val gridState = rememberLazyGridState()
+    val timelineGridState = rememberLazyGridState()
     val currentContent by rememberUpdatedState(content)
     val glideItemState by rememberUpdatedState(onGlideItem)
     val glideFolderState by rememberUpdatedState(onGlideFolder)
@@ -1921,7 +2175,9 @@ private fun MainGalleryGrid(
                             onSelectAll = onSelectAll,
                         )
                     } else {
-                        AlbumsHeader(
+                        RootTabsHeader(
+                            tab = tab,
+                            onTabChange = onTabChange,
                             sortOrder = sortOrder,
                             gridSize = gridSize,
                             onSortOrderChange = onSortOrderChange,
@@ -1950,6 +2206,41 @@ private fun MainGalleryGrid(
                         CircularProgressIndicator(
                             modifier = Modifier.align(Alignment.Center),
                             color = TextPrimary,
+                        )
+                    }
+                }
+                tab == RootTab.PHOTOS -> {
+                    val timelineItems = remember(current.allItems, sortOrder) {
+                        current.allItems.sortedWith(itemComparator(sortOrder))
+                    }
+                    if (timelineItems.isEmpty()) {
+                        LazyColumn(modifier = Modifier.fillMaxSize()) {
+                            item {
+                                Box(
+                                    modifier = Modifier.fillParentMaxSize(),
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    Text(
+                                        text = stringResource(R.string.no_media_found),
+                                        color = TextMuted,
+                                        fontSize = 14.sp,
+                                    )
+                                }
+                            }
+                        }
+                    } else {
+                        TimelineGrid(
+                            items = timelineItems,
+                            selection = selection,
+                            selectionActionPlacement = selectionActionPlacement,
+                            minTileSize = minTileSize,
+                            sortOrder = sortOrder,
+                            gridState = timelineGridState,
+                            onToggleSelect = onToggleSelect,
+                            onGlideItem = onGlideItem,
+                            onItemClick = onItemClick,
+                            onTilePositioned = onTilePositioned,
+                            onTileDisposed = onTileDisposed,
                         )
                     }
                 }
@@ -2088,6 +2379,7 @@ private fun AlbumGrid(
     sourceRect: Rect,
     reverse: Boolean,
     onBack: () -> Unit,
+    onSearchClick: () -> Unit,
     onItemClick: (List<MediaItem>, Int, Rect) -> Unit,
     onToggleFolder: (MediaFolder) -> Unit,
     items: List<MediaItem>?,
@@ -2414,6 +2706,14 @@ private fun AlbumGrid(
                                     color = TextMuted,
                                     fontSize = 12.sp,
                                     maxLines = 1,
+                                )
+                            }
+                            IconButton(onClick = onSearchClick) {
+                                Icon(
+                                    imageVector = Icons.Outlined.Search,
+                                    contentDescription = stringResource(R.string.action_search),
+                                    tint = TextPrimary,
+                                    modifier = Modifier.width(24.dp),
                                 )
                             }
                             FilterMenuButton(

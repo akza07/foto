@@ -100,6 +100,21 @@ class GalleryGroupingTest {
         assertFalse(shouldIncludeMedia(null, settings, emptyList()))
     }
 
+    // ---- sortTimestampMs --------------------------------------------------
+
+    @Test
+    fun `sort timestamp prefers capture time`() {
+        assertEquals(
+            1_700_000_000_000L,
+            sortTimestampMs(dateTaken = 1_700_000_000_000L, dateAdded = 123L),
+        )
+    }
+
+    @Test
+    fun `sort timestamp falls back to date added in milliseconds`() {
+        assertEquals(123_000L, sortTimestampMs(dateTaken = 0L, dateAdded = 123L))
+    }
+
     // ---- isAnimatedMime ---------------------------------------------------
 
     @Test
