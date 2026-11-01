@@ -35,21 +35,28 @@ Then perform `cp apk-output/foto-arm64-android16-release.apk /media/XYZ/Diffusio
 
 ## Versioning
 
-Every major feature or user-visible behaviour change must increment the app
-version, and the bump must be part of the same change that ships it.
+Versioning is **date-based**: every release APK that ships changes is stamped
+with the build date instead of a semantic major/minor number. Major features,
+minor fixes and refactors all use the same scheme.
 
 - **Source of truth**: `app/build.gradle.kts` → `android.defaultConfig.versionCode`
-  (monotonic integer) and `versionName` (`major.minor`, shown in Settings → About
-  and used in the APK metadata). Do not introduce a second version source.
-- **`versionCode`**: increment for every release APK that ships any change. Never
-  reuse or decrease it — Android relies on it for updates.
-- **`versionName`**: increment for every major feature or behaviour change —
-  minor (`1.1` → `1.2`) for a feature release, major for a redesign or a
-  compatibility break. Small internal fixes may bump only `versionCode`.
-- **Ordering**: bump before `./gradlew :app:assembleRelease`, so the APK, the
-  About row and the artifact copied to `apk-output/` all report the same version.
-- **Commit body**: mention the new version (e.g. “Bump to 1.2 (versionCode 3)”) so
-  the shipped artifact stays traceable.
+  and `versionName`. Do not introduce a second version source.
+- **`versionName`**: the build date as `YYYY.MM.DD` (e.g. `2026.11.01`), shown in
+  Settings → About and in the APK metadata. For a second build on the same day,
+  append `-rN` to match the daily counter (`2026.11.01-r2` for build 2).
+- **`versionCode`**: `YYMMDD * 100 + N` (two-digit year), where `N` is the
+  zero-based build number for that day (`00`–`99`). This is a unique,
+  monotonically increasing integer (2026-11-01, first build → `26110100`) and
+  stays far below both Google Play's 2,100,000,000 limit and lint's
+  `HighAppVersionCode` warning. Never reuse or decrease it; the two-digit year
+  is valid through 2099.
+- **Ordering**: set both before `./gradlew :app:assembleRelease`, so the APK, the
+  About row and the artifact copied to `apk-output/` report the same date/build.
+- **Commit body**: mention the version (e.g. “Date version 2026.11.01,
+  versionCode 26110100”) so the shipped artifact stays traceable.
+- **Major features/changes do not get a separate number** — the date and the
+  daily build counter are the version. Put the feature name in the commit
+  subject/body, not the version.
 
 ## Commit messages
 
