@@ -7,6 +7,10 @@ import android.os.Build
 import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -103,7 +107,13 @@ fun PermissionGate(
                 onOpenUriHandled = onOpenUriHandled,
             )
             val settings by SettingsRepository.settings.collectAsState()
-            if (!settings.tutorialSeen) {
+            // Fade the walkthrough over the gallery (and back out when completed)
+            // so replaying it from Settings is not a hard full-screen cut.
+            AnimatedVisibility(
+                visible = !settings.tutorialSeen,
+                enter = fadeIn(tween(220)),
+                exit = fadeOut(tween(160)),
+            ) {
                 TutorialScreen(onDone = { SettingsRepository.setTutorialSeen(true) })
             }
         }

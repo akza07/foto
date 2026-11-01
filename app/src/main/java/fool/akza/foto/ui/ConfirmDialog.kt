@@ -1,5 +1,6 @@
 package fool.akza.foto.ui
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.core.FastOutSlowInEasing
@@ -54,6 +55,11 @@ internal fun AnimatedDialog(
     onDismiss: () -> Unit,
     content: @Composable () -> Unit,
 ) {
+    // System back dismisses the dialog before anything behind it (the settings
+    // screen, the viewer or the gallery) gets the event. Registered here so
+    // every modal built on AnimatedDialog inherits it.
+    BackHandler(onBack = onDismiss)
+
     // Same scale+fade language as the wheel, so a confirm following a radial
     // action reads as a continuation rather than a pop-up.
     var entered by remember { mutableStateOf(false) }

@@ -170,6 +170,7 @@ No custom font family; system default with Material3 defaults. Exact usages:
 - Cancel (left): transparent fill, `#FAFAFA` 14sp Medium “Cancel”.
 - Confirm (right): red `#EF4444` + white 14sp SemiBold for destructive; else light `#FAFAFA` + black for neutral.
 - Enter: scrim fades 180ms; card scales 0.92→1 over 240ms `FastOutSlowIn` + fades 180ms. No exit animation.
+- Back dismisses the dialog first: the shared `AnimatedDialog` owns a `BackHandler` calling the same `onDismiss` as the scrim/Cancel, so the settings/trash screen (or viewer) behind it never consumes the press while a modal is up.
 
 ### 4.7 Option dialog (sort/grid)
 
@@ -314,7 +315,7 @@ No custom font family; system default with Material3 defaults. Exact usages:
 
 - Full black 55% scrim fades in/out independently (tap closes). Sheet bottom-center full-width, top 16dp corners, `#09090B`, nav-bar padding, 12dp top / 24dp bottom.
 - Handle 40×4dp muted-40% centered, 20dp gap, single `SpaceEvenly` row.
-- Items: Share, Info, Delete, Crop, Wallpaper (Crop and Wallpaper omitted on video). Wallpaper is sheet-only — it was removed from the long-press wheel as a low-frequency action. Each: 54dp black well 14dp corners with 26dp outlined icon + 6dp gap + 12sp Medium white label. Delete red; others white. Tap closes drawer then runs action. The sheet slides+fades from the bottom; the scrim only fades and never slides.
+- Items: Share, Info, Delete, Crop, Wallpaper (Crop and Wallpaper omitted on video). Wallpaper is sheet-only — it was removed from the long-press wheel as a low-frequency action. Each: 54dp black well 14dp corners with 26dp outlined icon + 6dp gap + 12sp Medium white label. Delete red; others white. Tap closes drawer then runs action. The sheet slides+fades from the bottom; the scrim only fades and never slides. System back closes the drawer before the viewer.
 
 ### 9.4 Gestures (images)
 
@@ -390,7 +391,7 @@ Real playback via single ExoPlayer per viewer session (no per-page players). Aud
 
 ## 12. Info Bottom Sheet
 
-- Full black 60% scrim; tap outside closes. No drag handle, no swipe, no peek — static sheet.
+- Full black 60% scrim; tap outside or system back closes (the sheet owns the back press, so the viewer stays open). No drag handle, no swipe, no peek — static sheet.
 - Sheet: bottom-center, full-width + 12dp outer margin, 16dp corners, `#09090B`, inner 20dp.
 - Title “Info” 18sp SemiBold + 12dp gap; rows full-width `SpaceBetween` 4dp vertical: label 14sp muted left, value 14sp white right.
 - Rows: Name (or …), Type (MIME else Image/Video), Size (formatted or …), Dimensions `W × H` (if known), Album (if known), Date added (`MMM d, yyyy` or …), Date modified (if >0). Async load.
@@ -482,7 +483,7 @@ Merged list of Android's system trash (MediaStore `QUERY_ARG_MATCH_TRASHED`, API
 
 ## 16. First-Run Tutorial (5 pages)
 
-Overlay on gallery when permissions granted + unseen; replayable via Settings (appears immediately, no restart). Back/Skip/Get Started all complete (persist seen).
+Overlay on gallery when permissions granted + unseen; replayable via Settings (no restart). Fades in over the gallery (220ms) and out on completion (160ms); Back/Skip/Get Started all complete (persist seen).
 
 - Container full black; inner 24dp sides + status/nav padding. Top 56dp row end-aligned: “Skip” 15sp Medium muted pill (12dp/8dp) → done.
 - Pager weight 1 swipeable, centered: illustration + 28dp gap + title 24sp SemiBold centered + 10dp gap + body 14sp/21sp muted centered 8dp sides.
@@ -501,7 +502,7 @@ Overlay on gallery when permissions granted + unseen; replayable via Settings (a
 
 ## 17. Motion System (repro recipe)
 
-- Tweens `FastOutSlowInEasing` unless noted: dialog scrim 180ms fade / card 240ms scale 0.92→1 + 180ms fade; delete-progress bar frame-chased (τ≈110ms, 50ms to finish) + 360ms hold at 100%; deck forward 320ms / reverse 260ms; viewer entry 280ms / exit 240ms; delete/restore slide 280ms; chrome fade 200ms; poster veil 150ms; poster fade 120ms; seeker thicken 150ms; video HUD hide 200ms; pull-to-refresh minimum 300ms.
+- Tweens `FastOutSlowInEasing` unless noted: dialog scrim 180ms fade / card 240ms scale 0.92→1 + 180ms fade; tutorial 220ms fade in / 160ms fade out; delete-progress bar frame-chased (τ≈110ms, 50ms to finish) + 360ms hold at 100%; deck forward 320ms / reverse 260ms; viewer entry 280ms / exit 240ms; delete/restore slide 280ms; chrome fade 200ms; poster veil 150ms; poster fade 120ms; seeker thicken 150ms; video HUD hide 200ms; pull-to-refresh minimum 300ms.
 - Bottom action drawer: the sheet slides 260ms up / 200ms down and fades; its full-screen scrim only fades (180/140ms). Never slide the scrim with the sheet — a sliding tint reads as a second page entering from the bottom.
 - Springs: radial open `MediumBouncy/MediumLow`, close `NoBouncy/Medium`, bloom allows 1.2 overshoot; double-tap zoom `NoBouncy/MediumLow`.
 - Shimmer 1200ms linear infinite; sync slide from top + fade (defaults); settings/folders/trash/search slide from right + fade; drawer slide from bottom + fade; toast slide half-height + fade.

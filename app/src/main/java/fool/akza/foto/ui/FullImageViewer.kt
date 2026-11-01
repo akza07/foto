@@ -434,8 +434,11 @@ fun FullImageViewer(
 
     // System back (button / gesture) must run the same animated scale-out as the
     // on-screen back arrow. Composed after GalleryScreen's BackHandler, so this
-    // one is the most recent and wins while the viewer is open.
-    BackHandler { close() }
+    // one is the most recent and wins while the viewer is open. An open action
+    // sheet consumes back first.
+    BackHandler {
+        if (drawerVisible) drawerVisible = false else close()
+    }
 
     val swipeThreshold = with(density) { 56.dp.toPx() }
     val currentIndex = pagerState.settledPage

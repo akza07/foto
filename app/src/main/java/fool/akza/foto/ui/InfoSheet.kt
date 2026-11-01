@@ -1,6 +1,7 @@
 package fool.akza.foto.ui
 
 import androidx.compose.foundation.BorderStroke
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -43,6 +44,9 @@ import fool.akza.foto.ui.theme.TextPrimary
 internal fun InfoSheet(item: MediaItem, onClose: () -> Unit) {
     val context = LocalContext.current
     var info by remember { mutableStateOf<MediaInfo?>(null) }
+
+    // Back closes the sheet, not the viewer underneath it.
+    BackHandler { onClose() }
 
     LaunchedEffect(item) {
         info = MediaRepository.loadInfo(context, item)
