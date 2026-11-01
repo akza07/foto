@@ -41,8 +41,12 @@ internal object PngText {
     /** Upper bound on one chunk's decoded text, so a zip bomb can't stall us. */
     private const val MaxTextBytes = 1 shl 16
 
-    /** Upper bound on the number of chunks we walk in one file. */
-    private const val MaxChunksWalked = 256
+    /**
+     * Upper bound on the chunks we walk in one file. Screenshot-sized PNGs split
+     * their pixels into hundreds of 8 KiB IDAT chunks before any text chunk, so
+     * this has to be generous; it only exists to stop a runaway file.
+     */
+    private const val MaxChunksWalked = 8192
 
     /** Upper bound on the number of textual chunks returned for one file. */
     private const val MaxTextChunks = 64
@@ -50,12 +54,18 @@ internal object PngText {
     /** Upper bound on the text bytes read from one file, whatever its headers say. */
     private const val MaxFileBytes = 4 shl 20
 
+    /** Upper bound on the bytes skipped, so a bogus chunk length can't run away. */
+    private const val MaxSkippedBytes = 64 shl 20
+
     fun read(stream: InputStream): List<PngTextChunk> {
         if (!readFully(stream, Signature.size).contentEquals(Signature)) return emptyList()
         val chunks = mutableListOf<PngTextChunk>()
         var consumed = Signature.size
+        var skipped = 0L
         var walked = 0
-        while (walked < MaxChunksWalked && chunks.size < MaxTextChunks && consumed < MaxFileBytes) {
+        while (walked < MaxChunksWalked && chunks.size < MaxTextChunks &&
+            consumed < MaxFileBytes && skipped < MaxSkippedBytes
+        ) {
             val lengthBytes = readFully(stream, 4)
             if (lengthBytes.size < 4) break
             val length = readInt(lengthBytes)
@@ -72,6 +82,7 @@ internal object PngText {
             val textual = type == "tEXt" || type == "zTXt" || type == "iTXt"
             if (!textual || length > MaxChunkBytes) {
                 if (!skipFully(stream, length.toLong() + 4L)) break
+                skipped += length + 4L
                 continue
             }
             val data = readFully(stream, length)

@@ -72,15 +72,14 @@ internal object MetadataReader {
         val granted = context.checkSelfPermission(Manifest.permission.ACCESS_MEDIA_LOCATION) ==
             PackageManager.PERMISSION_GRANTED
         if (granted) {
-            val original = try {
-                MediaStore.setRequireOriginal(uri)
-            } catch (_: Exception) {
-                null
+            // Both the rewrite and the open can be refused (third-party
+            // DocumentsProviders, cloud media); either way the plain URI is
+            // still worth reading, just without GPS.
+            val original = runCatching { MediaStore.setRequireOriginal(uri) }.getOrNull()
+            val stream = original?.let {
+                runCatching { context.contentResolver.openInputStream(it) }.getOrNull()
             }
-            if (original != null) {
-                val stream = context.contentResolver.openInputStream(original)
-                if (stream != null) return stream
-            }
+            if (stream != null) return stream
         }
         return context.contentResolver.openInputStream(uri)
     }

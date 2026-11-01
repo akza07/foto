@@ -101,8 +101,10 @@ class PngTextTest {
     }
 
     @Test
-    fun `walking many empty chunks still reaches the last text chunk`() {
-        val noise = Array(200) { chunk("tIME", ByteArray(7)) }
+    fun `text after hundreds of image chunks is still found`() {
+        // A 12MP screenshot is one multi-megabyte IDAT split into hundreds of
+        // 8 KiB chunks, all before the text chunks libpng appends at the end.
+        val noise = Array(600) { chunk("IDAT", ByteArray(8 * 1024)) }
         val png = png(*noise, chunk("tEXt", "Comment".toByteArray() + 0 + "late".toByteArray()))
         val chunks = PngText.read(png.inputStream())
         assertEquals(1, chunks.size)
@@ -111,7 +113,7 @@ class PngTextTest {
 
     @Test
     fun `a pathologically long chunk list stops the walk`() {
-        val noise = Array(400) { chunk("tIME", ByteArray(7)) }
+        val noise = Array(8300) { chunk("tIME", ByteArray(0)) }
         val png = png(*noise, chunk("tEXt", "Comment".toByteArray() + 0 + "late".toByteArray()))
         assertTrue(PngText.read(png.inputStream()).isEmpty())
     }

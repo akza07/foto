@@ -171,12 +171,18 @@ object MetadataStore {
         item: MediaItem,
         info: MediaInfo,
     ): String = buildString {
-        item.displayName?.let { appendLine(it) }
+        appendLine(buildItemText(item))
         info.name.takeIf { it != item.displayName }?.let { appendLine(it) }
-        item.bucketName.takeIf { it.isNotBlank() }?.let { appendLine(it) }
-        item.relativePath?.takeIf { it.isNotBlank() }?.let { appendLine(it) }
         (info.mimeType ?: item.mimeType)?.let { appendLine(it) }
         appendLine(flattenSections(label, info.metadata))
+    }.trim()
+
+    /** The name/album/path a file can be found by even when its metadata can't be read. */
+    internal fun buildItemText(item: MediaItem): String = buildString {
+        item.displayName?.let { appendLine(it) }
+        item.bucketName.takeIf { it.isNotBlank() }?.let { appendLine(it) }
+        item.relativePath?.takeIf { it.isNotBlank() }?.let { appendLine(it) }
+        item.mimeType?.let { appendLine(it) }
     }.trim()
 
     /** `label: value` lines for every metadata field, in display order. */

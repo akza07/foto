@@ -28,6 +28,7 @@ class MetadataIndexerTest {
         assertNotEquals(stamp(location = true, name = "old.jpg"), stamp(location = true, name = "new.jpg"))
         assertNotEquals(stamp(location = true, album = "Camera"), stamp(location = true, album = "Trips"))
         assertNotEquals(stamp(location = true, file = "1:100"), stamp(location = true, file = "2:100"))
+        assertNotEquals(stamp(location = true, path = "DCIM/A/"), stamp(location = true, path = "DCIM/B/"))
     }
 
     @Test
@@ -35,15 +36,25 @@ class MetadataIndexerTest {
         assertEquals(stamp(location = true, name = null), stamp(location = true, name = null))
     }
 
+    @Test
+    fun `separator characters in names cannot collide`() {
+        assertNotEquals(
+            MetadataIndexer.stampFor("s", "a:b", "c", true),
+            MetadataIndexer.stampFor("s", "a", "b:c", true),
+        )
+    }
+
     private fun stamp(
         location: Boolean,
         name: String? = "photo.jpg",
         album: String = "Camera",
         file: String = "1700000000:2400000",
+        path: String? = "DCIM/Camera/",
     ) = MetadataIndexer.stampFor(
         stamp = file,
         displayName = name,
         bucketName = album,
+        relativePath = path,
         locationGranted = location,
     )
 }

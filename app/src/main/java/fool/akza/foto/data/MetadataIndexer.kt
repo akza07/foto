@@ -10,6 +10,7 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 /**
@@ -35,12 +36,12 @@ object MetadataIndexer {
 
     /** Indexes whatever is stale in [items]. Returns the number of files read. */
     suspend fun sync(context: Context, items: List<MediaItem>): Int {
-        // One pass at a time: a reload burst must not queue up parallel scans.
-        if (!mutex.tryLock()) return 0
-        return try {
+        // One pass at a time, but queue rather than drop: a pass can be requested
+        // while another is still unwinding (an invalidation restarts the effect),
+        // and a dropped pass would leave the index empty or half-built. A queued
+        // pass is cheap — it reads the stamps, finds nothing pending, and prunes.
+        return mutex.withLock {
             withContext(Dispatchers.IO) { index(context, items) }
-        } finally {
-            mutex.unlock()
         }
     }
 
@@ -52,13 +53,15 @@ object MetadataIndexer {
                 stamp = it.previewStamp(),
                 displayName = it.displayName,
                 bucketName = it.bucketName,
+                relativePath = it.relativePath,
                 locationGranted = locationGranted,
             )
         }
         val pending = items.filter { keys[it.uri.toString()] != known[it.uri.toString()] }
 
         var indexed = 0
-        pending.chunked(BatchSize).forEach { batch ->
+        val batches = pending.chunked(BatchSize)
+        batches.forEachIndexed { batchIndex, batch ->
             batch.forEach { item ->
                 // Cancellation must unwind, not be logged as a per-file failure.
                 currentCoroutineContext().ensureActive()
@@ -72,6 +75,16 @@ object MetadataIndexer {
                             keys.getValue(item.uri.toString()),
                         )
                         indexed++
+                    } else {
+                        // Unreadable (locked, denied SAF grant, corrupt): remember
+                        // that we tried, so every later pass doesn't re-open it.
+                        // A real change to the file changes its stamp and retries.
+                        MetadataStore.upsert(
+                            context,
+                            item,
+                            MetadataStore.buildItemText(item),
+                            keys.getValue(item.uri.toString()),
+                        )
                     }
                 } catch (e: CancellationException) {
                     throw e
@@ -79,12 +92,14 @@ object MetadataIndexer {
                     AppLog.w("metadata: index failed for ${item.uri}", e)
                 }
             }
-            delay(PauseMs)
+            if (batchIndex < batches.lastIndex) delay(PauseMs)
         }
 
-        // Everything in the library is current now, so anything else in the
-        // table is a deleted or renamed-away file.
-        MetadataStore.prune(context, keys.keys)
+        // Everything in the library is current now, so anything else in the table
+        // is a deleted or renamed-away file. An empty list is *not* proof of an
+        // empty library — settings (require-explicit, .nomedia) and transient
+        // provider misses can filter everything out — so never prune on it.
+        if (items.isNotEmpty()) MetadataStore.prune(context, keys.keys)
         return indexed
     }
 
@@ -99,11 +114,13 @@ object MetadataIndexer {
         displayName: String?,
         bucketName: String,
         locationGranted: Boolean,
+        relativePath: String? = null,
     ): String = buildString {
         append(if (locationGranted) '1' else '0')
-        append(':').append(displayName.orEmpty())
-        append(':').append(bucketName)
-        append(':').append(stamp)
+        // Length prefixes keep the parts unambiguous ("a:b" + "c" vs "a" + "b:c").
+        listOf(displayName.orEmpty(), bucketName, relativePath.orEmpty(), stamp).forEach {
+            append(':').append(it.length).append(':').append(it)
+        }
     }
 
     private fun hasPhotoLocationAccess(context: Context): Boolean =
