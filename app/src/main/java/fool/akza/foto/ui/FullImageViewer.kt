@@ -263,6 +263,8 @@ fun FullImageViewer(
     initialIndex: Int,
     sourceRect: Rect,
     onDismiss: () -> Unit,
+    /** Fired once when the exit animation starts, before the grid is revealed. */
+    onClosing: () -> Unit = {},
     onPageChanged: (Int) -> Unit,
     onDelete: (MediaItem) -> Unit,
     onShare: (MediaItem) -> Unit,
@@ -422,6 +424,10 @@ fun FullImageViewer(
 
     val close = {
         if (!leaving) {
+            // Let the gallery turn its frosted header back on before the viewer
+            // starts shrinking, otherwise the header is revealed unblurred and
+            // snaps to blur only after the animation ends.
+            onClosing()
             // Stop counting before the exit animation, so the shrink back to the
             // tile is not mistaken for viewing time.
             attention?.setLeaving(true)
@@ -1059,9 +1065,17 @@ private fun ZoomableImage(
     // morph is available before the full-resolution file finishes decoding.
     var fullImageSize by remember(item.uri) { mutableStateOf<IntSize?>(null) }
     var fullLoaded by remember(item.uri) { mutableStateOf(false) }
-    val loadFade = remember(item.uri) { Animatable(1f) }
-    LaunchedEffect(fullLoaded) {
-        if (fullLoaded) loadFade.animateTo(0f, tween(220)) else loadFade.snapTo(1f)
+    // Keep the tile-resolution bridge fully opaque until the entry zoom has
+    // settled. Fading it as soon as the original decoded made the sharp image
+    // appear mid-morph, which read as a small thumbnail-to-photo swap.
+    val bridgeAlpha = remember(item.uri) { Animatable(1f) }
+    val entrySettled = entryProgress() >= 0.999f
+    LaunchedEffect(item.uri, fullLoaded, entrySettled) {
+        if (!fullLoaded || !entrySettled) {
+            bridgeAlpha.snapTo(1f)
+        } else {
+            bridgeAlpha.animateTo(0f, tween(220))
+        }
     }
 
     // Geometry of the entry morph. The pager maps this page (W x H) onto the
@@ -1282,13 +1296,10 @@ private fun ZoomableImage(
                     modifier = Modifier.fillMaxSize(),
                 )
 
-                // Tile-res bridge above the original, fading out once the entry
-                // zoom finishes AND the original has decoded (whichever is later),
-                // so there is never a black frame during the transition.
+                // Tile-res bridge above the original, kept opaque through the
+                // entry zoom and only faded once the morph has settled.
                 if (thumb != null) {
-                    val entryAlpha = (1f - ep).coerceIn(0f, 1f)
-                    val bridgeAlpha = maxOf(entryAlpha, loadFade.value)
-                    if (bridgeAlpha > 0.001f) {
+                    if (bridgeAlpha.value > 0.001f) {
                         Image(
                             bitmap = thumb.asImageBitmap(),
                             contentDescription = null,
@@ -1297,7 +1308,7 @@ private fun ZoomableImage(
                             contentScale = ContentScale.Fit,
                             modifier = Modifier
                                 .fillMaxSize()
-                                .graphicsLayer { alpha = bridgeAlpha },
+                                .graphicsLayer { alpha = bridgeAlpha.value },
                         )
                     }
                 }

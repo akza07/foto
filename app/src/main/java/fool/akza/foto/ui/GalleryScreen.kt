@@ -52,7 +52,7 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.itemsIndexed
-import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
@@ -317,6 +317,10 @@ fun GalleryScreen(
     var viewerIndex by remember { mutableStateOf(0) }
     var viewerSourceRect by remember { mutableStateOf(Rect.Zero) }
     var viewerOpenerUri by remember { mutableStateOf<Uri?>(null) }
+    // True from the moment the viewer starts its exit animation until it is
+    // removed. Lets the root header turn its blur back on before the viewer
+    // reveals it, instead of flipping from transparent to blurred at the end.
+    var viewerClosing by remember { mutableStateOf(false) }
     // Item awaiting the viewer's delete slide-out. While set, viewerItems still
     // contains it so the pager can animate to the neighbor; the actual list
     // mutation happens in commitViewerRemoval once the slide ends.
@@ -538,6 +542,7 @@ fun GalleryScreen(
         viewerItems = null
         viewerSourceRect = Rect.Zero
         viewerOpenerUri = null
+        viewerClosing = false
         pendingViewerRemoval = null
     }
 
@@ -546,6 +551,7 @@ fun GalleryScreen(
         viewerIndex = index
         viewerSourceRect = rect
         viewerOpenerUri = list.getOrNull(index)?.uri
+        viewerClosing = false
         pendingViewerRemoval = null
     }
 
@@ -1356,9 +1362,11 @@ fun GalleryScreen(
             onTileDisposed = unregisterTileRect,
             onGlideItem = glideItem,
             onGlideFolder = glideFolder,
-            // Skip the (expensive) blur while an opaque screen covers the root.
+            // Skip the (expensive) blur while an opaque screen covers the root,
+            // but keep it on through the viewer's exit so the revealed header is
+            // already blurred rather than snapping to blur after the animation.
             frostEnabled = (directoryStack.isEmpty() || directoryStack.size == 1 && closing) &&
-                viewerItems == null &&
+                (viewerItems == null || viewerClosing) &&
                 !showSettings && !showSearch && !showInsights,
         )
 
@@ -1494,7 +1502,11 @@ fun GalleryScreen(
                 onRemovalAnimationEnd = commitViewerRemoval,
                 restoreUri = viewerRestoreUri,
                 onRestored = { viewerRestoreUri = null },
-                onDismiss = closeViewer,
+                onDismiss = {
+                    viewerClosing = false
+                    closeViewer()
+                },
+                onClosing = { viewerClosing = true },
                 onPageChanged = { viewerIndex = it },
                 onDelete = {
                     // Ignore further deletes while a slide-out is already pending.
@@ -1772,8 +1784,9 @@ private fun RootTabsHeader(
     ) {
         val haptics = LocalHapticFeedback.current
         val segmentWidth = 76.dp
+        val photosSelected = tab == RootTab.PHOTOS
         val indicatorOffset by animateDpAsState(
-            targetValue = if (tab == RootTab.PHOTOS) 0.dp else segmentWidth,
+            targetValue = if (photosSelected) 0.dp else segmentWidth,
             animationSpec = tween(240, easing = FastOutSlowInEasing),
             label = "rootTabIndicator",
         )
@@ -1782,6 +1795,16 @@ private fun RootTabsHeader(
                 .clip(RoundedCornerShape(12.dp))
                 .background(SurfaceColor)
                 .border(1.dp, Border, RoundedCornerShape(12.dp))
+                // One toggle for the whole control: tapping either label (or the
+                // gap between them) flips to the other view.
+                .toggleable(
+                    value = photosSelected,
+                    role = Role.Switch,
+                    onValueChange = { isPhotos ->
+                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        onTabChange(if (isPhotos) RootTab.PHOTOS else RootTab.ALBUMS)
+                    },
+                )
                 .padding(3.dp),
         ) {
             Box(
@@ -1804,14 +1827,7 @@ private fun RootTabsHeader(
                     Box(
                         modifier = Modifier
                             .width(segmentWidth)
-                            .height(28.dp)
-                            .clip(RoundedCornerShape(8.dp))
-                            .selectable(selected = selected, role = Role.Tab) {
-                                if (entry != tab) {
-                                    haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                    onTabChange(entry)
-                                }
-                            },
+                            .height(28.dp),
                         contentAlignment = Alignment.Center,
                     ) {
                         Text(

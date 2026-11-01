@@ -158,11 +158,15 @@ fun VideoPlayerPage(
     val posterVeilAlpha = remember(item.uri) { Animatable(1f) }
 
     LaunchedEffect(item.uri) {
-        // Fade as soon as this item's first frame renders. The timeout keeps an
-        // unplayable video from leaving the poster stuck forever; the error
-        // overlay draws above it either way.
+        // Hold the poster until the first frame is ready AND the tile-to-viewer
+        // morph has settled. Fading it earlier swapped a soft poster for the
+        // sharp surface in the middle of the zoom, which read as a small glitch.
+        // The timeout keeps an unplayable video from leaving the poster stuck
+        // forever; the error overlay draws above it either way.
         withTimeoutOrNull(FirstFrameTimeoutMs) {
-            snapshotFlow { contentReady() }.first { it }
+            snapshotFlow {
+                contentReady() && entryProgress() >= 0.999f
+            }.first { it }
         }
         posterVeilAlpha.animateTo(0f, tween(FirstFrameFadeMs))
     }
