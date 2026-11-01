@@ -47,7 +47,7 @@
 - **Skeleton-first loading:** never show empty gaps; show shimmer placeholders while decoding.
 - **Safe deletes:** every delete is undoable. MediaStore files go to Android's system trash (API 30+) — instant, no byte copies. SAF documents (added folders, `.nomedia` content), which have no platform trash, are copied into Foto's private trash first. Both kinds offer Undo.
 - **Non-destructive editing:** crop always writes a new copy beside the original; the source file is never modified.
-- **Strict gesture disambiguation:** viewer swipes lock to one axis; only a steep (≥2:1) vertical drag opens the action panel, so diagonal swipes page instead of doing both.
+- **Strict gesture disambiguation:** viewer swipes lock to one axis; only a steep (≥2:1) vertical drag reveals the viewer chrome, so diagonal swipes page instead of doing both.
 
 ---
 
@@ -112,7 +112,7 @@ No custom font family; system default with Material3 defaults. Exact usages:
 ### 3.4 Edge-to-edge & system bars
 
 - `windowBackground` black; status/nav bars transparent; light icons (not dark); content draws behind both.
-- Status-bar icon tint is enforced at the window level in `MainActivity` (light icons regardless of the system light/dark theme, because the app is always black). The full-screen viewer keeps the system bars visible while its own top chrome auto-hides, so tapping the photo can open the frosted action panel without the platform's bar animation reflowing the grid mid-morph.
+- Status-bar icon tint is enforced at the window level in `MainActivity` (light icons regardless of the system light/dark theme, because the app is always black). The full-screen viewer toggles both system bars and its own chrome (top bar and action rail) with a tap. While the bars are hidden, `WindowInsetsGuard` pins the window's status/navigation insets to their pre-hide values, so the platform's hide/show animation cannot reflow the grid, headers or viewer chrome in the middle of the tile-morph transition.
 - Every screen insets via status-bar top padding and navigation-bar bottom padding. Frosted bars sit in the status zone; grids/lists add top padding to clear them and scroll underneath.
 - Optional 120Hz: when “Prefer 120Hz” is on and hardware supports >60.5Hz, window prefers 120Hz and root votes 120fps via frame-rate hint; applied live, no restart.
 
@@ -324,22 +324,21 @@ Sources: (1) the file name; (2) a local SQLite index (`metadata.db`) holding eac
 
 ### 9.2 Top bar (top-left only; no top-right menu)
 
-- Container: status-bar inset + 8dp top/start, 8dp spacing row, so the row clears the visible status bar; behind it a full-width 112dp vertical scrim black 62%→transparent, alpha p×controls.
+- Container: status-bar inset + 8dp top/start, 8dp spacing row. The inset is pinned while the bars are hidden, so the row never jumps; behind it a full-width 112dp vertical scrim black 62%→transparent, alpha p×controls.
 - Back: 40dp circle `#09090B` 8dp shadow, 22dp auto-mirrored `ArrowBack` `#FAFAFA` → animated close (disabled when chrome hidden).
 - Counter pill: 50dp round `#09090B` no border, “3/12” 13sp Medium white, 14dp horizontal / 8dp vertical padding.
-- Chrome fades 200ms; images auto-hide 3s after show (unless the action panel is open); a tap opens the action panel. Videos follow the video HUD.
+- Chrome fades 200ms; images auto-hide 3s after show. A tap toggles the whole chrome. Videos follow the video HUD.
 
-### 9.3 Action panel (side rail by default)
+### 9.3 Action rail (part of the viewer chrome)
 
-- Tap the photo (or swipe up) opens the panel. It follows Settings → Display → Action panel edge: a bottom-anchored **side rail** for Left/Right (right by default), or the full-width bottom bar when that edge is chosen (also the short-window fallback).
-- Backdrop: a light full-screen black 12% scrim fades in/out independently (tap closes). The panel itself is transparent frosted glass: Haze with a 50dp blur and a black 18% tint, clipped to its shape with a 1dp `Border` hairline. The photo stays visible and strongly blurred through it.
-- **Side rail:** 76dp wide, 16dp corners, 12dp off the edge and above the nav-bar inset, 6dp vertical padding. Items stack Delete / Share / Info / Rename / Crop / Wallpaper (Crop and Wallpaper omitted on video; Share omitted when media sharing is off). Delete is at the top, away from the thumb, because the rail is bottom-anchored. Each item: 32dp black-24% round well with a 20dp icon, 3dp gap, 11sp Medium white label with a black text shadow. Slide-in/out horizontally from its own edge, fade 160/130ms.
-- **Bottom bar:** full-width, top 16dp corners, nav-bar padding, 12dp top / 24dp bottom, 40×4dp handle, then Share / Info / Rename / Delete / Crop / Wallpaper in one `SpaceEvenly` row (the original order). Each item keeps the 54dp black well with a 26dp icon + 12sp label. Slide-in/out vertically.
-- Tap an action: the panel closes, then the action runs. System back closes the panel before the viewer.
+- The action rail is not a modal and has no scrim: it is chrome, shown and hidden with the top bar and system bars when the photo is tapped. It follows Settings → Display → Action panel edge. Left/Right is a floating side rail (right by default); Bottom keeps the full-width bottom bar (also the short-window fallback).
+- **Side rail:** 76dp wide, 16dp corners, 12dp from the side, and its bottom sits at ~3/4 of the screen height (25% bottom inset), leaving the nav area clear and putting the actions in the thumb's comfortable lower-right arc. It is transparent frosted glass: Haze with a 50dp blur and a black 18% tint, clipped to its shape with a 1dp `Border` hairline. Items stack Delete / Share / Info / Rename / Crop / Wallpaper (Crop and Wallpaper omitted on video; Share omitted when media sharing is off). Delete is at the top, away from the thumb. Each item: 32dp black-24% round well with a 20dp icon, 3dp gap, 11sp Medium white label with a black text shadow.
+- **Bottom bar:** full-width, top 16dp corners, nav-bar padding, 12dp top / 24dp bottom, 40×4dp handle, then Share / Info / Rename / Delete / Crop / Wallpaper in one `SpaceEvenly` row. Each item keeps the 54dp black well with a 26dp icon + 12sp label.
+- Both variants fade with the chrome (200ms). Tapping an action runs it; the chrome hides on the next tap like any other viewer UI. System back closes the viewer.
 
 ### 9.4 Gestures (images)
 
-- **Swipe down (1× only):** dismisses viewer. **Swipe up / tap:** opens the action panel (haptic on swipe). Threshold 56dp vertical; single finger; second finger aborts. Once past touch slop, only a gesture at least 2× more vertical than horizontal counts as vertical; everything else is left entirely to the pager. Vertical consumes both axes and drains the rest of the gesture, so a diagonal (e.g. bottom-right → top-left) swipe pages instead of opening the panel, and a vertical swipe never pages. Disabled when zoomed/panel/radial/leaving/multi-touch/removing.
+- **Swipe down (1× only):** dismisses viewer. **Tap:** toggles the whole viewer chrome. **Swipe up:** reveals the chrome when hidden (haptic). Threshold 56dp vertical; single finger; second finger aborts. Once past touch slop, only a gesture at least 2× more vertical than horizontal counts as vertical; everything else is left entirely to the pager. Vertical consumes both axes and drains the rest of the gesture, so a diagonal (e.g. bottom-right → top-left) swipe pages instead of opening the panel, and a vertical swipe never pages. Disabled when zoomed/radial/leaving/multi-touch/removing.
 - **Single tap:** toggles chrome. **Double-tap:** if zoomed → animate reset to 1×; else animate to 3× anchored at tap (target offset = (tap−center)×−2), spring `NoBouncy/MediumLow`, cancels fling. Dead during multi-touch.
 - **Pinch:** 1–5×, centroid-anchored, pan only when ≠1×, offsets clamped ±W×(scale−1)/2, ±H×(scale−1)/2. 2+ fingers suppress taps/swipes/pager; re-keys input; cancels fling on start/page change.
 - **Momentum:** 1:1 drag; on release if >250px/s and >1.01× → exponential decay (friction 0.6) clamped to bounds.
@@ -349,7 +348,7 @@ Sources: (1) the file name; (2) a local SQLite index (`metadata.db`) holding eac
 ### 9.5 Delete / share / info / rename / crop / wallpaper
 
 - Panel Delete (red): video deletes always confirm; other MediaStore items rely on the provider's trash prompt. SAF documents get the in-app confirm because they go to Foto's private trash instead. MediaStore deletes use `MediaStore.createTrashRequest` (no copy); SAF deletes copy bytes into app storage then remove the document. Both show the “Moved to trash” Undo bar (6s) + slide to neighbor (280ms `FastOutSlowIn`; next if exists else prev; last item dismisses). Undo restores from the matching trash and slides back.
-- Share: system chooser with URI grant. Settings → Privacy → Allow sharing can remove every media Share entry point (viewer wheel, action panel and selection bar); turning it off also guards the share launcher itself. By default the photo is first rewritten into `cacheDir/share/` without EXIF/GPS/XMP/PNG text/GIF comments and served through a `FileProvider`; still-photo EXIF rotation is baked into the pixels (large stills are sampled down if a full-resolution decode would exhaust the heap), and videos are shared unchanged. Info: bottom sheet (see §11). Rename: dialog (see §4.8) that keeps the extension; MediaStore goes through a write-consent request when Foto doesn't own the file, SAF renames through its tree grant. Success swaps the viewer item + reloads + “Renamed” toast and re-keys the Insights history; failure shows a toast. Crop: full-screen crop editor (see §9.6). Wallpaper: full-screen picker (see §9.7).
+- Share: system chooser with URI grant. Settings → Privacy → Allow sharing can remove every media Share entry point (viewer wheel, action rail and selection bar); turning it off also guards the share launcher itself. By default the photo is first rewritten into `cacheDir/share/` without EXIF/GPS/XMP/PNG text/GIF comments and served through a `FileProvider`; still-photo EXIF rotation is baked into the pixels (large stills are sampled down if a full-resolution decode would exhaust the heap), and videos are shared unchanged. Info: bottom sheet (see §11). Rename: dialog (see §4.8) that keeps the extension; MediaStore goes through a write-consent request when Foto doesn't own the file, SAF renames through its tree grant. Success swaps the viewer item + reloads + “Renamed” toast and re-keys the Insights history; failure shows a toast. Crop: full-screen crop editor (see §9.6). Wallpaper: full-screen picker (see §9.7).
 - Page change updates settled index; list shrink clamps pager; input gated during slide.
 
 ### 9.6 Crop editor
@@ -366,7 +365,7 @@ Sources: (1) the file name; (2) a local SQLite index (`metadata.db`) holding eac
 
 - Full-screen black surface layered above the viewer (images only). Top bar 56dp: ghost “✕ Cancel” on the left (17dp `Close` + 13sp Medium) and a centred “Wallpaper Editor” 16sp Medium title.
 - Preview: a device-shaped frame (30dp corners, 1dp `Border` hairline) filled by exactly the crop, so the frame *is* the result. It takes the aspect of the screen in the chosen orientation, is fitted into the space above the card, and carries a 26dp hint pill underneath (`Surface` + 1dp `Border`, 13dp `Pinch`, “Pinch to zoom • Drag to reposition” 11sp muted). Only crop guides sit on top: thirds grid (1dp white 20%) and 16dp corner brackets (2dp white 92%) at a 10dp inset — no simulated screen content.
-- Fullscreen preview: the Preview action hides every app element and draws the same crop fitted to the window (letterboxed when a landscape crop meets a portrait display); tap or back returns. The system bars stay visible (the viewer no longer hides them); the preview only drops Foto's own chrome.
+- Fullscreen preview: the Preview action hides every Foto element and draws the same crop fitted to the window (letterboxed when a landscape crop meets a portrait display); tap or back returns. The preview only drops Foto's own chrome; it does not toggle the system bars.
 - Control card: shadcn-style `Surface` panel with a 1dp `Border`, 16dp corners, 12dp padding and 10dp gaps. Row 1 is the Lock / Home target track (`EmptySurface`, 12dp corners, 4dp padding) with two equal 36dp tabs (16dp icon + 6dp + 13sp Medium; selected = `Border` fill + white text, 180ms crossfade, `Role.Tab` inside a selectable group). Row 2 has two 40dp options (`EmptySurface` + 1dp `Border`, 12dp corners): “Aspect: Portrait/Landscape” (17dp `AspectRatio`, toggles orientation and refits) and “Preview” (17dp `Visibility`, opens the fullscreen preview). Failures insert 13sp Medium red above the action.
 - Action: full-width 46dp white **Set wallpaper** (12dp corners, 18dp `CheckCircle` + 14sp SemiBold black); disabled it becomes `EmptySurface` with a `Border` hairline and muted content. While applying, a blocking **Setting wallpaper…** busy overlay; success closes the picker and shows the “Wallpaper set” toast.
 - Gestures: pinch shrinks/enlarges the crop window around the gesture centroid (minimum 8% width) and drag pans the image 1:1, so the crop moves against the finger; the focus is clamped to the frame, so dragging past the edge keeps panning instead of jumping to a bound. The window is always clamped inside the photo and refits on orientation change.
@@ -395,7 +394,7 @@ Real playback via single ExoPlayer per viewer session (no per-page players). Aud
 
 **Poster veil + surface:** active page: full-bleed texture (Fit) + black shutter + identical Fit poster veil fading 150ms on first frame (2.5s timeout fades anyway) + entry bridge poster. All inside shared correction layer; HUD outside (never distorts). Memory cache avoids placeholder on re-open.
 
-**Gestures:** single tap on upper area toggles HUD. Double-tap left/right seeks ∓10s + shows HUD. No pinch/double-zoom. Vertical swipes are handled by the host viewer: up opens the action panel, down dismisses. Pager swipe locked while playing (pause to swipe). Long-press still summons radial (pauses + hides HUD).
+**Gestures:** single tap on upper area toggles HUD. Double-tap left/right seeks ∓10s + shows HUD. No pinch/double-zoom. Vertical swipes are handled by the host viewer: up reveals the chrome, down dismisses. Pager swipe locked while playing (pause to swipe). Long-press still summons radial (pauses + hides HUD).
 
 **Center button:** 56dp circle black 60%, 30dp white Play/Pause, alpha follows HUD; disabled when hidden.
 
@@ -465,7 +464,7 @@ Real playback via single ExoPlayer per viewer session (no per-page players). Aud
    - Toggle “Only show selected folders” / ON “Show only media inside the folders you add.” / OFF “Show all media except the folders you add.” (default off).
    - Action+chevron “Manage folders” trailing “None / 1 folder / N folders” → Folders sub-screen.
 5. **Privacy**
-   - Toggle “Allow sharing” / “Show Share actions in the viewer and selection bar. Turn off to prevent accidental sharing of photos and videos.” (default on; off removes Share from the radial wheel, the viewer action panel and the multi-select bar).
+   - Toggle “Allow sharing” / “Show Share actions in the viewer and selection bar. Turn off to prevent accidental sharing of photos and videos.” (default on; off removes Share from the radial wheel, the viewer action rail and the multi-select bar).
    - Toggle “Remove metadata when sharing photos” / “Shared photos are re-saved without EXIF, GPS, XMP, PNG text or GIF comments. Rotation is kept for still photos; videos are shared unchanged.” (default on; copies live in `cacheDir/share/` and are pruned after 24 h, and rotation is baked into the pixels when a still photo is re-encoded).
    - Toggle “Record viewing time” / “Rank the photos and videos you spend the most time with. Stored on this device.” (default on; off stops new writes, existing history stays).
    - Action “Clear viewing history” subtitle “No viewing history yet” (disabled) or “Remove all recorded viewing time from this device.” trailing item count → destructive confirm (“Clear viewing history?” / “All recorded viewing time will be deleted and Insights will reset. This can’t be undone.”) → wipes the attention table; the Albums tile disappears.
@@ -489,7 +488,7 @@ Same frosted header (“Folders”). Hint 13sp/18sp muted 4dp start: allow-mode 
 Merged list of Android's system trash (MediaStore `QUERY_ARG_MATCH_TRASHED`, API 30+) and Foto's private SAF trash, newest first. System entries also appear in the platform's own trash UI. Same slide/frosted chrome (“Trash” 22sp + back + “Empty” text-button with `DeleteSweep` icon: white when non-empty, muted when empty; while the Empty request is pending 16dp spinner + “Emptying…”).
 
 - Empty: centered “Trash is empty” 14sp muted. Else list 16dp sides, top status+56+8dp, bottom 8dp, 8dp spacing: summary 12sp muted (“N · size”) 4dp start/bottom.
-- Row card 12dp `RaisedSurface` (`#111113`) with a 1dp `Border` stroke (grey accent against AMOLED black), 8dp padding: 52dp thumb 9dp corners (real image thumbnail, or video poster with a small play affordance; glyph sits behind as a fallback; private entries read the app-private copy) + 12dp gap + name 14sp Medium 1 line + size 12sp muted (weight 1) + `Restore` outlined white (“Restore”) → system `createTrashRequest(value=false)` or private restore + reloads + `onChanged`; `Delete` outlined red (“Delete”) → system `createDeleteRequest` or a permanent-delete confirm for private entries + reloads. Tapping the row opens the item in a read-only viewer/player (no action wheel, drawer, delete, share, info or crop), zooming from the row thumbnail.
+- Row card 12dp `RaisedSurface` (`#111113`) with a 1dp `Border` stroke (grey accent against AMOLED black), 8dp padding: 52dp thumb 9dp corners (real image thumbnail, or video poster with a small play affordance; glyph sits behind as a fallback; private entries read the app-private copy) + 12dp gap + name 14sp Medium 1 line + size 12sp muted (weight 1) + `Restore` outlined white (“Restore”) → system `createTrashRequest(value=false)` or private restore + reloads + `onChanged`; `Delete` outlined red (“Delete”) → system `createDeleteRequest` or a permanent-delete confirm for private entries + reloads. Tapping the row opens the item in a read-only viewer/player (no action wheel, action rail, delete, share, info or crop), zooming from the row thumbnail.
 - “Empty” → destructive confirm (“Empty trash?” / “Items in the trash will be permanently deleted. This can’t be undone.” / Cancel + Empty red) → system `createDeleteRequest` for system entries and direct removal of private entries → reloads while “Emptying…”. Provider requests are approved in the system dialog; private entries need no prompt.
 
 ---
@@ -532,10 +531,10 @@ Overlay on gallery when permissions granted + unseen; replayable via Settings (n
 ## 17. Motion System (repro recipe)
 
 - Tweens `FastOutSlowInEasing` unless noted: dialog scrim 180ms fade / card 240ms scale 0.92→1 + 180ms fade; tutorial 220ms fade in / 160ms fade out; delete-progress bar frame-chased (τ≈110ms, 50ms to finish) + 360ms hold at 100%; deck forward 320ms / reverse 260ms; viewer entry 280ms / exit 240ms; delete/restore slide 280ms; chrome fade 200ms; poster veil 150ms; poster fade 120ms; seeker thicken 150ms; video HUD hide 200ms; pull-to-refresh minimum 300ms.
-- Action panel: the side rail slides 240ms in / 190ms out horizontally from its own edge and fades; the bottom bar variant slides 260ms up / 200ms down. The full-screen scrim only fades (180/140ms). Never slide the scrim with the panel — a sliding tint reads as a second page entering.
+- Action chrome: the side rail and bottom bar fade with the rest of the viewer chrome (200ms), in place. There is no scrim and no separate open/close state.
 - Springs: radial open `MediumBouncy/MediumLow`, close `NoBouncy/Medium`, bloom allows 1.2 overshoot; double-tap zoom `NoBouncy/MediumLow`.
 - Search filtering: hint/empty/results crossfade 180ms in / 120ms out; result tiles and month headers fade 180ms in, 140ms out and re-place on a medium-low spring; the “Found in metadata (N)” count fades 160/100ms; the placeholder fades 120ms.
-- Shimmer 1200ms linear infinite; sync slide from top + fade (defaults); settings/folders/trash/search slide from right + fade; action panel slides from its chosen edge + fade; toast slide half-height + fade.
+- Shimmer 1200ms linear infinite; sync slide from top + fade (defaults); settings/folders/trash/search slide from right + fade; viewer chrome and action rail fade in place; toast slide half-height + fade.
 - Draw-phase transforms (`graphicsLayer`) for deck/viewer/zoom/blur so frames don’t recompose; album blur gated to phase ≥0.98; viewer blur 16dp×radial progress; momentum decay friction 0.6 threshold 0.5; double-tap 1↔3× (pinch 1–5×); swipe threshold 56dp; tap vs long-press via press-timeout + touch-slop.
 
 ---

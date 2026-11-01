@@ -14,10 +14,6 @@ import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.animation.slideInHorizontally
-import androidx.compose.animation.slideInVertically
-import androidx.compose.animation.slideOutHorizontally
-import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -31,6 +27,7 @@ import androidx.compose.foundation.gestures.rememberTransformableState
 import androidx.compose.foundation.gestures.transformable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -103,6 +100,7 @@ import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.util.lerp
+import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.compose.LifecycleStartEffect
@@ -131,7 +129,7 @@ private val SheetRadius = RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp)
 private val RailShape = RoundedCornerShape(16.dp)
 
 /**
- * Frosted glass for the viewer's action sheet. The blur is deliberately much
+ * Frosted glass for the viewer's action rail. The blur is deliberately much
  * stronger than the app bars (18dp) so the photo stays recognisable through the
  * controls instead of turning into a dark slab.
  */
@@ -196,13 +194,13 @@ internal suspend fun PointerInputScope.detectMultiTouch(
 /**
  * Tracks a single-finger vertical drag and fires [onSwipeUp] / [onSwipeDown] once
  * it travels past [threshold] px in either direction. The drag is abandoned the
- * instant a second finger lands, so a two-finger pinch can never open the drawer
+ * instant a second finger lands, so a two-finger pinch can never reveal the chrome
  * or dismiss the viewer.
  *
  * Once past touch slop, only a gesture at least [VerticalGestureRatio] times
  * more vertical than horizontal counts as vertical. Everything else is left to
  * the pager. Vertical consumes both axes and drains the rest of the gesture, so
- * an angled swipe can never slide the page and open the drawer at the same time.
+ * an angled swipe can never slide the page and reveal the chrome at the same time.
  */
 internal suspend fun PointerInputScope.detectVerticalSwipe(
     threshold: Float,
@@ -222,7 +220,7 @@ internal suspend fun PointerInputScope.detectVerticalSwipe(
         while (true) {
             // Initial pass: once this is clearly a vertical drag, consume both
             // axes before the pager sees them. That keeps an angled swipe from
-            // sliding the page and opening the action drawer at the same time.
+            // sliding the page and revealing the chrome at the same time.
             val event = awaitPointerEvent(PointerEventPass.Initial)
             if (event.changes.count { it.pressed } >= 2) return@awaitEachGesture
             val drag = event.changes.firstOrNull { it.id == down.id } ?: return@awaitEachGesture
@@ -237,7 +235,7 @@ internal suspend fun PointerInputScope.detectVerticalSwipe(
             if (!axisDecided && kotlin.math.hypot(totalDx, totalDy) > touchSlop) {
                 // Only a steep gesture counts as vertical. Anything diagonal is
                 // handed to the pager, so bottom-right → top-left swipes page
-                // instead of opening the action drawer.
+                // instead of revealing the chrome.
                 if (kotlin.math.abs(totalDy) < kotlin.math.abs(totalDx) * VerticalGestureRatio) {
                     return@awaitEachGesture
                 }
@@ -248,7 +246,7 @@ internal suspend fun PointerInputScope.detectVerticalSwipe(
             if (vertical) {
                 if (totalDy <= -threshold) {
                     onSwipeUp()
-                    // The drawer opens mid-gesture. Keep consuming the rest of
+                    // The chrome reveals mid-gesture. Keep consuming the rest of
                     // this pointer stream so the pager cannot page with the
                     // leftover diagonal movement.
                     drag.consume()
@@ -285,7 +283,7 @@ private suspend fun AwaitPointerEventScope.drainUntilUp(pointerId: androidx.comp
  * - Long-press (images + videos): radial action wheel at the finger;
  *   videos offer Delete/Info/Share (no Crop).
  * - Tap an image (or swipe up): frosted action panel. It follows the Selection
- *   actions placement — a bottom-anchored side rail by default, or the bottom
+ *   actions placement — a floating side rail at ~3/4 height by default, or the bottom
  *   bar when that edge was chosen. Share is omitted entirely when the Allow
  *   sharing setting is off.
  * - Swipe down (at 1x / settled video): dismisses.
@@ -310,7 +308,7 @@ fun FullImageViewer(
     shareEnabled: Boolean = true,
     /** Edge the action panel uses: side rail or bottom bar. */
     actionPlacement: SelectionActionPlacement = SelectionActionPlacement.RIGHT,
-    /** View/play only: no action wheel, drawer, delete, share, info, crop or wallpaper. */
+    /** View/play only: no action wheel, action rail, delete, share, info, crop or wallpaper. */
     previewOnly: Boolean = false,
     pendingRemoval: MediaItem? = null,
     /** A file delete has been accepted but has not yet completed. */
@@ -414,7 +412,6 @@ fun FullImageViewer(
         }
     }
 
-    var drawerVisible by remember { mutableStateOf(false) }
     // Long-press radial menu: summoned at the finger and resolved in one motion.
     var radialPresent by remember { mutableStateOf(false) }
     var radialCenter by remember { mutableStateOf(Offset.Zero) }
@@ -434,10 +431,32 @@ fun FullImageViewer(
         imageHideJob.value?.cancel()
         imageHideJob.value = scope.launch {
             delay(3000L)
-            if (!drawerVisible) {
-                imageControlsVisible = false
-            }
+            imageControlsVisible = false
         }
+    }
+
+    // Tap toggles the whole chrome: top bar, action rail and system bars. This is
+    // the classic immersive viewer gesture; the rail is part of the chrome, not a
+    // modal panel, so there is nothing to open or dismiss separately.
+    var systemBarsHidden by remember { mutableStateOf(false) }
+    val toggleChrome = {
+        // The chrome also auto-hides after a few seconds, which leaves
+        // systemBarsHidden false but imageControlsVisible false. Treat either
+        // hidden state as "show everything" so the first tap after auto-hide
+        // brings the UI back instead of hiding it a second time.
+        val show = !imageControlsVisible || systemBarsHidden
+        if (show) {
+            systemBarsHidden = false
+            showImageControls()
+        } else {
+            systemBarsHidden = true
+            imageHideJob.value?.cancel()
+            imageControlsVisible = false
+        }
+    }
+    val showChrome = {
+        systemBarsHidden = false
+        showImageControls()
     }
 
     // True while the current video page is actively playing. While playing,
@@ -467,14 +486,7 @@ fun FullImageViewer(
     // on-screen back arrow. Composed after GalleryScreen's BackHandler, so this
     // one is the most recent and wins while the viewer is open. An open action
     // panel consumes back first.
-    BackHandler {
-        if (drawerVisible) {
-            drawerVisible = false
-            showImageControls()
-        } else {
-            close()
-        }
-    }
+    BackHandler { close() }
 
     val swipeThreshold = with(density) { 56.dp.toPx() }
     val currentIndex = pagerState.settledPage
@@ -491,10 +503,11 @@ fun FullImageViewer(
         attention?.setPlaying(videoPlaying)
     }
 
-    // System bars stay visible; the action panel is the tap affordance now. The
-    // panel itself is frosted over the photo, so the viewer still reads as a
-    // full-screen surface without hiding the status/navigation bars mid-morph.
+    // System bars: visible on open, then toggled with the rest of the viewer
+    // chrome. The insets guard keeps the layout still while the platform
+    // animates the bars away and back.
     val view = LocalView.current
+    val insetsGuard = LocalWindowInsetsGuard.current
     val window = remember(view) { view.context.findActivity()?.window }
     val barsController = remember(window, view) {
         window?.let { WindowInsetsControllerCompat(it, view) }
@@ -504,6 +517,16 @@ fun FullImageViewer(
             WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
         onDispose {
             barsController?.show(WindowInsetsCompat.Type.systemBars())
+            insetsGuard?.unfreeze()
+        }
+    }
+    LaunchedEffect(systemBarsHidden, barsController) {
+        if (systemBarsHidden) {
+            insetsGuard?.freeze(ViewCompat.getRootWindowInsets(view))
+            barsController?.hide(WindowInsetsCompat.Type.systemBars())
+        } else {
+            barsController?.show(WindowInsetsCompat.Type.systemBars())
+            insetsGuard?.unfreeze()
         }
     }
 
@@ -666,22 +689,21 @@ fun FullImageViewer(
                     onMultiTouchEnd = { multiTouchActive = false },
                 )
             }
-            // Vertical drags (at 1x): swipe up -> drawer, swipe down -> dismiss.
+            // Vertical drags (at 1x): swipe up -> reveal chrome, swipe down -> dismiss.
             // Abandoned the instant a second finger joins, so a pinch can't open the
-            // drawer. Re-armed (via key change) once the multi-touch gesture ends.
+            // chrome. Re-armed (via key change) once the multi-touch gesture ends.
             // Applies to images and videos alike: the video pill only covers the
             // bottom, so a swipe starting on the video surface reaches this
             // detector cleanly.
             .pointerInput(
                 currentPageZoomed,
-                drawerVisible,
                 radialPresent,
                 leaving,
                 multiTouchActive,
                 removing,
                 previewOnly,
             ) {
-                if (!currentPageZoomed && !drawerVisible && !radialPresent && !leaving &&
+                if (!currentPageZoomed && !radialPresent && !leaving &&
                     !multiTouchActive && !removing
                 ) {
                     detectVerticalSwipe(
@@ -689,7 +711,7 @@ fun FullImageViewer(
                         onSwipeUp = {
                             if (!previewOnly) {
                                 haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                                drawerVisible = true
+                                showChrome()
                             }
                         },
                         onSwipeDown = { close() },
@@ -702,8 +724,8 @@ fun FullImageViewer(
             // longer owns a long-press of its own, so this detector serves
             // images and videos alike; opening the wheel pauses video so the
             // action applies to a frozen frame (no auto-resume).
-            .pointerInput(drawerVisible, leaving, multiTouchActive, removing, previewOnly) {
-                if (previewOnly || drawerVisible || leaving || multiTouchActive || removing) {
+            .pointerInput(leaving, multiTouchActive, removing, previewOnly) {
+                if (previewOnly || leaving || multiTouchActive || removing) {
                     return@pointerInput
                 }
                 awaitEachGesture {
@@ -875,10 +897,7 @@ fun FullImageViewer(
                         onZoomedChange = { zoomed -> currentPageZoomed = zoomed },
                         // Skip the release that resolved a long-press radial action.
                         onTap = {
-                            if (!radialActive && !previewOnly) {
-                                showImageControls()
-                                drawerVisible = true
-                            }
+                            if (!radialActive && !previewOnly) toggleChrome()
                         },
                         multiTouchActive = multiTouchActive,
                         // Live entry/exit progress so the page morphs the grid tile's
@@ -990,42 +1009,22 @@ fun FullImageViewer(
             )
         }
 
-        // Frosted action panel: a side rail (or the bottom bar when the user
-        // chose that edge). The scrim fades on its own; only the panel slides.
+        // Frosted action chrome: a side rail (or bottom bar) that fades with the
+        // rest of the viewer UI. Tapping the photo hides/shows it with the top
+        // bar and system bars; there is no separate modal to dismiss.
         ActionPanel(
-            visible = drawerVisible && !previewOnly,
+            visible = (if (currentPageIsVideo) videoControlsVisible else imageControlsVisible) &&
+                !previewOnly,
             item = currentItem,
             placement = actionPlacement,
             shareEnabled = shareEnabled,
             hazeState = hazeState,
-            onClose = {
-                drawerVisible = false
-                showImageControls()
-            },
-            onDelete = {
-                drawerVisible = false
-                if (!deleteInProgress) currentItem?.let(onDelete)
-            },
-            onShare = {
-                drawerVisible = false
-                currentItem?.let(onShare)
-            },
-            onInfo = {
-                drawerVisible = false
-                currentItem?.let(onInfo)
-            },
-            onRename = {
-                drawerVisible = false
-                currentItem?.let(onRename)
-            },
-            onCrop = {
-                drawerVisible = false
-                currentItem?.let(onCrop)
-            },
-            onWallpaper = {
-                drawerVisible = false
-                currentItem?.let(onWallpaper)
-            },
+            onDelete = { if (!deleteInProgress) currentItem?.let(onDelete) },
+            onShare = { currentItem?.let(onShare) },
+            onInfo = { currentItem?.let(onInfo) },
+            onRename = { currentItem?.let(onRename) },
+            onCrop = { currentItem?.let(onCrop) },
+            onWallpaper = { currentItem?.let(onWallpaper) },
         )
     }
 }
@@ -1356,7 +1355,6 @@ private fun ActionPanel(
     placement: SelectionActionPlacement,
     shareEnabled: Boolean,
     hazeState: HazeState,
-    onClose: () -> Unit,
     onDelete: () -> Unit,
     onShare: () -> Unit,
     onInfo: () -> Unit,
@@ -1365,45 +1363,17 @@ private fun ActionPanel(
     onWallpaper: () -> Unit,
 ) {
     val target = item ?: return
-    // The viewer reuses the multi-select placement: a right/left side rail by
-    // default, or the bottom bar when that edge was chosen (also what short
-    // windows fall back to, so a six-action rail never overflows).
     val side = if (placement == SelectionActionPlacement.LEFT) {
         SelectionActionPlacement.LEFT
     } else {
         SelectionActionPlacement.RIGHT
     }
-    Box(modifier = Modifier.fillMaxSize()) {
-        // Backdrop: a light fade only, so the frosted panel stays the focus.
-        AnimatedVisibility(
-            visible = visible,
-            enter = fadeIn(tween(180)),
-            exit = fadeOut(tween(140)),
-            modifier = Modifier.fillMaxSize(),
-        ) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(AmoledBlack.copy(alpha = 0.12f))
-                    .clickable(
-                        onClick = onClose,
-                        indication = null,
-                        interactionSource = null,
-                    ),
-            )
-        }
-
+    BoxWithConstraints(Modifier.fillMaxSize()) {
         if (placement == SelectionActionPlacement.BOTTOM) {
             AnimatedVisibility(
                 visible = visible,
-                enter = slideInVertically(
-                    initialOffsetY = { it },
-                    animationSpec = tween(260, easing = FastOutSlowInEasing),
-                ) + fadeIn(tween(180)),
-                exit = slideOutVertically(
-                    targetOffsetY = { it },
-                    animationSpec = tween(200, easing = FastOutSlowInEasing),
-                ) + fadeOut(tween(140)),
+                enter = fadeIn(tween(200)),
+                exit = fadeOut(tween(200)),
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .fillMaxWidth(),
@@ -1421,25 +1391,26 @@ private fun ActionPanel(
                 )
             }
         } else {
+            // Float the rail at the 3/4 mark rather than hugging the bottom:
+            // its bottom sits a quarter-screen up, leaving the nav area clear and
+            // keeping the actions in the thumb's comfortable lower-right arc.
+            val bottomInset = maxHeight * 0.25f + 12.dp
             AnimatedVisibility(
                 visible = visible,
-                enter = slideInHorizontally(
-                    initialOffsetX = { if (side == SelectionActionPlacement.LEFT) -it else it },
-                    animationSpec = tween(240, easing = FastOutSlowInEasing),
-                ) + fadeIn(tween(160)),
-                exit = slideOutHorizontally(
-                    targetOffsetX = { if (side == SelectionActionPlacement.LEFT) -it else it },
-                    animationSpec = tween(190, easing = FastOutSlowInEasing),
-                ) + fadeOut(tween(130)),
-                modifier = Modifier.align(
-                    // Absolute (not Start/End) so the rail stays on the physical
-                    // side the user picked even under an RTL layout.
-                    if (side == SelectionActionPlacement.LEFT) {
-                        AbsoluteAlignment.BottomLeft
-                    } else {
-                        AbsoluteAlignment.BottomRight
-                    },
-                ),
+                enter = fadeIn(tween(200)),
+                exit = fadeOut(tween(200)),
+                modifier = Modifier
+                    .align(
+                        // Absolute (not Start/End) so the rail stays on the
+                        // physical side the user picked even under RTL.
+                        if (side == SelectionActionPlacement.LEFT) {
+                            AbsoluteAlignment.BottomLeft
+                        } else {
+                            AbsoluteAlignment.BottomRight
+                        },
+                    )
+                    .padding(horizontal = 12.dp)
+                    .padding(bottom = bottomInset),
             ) {
                 SideActionRail(
                     target = target,
@@ -1536,8 +1507,6 @@ private fun SideActionRail(
 ) {
     Column(
         modifier = Modifier
-            .navigationBarsPadding()
-            .padding(12.dp)
             .width(SelectionRailWidth)
             .clip(RailShape)
             .hazeEffect(state = hazeState, style = ActionSheetHazeStyle)
@@ -1546,8 +1515,8 @@ private fun SideActionRail(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(2.dp),
     ) {
-        // Destructive action at the top: the rail is bottom-anchored, so the
-        // least reachable slot is also the one that needs the most intent.
+        // Destructive action at the top: the rail floats in the lower-right, so
+        // the least reachable slot is also the one that needs the most intent.
         RailAction(
             Icons.Outlined.Delete,
             stringResource(R.string.action_delete),

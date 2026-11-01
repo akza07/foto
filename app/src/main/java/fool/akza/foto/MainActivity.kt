@@ -7,26 +7,34 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.view.Display
+import android.view.ViewGroup
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.tooling.preview.Preview
+import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import fool.akza.foto.data.GalleryEvents
 import fool.akza.foto.data.SettingsRepository
 import fool.akza.foto.data.thumbnails.SyncCoordinator
 import fool.akza.foto.data.thumbnails.ThumbCache
 import fool.akza.foto.ui.GalleryScreen
+import fool.akza.foto.ui.LocalWindowInsetsGuard
 import fool.akza.foto.ui.PermissionGate
+import fool.akza.foto.ui.WindowInsetsGuard
 import fool.akza.foto.ui.theme.FotoTheme
 import kotlinx.coroutines.flow.MutableStateFlow
 
 class MainActivity : ComponentActivity() {
     private lateinit var syncCoordinator: SyncCoordinator
+
+    /** Pins the bar insets while the full-screen viewer runs immersive. */
+    private val insetsGuard = WindowInsetsGuard()
 
     /** A media Uri handed to us by another app (VIEW/SEND), consumed by the UI. */
     private val pendingOpenUri = MutableStateFlow<Uri?>(null)
@@ -79,12 +87,24 @@ class MainActivity : ComponentActivity() {
                 }
             }
 
-            FotoTheme {
-                PermissionGate(
-                    preferHighRefreshRate = preferHighRefreshRate,
-                    openUri = openUri,
-                    onOpenUriHandled = { pendingOpenUri.value = null },
-                )
+            CompositionLocalProvider(LocalWindowInsetsGuard provides insetsGuard) {
+                FotoTheme {
+                    PermissionGate(
+                        preferHighRefreshRate = preferHighRefreshRate,
+                        openUri = openUri,
+                        onOpenUriHandled = { pendingOpenUri.value = null },
+                    )
+                }
+            }
+        }
+
+        // Report the window's bar insets to the guard. Hiding the system bars
+        // animates the real insets to zero; the guard substitutes the pre-hide
+        // values while the viewer is open so nothing in the layout moves.
+        findViewById<ViewGroup>(android.R.id.content)?.let { content ->
+            ViewCompat.setOnApplyWindowInsetsListener(content) { _, insets ->
+                insetsGuard.record(insets)
+                insetsGuard.apply(insets)
             }
         }
 

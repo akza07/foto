@@ -158,18 +158,18 @@ edge-to-edge rendering.
 - **Long-press (images):** a **radial menu** appears at your finger — keep holding
   and slide to Delete / Info / Share / Crop, then release to run it
   (release in the centre to cancel). One gesture, no button to find.
-  Wallpaper is not on the wheel; it stays in the action panel.
-- **Tap the photo (or swipe up):** opens the frosted action panel. It sits on
-  the edge chosen under Settings → Display → Action panel edge (right side by
-  default), so the actions stay inside one-handed reach.
+  Wallpaper is not on the wheel; it stays in the action rail.
+- **Tap the photo:** hides or shows all viewer UI — top bar, frosted side action
+  rail and system bars. **Swipe up** shows the UI again when it is hidden.
 - **Swipe down (at 1×):** dismisses the viewer.
 - **Zoomed panning:** 1:1 while dragging, then a low-friction **momentum glide**
   on release, clamped to the image bounds.
-- **Viewer chrome:** the top controls auto-hide after a few seconds; the system bars stay visible. Tapping the photo brings the action panel back.
+- **Viewer chrome:** tapping the photo toggles the top controls, side action rail and system bars together; the chrome also auto-hides after a few seconds.
 - **Top-left:** back button + counter pill (`3/12`).
-- **Action panel:** Delete (red), Share, Info, Rename, Crop, Wallpaper (Rename
-  works for videos too). On the default side rail, Delete sits at the top away
-  from the thumb; the bottom-bar layout keeps its original order.
+- **Action rail:** Delete (red), Share, Info, Rename, Crop, Wallpaper (Rename
+  works for videos too). It floats on the right at about the 3/4 mark (edge
+  chosen under Settings → Display → Action panel edge), with Delete at the top
+  away from the thumb; choosing Bottom keeps the full-width bottom bar instead.
   - **Rename:** edits the file name while keeping the original extension. MediaStore
     files rename through the provider (a one-time system write-consent prompt for
     files Foto doesn't own); SAF documents use their folder grant. The viewer, the
@@ -183,7 +183,7 @@ edge-to-edge rendering.
     bytes into an app-private trash. Both kinds show an **Undo** bar and appear in
     **Settings → Storage → Trash** with restore and permanent delete.
   - **Share:** `ACTION_SEND` chooser with URI grant. Share actions are removed
-    from the viewer wheel and action panel when *Settings →
+    from the viewer wheel and action rail when *Settings →
     Privacy → Allow sharing* is off. With *Remove metadata when sharing photos*
     on (the default), each image is rewritten into the app cache without
     EXIF/GPS/XMP/PNG text/GIF comments and handed out through a `FileProvider`;
@@ -251,8 +251,8 @@ edge-to-edge rendering.
   video from the start instead of stopping at the end (`Player.REPEAT_MODE_ONE`).
   Off by default.
 - **Video pages disable the image-only gestures** (user decision): no
-  swipe-down dismiss, no tap/swipe-up action panel, no pinch/double-tap zoom. Exit via the
-  back button, or swipe to an adjacent page while paused.
+  pinch/double-tap zoom. Tap to show/hide the video HUD and action rail; exit via
+  the back button, swipe down, or swipe to an adjacent page while paused.
 - Unsupported codecs → clean shadcn error state (no crash).
 
 ### 5.4.2 Multi-select
@@ -303,7 +303,7 @@ edge-to-edge rendering.
     - **Manage folders** → a **Folders** sub-screen (slide transition, its own back
       handling) with the directory list and **Add directory**.
   - **Privacy** — *Allow sharing* (on by default): shows Share in the viewer
-    wheel, action panel and multi-select bar. Turn it off to remove every media
+    wheel, action rail and multi-select bar. Turn it off to remove every media
     share entry point. *Remove metadata when sharing photos* (on by default):
     shared photos are re-saved without EXIF, GPS, XMP, PNG text or GIF comments,
     with rotation baked into the pixels (and large photos sampled down if a full

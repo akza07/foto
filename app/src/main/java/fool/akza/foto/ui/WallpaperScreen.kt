@@ -574,8 +574,8 @@ private fun FullscreenPreview(
     val image = remember(bitmap) { bitmap.asImageBitmap() }
     BackHandler { onDismiss() }
 
-    // The viewer keeps the system bars visible, so the preview only removes
-    // Foto's own chrome and must not toggle the bars itself.
+    // The preview only removes Foto's own chrome; the viewer owns the system
+    // bars, so the preview must not toggle them itself.
 
     Box(
         modifier = Modifier
