@@ -158,15 +158,18 @@ edge-to-edge rendering.
 - **Long-press (images):** a **radial menu** appears at your finger — keep holding
   and slide to Delete / Info / Share / Crop, then release to run it
   (release in the centre to cancel). One gesture, no button to find.
-  Wallpaper is not on the wheel; it stays in the bottom drawer.
-- **Swipe up:** opens the bottom action drawer.
+  Wallpaper is not on the wheel; it stays in the action panel.
+- **Tap the photo (or swipe up):** opens the frosted action panel. It sits on
+  the edge chosen under Settings → Display → Action panel edge (right side by
+  default), so the actions stay inside one-handed reach.
 - **Swipe down (at 1×):** dismisses the viewer.
 - **Zoomed panning:** 1:1 while dragging, then a low-friction **momentum glide**
   on release, clamped to the image bounds.
-- **Immersive viewer:** the status and navigation bars are hidden while an image or video is open (swipe from an edge reveals them transiently) and come back when the viewer closes.
+- **Viewer chrome:** the top controls auto-hide after a few seconds; the system bars stay visible. Tapping the photo brings the action panel back.
 - **Top-left:** back button + counter pill (`3/12`).
-- **Drawer actions:** Delete (red), Share, Info, Rename, Crop, Wallpaper (Rename
-  works for videos too).
+- **Action panel:** Delete (red), Share, Info, Rename, Crop, Wallpaper (Rename
+  works for videos too). On the default side rail, Delete sits at the top away
+  from the thumb; the bottom-bar layout keeps its original order.
   - **Rename:** edits the file name while keeping the original extension. MediaStore
     files rename through the provider (a one-time system write-consent prompt for
     files Foto doesn't own); SAF documents use their folder grant. The viewer, the
@@ -180,7 +183,7 @@ edge-to-edge rendering.
     bytes into an app-private trash. Both kinds show an **Undo** bar and appear in
     **Settings → Storage → Trash** with restore and permanent delete.
   - **Share:** `ACTION_SEND` chooser with URI grant. Share actions are removed
-    from the viewer wheel, action sheet and selection bar when *Settings →
+    from the viewer wheel and action panel when *Settings →
     Privacy → Allow sharing* is off. With *Remove metadata when sharing photos*
     on (the default), each image is rewritten into the app cache without
     EXIF/GPS/XMP/PNG text/GIF comments and handed out through a `FileProvider`;
@@ -196,8 +199,7 @@ edge-to-edge rendering.
   - **Wallpaper:** full-screen picker whose device-shaped preview is the crop
     itself (portrait or landscape frame matching the screen), with Lock / Home
     targets, pinch/drag repositioning, animated frame/tab transitions, and a
-    Preview action that drops all chrome and the system bars to show the wallpaper
-    edge to edge. Nothing is written to
+    Preview action that drops all app chrome to show the wallpaper edge to edge. Nothing is written to
     storage: the crop goes straight to the system wallpaper service
     (`WallpaperManager.setBitmap`) at display resolution, so the original is
     untouched.
@@ -249,7 +251,7 @@ edge-to-edge rendering.
   video from the start instead of stopping at the end (`Player.REPEAT_MODE_ONE`).
   Off by default.
 - **Video pages disable the image-only gestures** (user decision): no
-  swipe-down dismiss, no swipe-up drawer, no pinch/double-tap zoom. Exit via the
+  swipe-down dismiss, no tap/swipe-up action panel, no pinch/double-tap zoom. Exit via the
   back button, or swipe to an adjacent page while paused.
 - Unsupported codecs → clean shadcn error state (no crash).
 
@@ -258,7 +260,7 @@ edge-to-edge rendering.
   the header offers **Select all** and the live count, and a compact floating
   action bar provides **Delete / Copy / Move / Share** across the selection
   (folders expand to their contents). The bar sits on the right side by default
-  so it stays under the thumb one-handed; Settings → Display → Selection actions
+  so it stays under the thumb one-handed; Settings → Display → Action panel edge
   can move it to the left side or back to a full-width bottom bar, and windows
   shorter than 600dp (landscape phones) keep the bottom bar. Copy/Move use the
   system directory picker (SAF). Deleting always shows an in-app confirmation
@@ -301,7 +303,7 @@ edge-to-edge rendering.
     - **Manage folders** → a **Folders** sub-screen (slide transition, its own back
       handling) with the directory list and **Add directory**.
   - **Privacy** — *Allow sharing* (on by default): shows Share in the viewer
-    wheel, action sheet and multi-select bar. Turn it off to remove every media
+    wheel, action panel and multi-select bar. Turn it off to remove every media
     share entry point. *Remove metadata when sharing photos* (on by default):
     shared photos are re-saved without EXIF, GPS, XMP, PNG text or GIF comments,
     with rotation baked into the pixels (and large photos sampled down if a full

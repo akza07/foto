@@ -574,10 +574,8 @@ private fun FullscreenPreview(
     val image = remember(bitmap) { bitmap.asImageBitmap() }
     BackHandler { onDismiss() }
 
-    // The viewer underneath already runs the app in immersive mode (system bars
-    // hidden) for as long as it is open, so the preview inherits that and must
-    // not touch the bars itself: re-showing them on dismiss would flash them
-    // over the still-open viewer.
+    // The viewer keeps the system bars visible, so the preview only removes
+    // Foto's own chrome and must not toggle the bars itself.
 
     Box(
         modifier = Modifier

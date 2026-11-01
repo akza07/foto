@@ -14,10 +14,13 @@ import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.gestures.awaitEachGesture
@@ -38,6 +41,7 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
@@ -63,6 +67,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.AbsoluteAlignment
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.BlurredEdgeTreatment
@@ -73,6 +78,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -90,21 +96,29 @@ import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.util.lerp
-import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.compose.LifecycleStartEffect
 import coil3.compose.AsyncImage
 import coil3.request.ImageRequest
+import dev.chrisbanes.haze.HazeState
+import dev.chrisbanes.haze.HazeStyle
+import dev.chrisbanes.haze.HazeTint
+import dev.chrisbanes.haze.hazeEffect
+import dev.chrisbanes.haze.hazeSource
+import dev.chrisbanes.haze.rememberHazeState
 import fool.akza.foto.R
 import fool.akza.foto.data.MediaItem
+import fool.akza.foto.data.SelectionActionPlacement
 import fool.akza.foto.ui.theme.AmoledBlack
+import fool.akza.foto.ui.theme.Border
 import fool.akza.foto.ui.theme.DeleteRed
 import fool.akza.foto.ui.theme.Surface as ThemeSurface
 import fool.akza.foto.ui.theme.TextMuted
@@ -114,6 +128,24 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 private val SheetRadius = RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp)
+private val RailShape = RoundedCornerShape(16.dp)
+
+/**
+ * Frosted glass for the viewer's action sheet. The blur is deliberately much
+ * stronger than the app bars (18dp) so the photo stays recognisable through the
+ * controls instead of turning into a dark slab.
+ */
+private val ActionSheetHazeStyle = HazeStyle(
+    blurRadius = 50.dp,
+    tints = listOf(HazeTint(AmoledBlack.copy(alpha = 0.18f))),
+)
+
+/** Keeps white labels readable over a bright, strongly blurred photo. */
+private val ActionLabelShadow = Shadow(
+    color = AmoledBlack.copy(alpha = 0.9f),
+    offset = Offset(0f, 1f),
+    blurRadius = 3f,
+)
 
 /** Attention sampling cadence; small enough for 1s rules, cheap on the frame budget. */
 private const val SAMPLE_INTERVAL_MS = 250L
@@ -251,9 +283,11 @@ private suspend fun AwaitPointerEventScope.drainUntilUp(pointerId: androidx.comp
  * - Images: double-tap zoom, pinch zoom/pan. While two fingers are down,
  *   single-finger gestures yield to pinch-zoom.
  * - Long-press (images + videos): radial action wheel at the finger;
- *   videos offer Delete/Info/Share (no Crop); Wallpaper is only in the bottom
- *   action sheet. Swipe up: bottom action sheet. Share is omitted entirely when
- *   the Allow sharing setting is off.
+ *   videos offer Delete/Info/Share (no Crop).
+ * - Tap an image (or swipe up): frosted action panel. It follows the Selection
+ *   actions placement — a bottom-anchored side rail by default, or the bottom
+ *   bar when that edge was chosen. Share is omitted entirely when the Allow
+ *   sharing setting is off.
  * - Swipe down (at 1x / settled video): dismisses.
  * - Counter pill (top-left): current/total.
  * - Back button (top-left): dismisses.
@@ -272,8 +306,10 @@ fun FullImageViewer(
     onCrop: (MediaItem) -> Unit,
     onWallpaper: (MediaItem) -> Unit,
     loopVideos: Boolean = false,
-    /** Whether the wheel and action sheet offer Share. */
+    /** Whether the wheel and action panel offer Share. */
     shareEnabled: Boolean = true,
+    /** Edge the action panel uses: side rail or bottom bar. */
+    actionPlacement: SelectionActionPlacement = SelectionActionPlacement.RIGHT,
     /** View/play only: no action wheel, drawer, delete, share, info, crop or wallpaper. */
     previewOnly: Boolean = false,
     pendingRemoval: MediaItem? = null,
@@ -288,6 +324,9 @@ fun FullImageViewer(
     val density = LocalDensity.current
     val haptics = LocalHapticFeedback.current
     val context = LocalContext.current
+    // Shared backdrop source for the frosted action panel. The pager is the
+    // source; the rail/bar samples it through a strong blur when open.
+    val hazeState = rememberHazeState()
 
     // Viewing-attention tracking for Insights. Read-only previews (Trash) are
     // excluded so opening a trashed item never counts as watching it.
@@ -401,21 +440,6 @@ fun FullImageViewer(
         }
     }
 
-    fun hideImageControls() {
-        imageHideJob.value?.cancel()
-        imageControlsVisible = false
-    }
-
-    // System bars start visible: hiding them during the entry morph made the
-    // status bar slide away mid-zoom, which read as a glitch. A tap on the photo
-    // now owns the immersive toggle instead.
-    var systemBarsHidden by remember { mutableStateOf(false) }
-    val toggleImmersive = {
-        val show = systemBarsHidden
-        systemBarsHidden = !show
-        if (show) showImageControls() else hideImageControls()
-    }
-
     // True while the current video page is actively playing. While playing,
     // pager swiping is locked so a swipe can never skip to the next item;
     // pausing re-enables it (user decision: swipe navigates only when paused).
@@ -442,9 +466,14 @@ fun FullImageViewer(
     // System back (button / gesture) must run the same animated scale-out as the
     // on-screen back arrow. Composed after GalleryScreen's BackHandler, so this
     // one is the most recent and wins while the viewer is open. An open action
-    // sheet consumes back first.
+    // panel consumes back first.
     BackHandler {
-        if (drawerVisible) drawerVisible = false else close()
+        if (drawerVisible) {
+            drawerVisible = false
+            showImageControls()
+        } else {
+            close()
+        }
     }
 
     val swipeThreshold = with(density) { 56.dp.toPx() }
@@ -462,11 +491,10 @@ fun FullImageViewer(
         attention?.setPlaying(videoPlaying)
     }
 
-    // System bars: visible on open, then toggled explicitly by the user. The
-    // insets guard is only frozen while the bars are hidden, so the grid does
-    // not reflow mid-morph but the entry starts in a completely stable layout.
+    // System bars stay visible; the action panel is the tap affordance now. The
+    // panel itself is frosted over the photo, so the viewer still reads as a
+    // full-screen surface without hiding the status/navigation bars mid-morph.
     val view = LocalView.current
-    val insetsGuard = LocalWindowInsetsGuard.current
     val window = remember(view) { view.context.findActivity()?.window }
     val barsController = remember(window, view) {
         window?.let { WindowInsetsControllerCompat(it, view) }
@@ -476,16 +504,6 @@ fun FullImageViewer(
             WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
         onDispose {
             barsController?.show(WindowInsetsCompat.Type.systemBars())
-            insetsGuard?.unfreeze()
-        }
-    }
-    LaunchedEffect(systemBarsHidden, barsController) {
-        if (systemBarsHidden) {
-            insetsGuard?.freeze(ViewCompat.getRootWindowInsets(view))
-            barsController?.hide(WindowInsetsCompat.Type.systemBars())
-        } else {
-            barsController?.show(WindowInsetsCompat.Type.systemBars())
-            insetsGuard?.unfreeze()
         }
     }
 
@@ -590,7 +608,8 @@ fun FullImageViewer(
 
     // Maps a radial-menu choice onto the viewer's action callbacks.
     // Videos have no Crop sector, so a stale hover on a video page is a no-op.
-    // Wallpaper is deliberately not part of the wheel; it stays in ActionSheet.
+    // Wallpaper is deliberately not part of the wheel; it stays in the action
+    // rail/panel.
     val onRadialAction: (ViewerAction) -> Unit = { action ->
         currentItem?.let { item ->
             when (action) {
@@ -771,6 +790,8 @@ fun FullImageViewer(
                         radius = (RADIAL_BLUR_DP * radialProgress.value).dp,
                         edgeTreatment = BlurredEdgeTreatment.Unbounded,
                     )
+                    // The action panel samples this layer for its frosted glass.
+                    .hazeSource(state = hazeState)
                     // No backdrop of its own: the host's fading black layer is the
                     // single source of black, so page gaps and letterboxes stay
                     // covered while settled and fade away cleanly on exit.
@@ -853,7 +874,12 @@ fun FullImageViewer(
                         sourceRect = transitionRect,
                         onZoomedChange = { zoomed -> currentPageZoomed = zoomed },
                         // Skip the release that resolved a long-press radial action.
-                        onTap = { if (!radialActive) toggleImmersive() },
+                        onTap = {
+                            if (!radialActive && !previewOnly) {
+                                showImageControls()
+                                drawerVisible = true
+                            }
+                        },
                         multiTouchActive = multiTouchActive,
                         // Live entry/exit progress so the page morphs the grid tile's
                         // square crop into the full-resolution image and back on
@@ -964,14 +990,18 @@ fun FullImageViewer(
             )
         }
 
-        // Sliding bottom action drawer. The full-screen scrim fades on its own;
-        // only the sheet slides, so opening the drawer never looks like a second
-        // black page sliding over the viewer.
-        ActionSheet(
+        // Frosted action panel: a side rail (or the bottom bar when the user
+        // chose that edge). The scrim fades on its own; only the panel slides.
+        ActionPanel(
             visible = drawerVisible && !previewOnly,
             item = currentItem,
+            placement = actionPlacement,
             shareEnabled = shareEnabled,
-            onCloseDrawer = { drawerVisible = false },
+            hazeState = hazeState,
+            onClose = {
+                drawerVisible = false
+                showImageControls()
+            },
             onDelete = {
                 drawerVisible = false
                 if (!deleteInProgress) currentItem?.let(onDelete)
@@ -1320,11 +1350,13 @@ private fun ZoomableImage(
 }
 
 @Composable
-private fun ActionSheet(
+private fun ActionPanel(
     visible: Boolean,
     item: MediaItem?,
+    placement: SelectionActionPlacement,
     shareEnabled: Boolean,
-    onCloseDrawer: () -> Unit,
+    hazeState: HazeState,
+    onClose: () -> Unit,
     onDelete: () -> Unit,
     onShare: () -> Unit,
     onInfo: () -> Unit,
@@ -1333,9 +1365,16 @@ private fun ActionSheet(
     onWallpaper: () -> Unit,
 ) {
     val target = item ?: return
+    // The viewer reuses the multi-select placement: a right/left side rail by
+    // default, or the bottom bar when that edge was chosen (also what short
+    // windows fall back to, so a six-action rail never overflows).
+    val side = if (placement == SelectionActionPlacement.LEFT) {
+        SelectionActionPlacement.LEFT
+    } else {
+        SelectionActionPlacement.RIGHT
+    }
     Box(modifier = Modifier.fillMaxSize()) {
-        // Backdrop: a full-screen fade only. It must never be part of the
-        // sheet's slide, otherwise the tint reads as a page sliding up.
+        // Backdrop: a light fade only, so the frosted panel stays the focus.
         AnimatedVisibility(
             visible = visible,
             enter = fadeIn(tween(180)),
@@ -1345,80 +1384,236 @@ private fun ActionSheet(
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(AmoledBlack.copy(alpha = 0.55f))
+                    .background(AmoledBlack.copy(alpha = 0.12f))
                     .clickable(
-                        onClick = onCloseDrawer,
+                        onClick = onClose,
                         indication = null,
                         interactionSource = null,
                     ),
             )
         }
 
-        AnimatedVisibility(
-            visible = visible,
-            enter = slideInVertically(
-                initialOffsetY = { it },
-                animationSpec = tween(260, easing = FastOutSlowInEasing),
-            ) + fadeIn(tween(180)),
-            exit = slideOutVertically(
-                targetOffsetY = { it },
-                animationSpec = tween(200, easing = FastOutSlowInEasing),
-            ) + fadeOut(tween(140)),
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .fillMaxWidth(),
-        ) {
-            Surface(
-                modifier = Modifier.fillMaxWidth(),
-                shape = SheetRadius,
-                color = ThemeSurface,
-                shadowElevation = 0.dp,
+        if (placement == SelectionActionPlacement.BOTTOM) {
+            AnimatedVisibility(
+                visible = visible,
+                enter = slideInVertically(
+                    initialOffsetY = { it },
+                    animationSpec = tween(260, easing = FastOutSlowInEasing),
+                ) + fadeIn(tween(180)),
+                exit = slideOutVertically(
+                    targetOffsetY = { it },
+                    animationSpec = tween(200, easing = FastOutSlowInEasing),
+                ) + fadeOut(tween(140)),
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth(),
             ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .navigationBarsPadding()
-                        .padding(top = 12.dp, bottom = 24.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                ) {
-                    // Drag handle.
-                    Box(
-                        modifier = Modifier
-                            .size(width = 40.dp, height = 4.dp)
-                            .clip(RoundedCornerShape(2.dp))
-                            .background(TextMuted.copy(alpha = 0.4f)),
-                    )
-                    Spacer(Modifier.height(20.dp))
+                BottomActionPanel(
+                    target = target,
+                    shareEnabled = shareEnabled,
+                    hazeState = hazeState,
+                    onDelete = onDelete,
+                    onShare = onShare,
+                    onInfo = onInfo,
+                    onRename = onRename,
+                    onCrop = onCrop,
+                    onWallpaper = onWallpaper,
+                )
+            }
+        } else {
+            AnimatedVisibility(
+                visible = visible,
+                enter = slideInHorizontally(
+                    initialOffsetX = { if (side == SelectionActionPlacement.LEFT) -it else it },
+                    animationSpec = tween(240, easing = FastOutSlowInEasing),
+                ) + fadeIn(tween(160)),
+                exit = slideOutHorizontally(
+                    targetOffsetX = { if (side == SelectionActionPlacement.LEFT) -it else it },
+                    animationSpec = tween(190, easing = FastOutSlowInEasing),
+                ) + fadeOut(tween(130)),
+                modifier = Modifier.align(
+                    // Absolute (not Start/End) so the rail stays on the physical
+                    // side the user picked even under an RTL layout.
+                    if (side == SelectionActionPlacement.LEFT) {
+                        AbsoluteAlignment.BottomLeft
+                    } else {
+                        AbsoluteAlignment.BottomRight
+                    },
+                ),
+            ) {
+                SideActionRail(
+                    target = target,
+                    shareEnabled = shareEnabled,
+                    hazeState = hazeState,
+                    onDelete = onDelete,
+                    onShare = onShare,
+                    onInfo = onInfo,
+                    onRename = onRename,
+                    onCrop = onCrop,
+                    onWallpaper = onWallpaper,
+                )
+            }
+        }
+    }
+}
 
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceEvenly,
-                    ) {
-                        if (shareEnabled) {
-                            ActionItem(
-                                Icons.Outlined.Share,
-                                stringResource(R.string.action_share),
-                                TextPrimary,
-                                onShare,
-                            )
-                        }
-                        ActionItem(Icons.Outlined.Info, stringResource(R.string.info_title), TextPrimary, onInfo)
-                        ActionItem(Icons.Outlined.Edit, stringResource(R.string.action_rename), TextPrimary, onRename)
-                        ActionItem(Icons.Outlined.Delete, stringResource(R.string.action_delete), DeleteRed, onDelete)
-                        // Videos have no crop or wallpaper actions.
-                        if (!target.isVideo) {
-                            ActionItem(Icons.Outlined.Crop, stringResource(R.string.action_crop), TextPrimary, onCrop)
-                            ActionItem(
-                                Icons.Outlined.Wallpaper,
-                                stringResource(R.string.action_wallpaper),
-                                TextPrimary,
-                                onWallpaper,
-                            )
-                        }
-                    }
+@Composable
+private fun BottomActionPanel(
+    target: MediaItem,
+    shareEnabled: Boolean,
+    hazeState: HazeState,
+    onDelete: () -> Unit,
+    onShare: () -> Unit,
+    onInfo: () -> Unit,
+    onRename: () -> Unit,
+    onCrop: () -> Unit,
+    onWallpaper: () -> Unit,
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(SheetRadius)
+            .hazeEffect(state = hazeState, style = ActionSheetHazeStyle)
+            .border(1.dp, Border.copy(alpha = 0.45f), SheetRadius),
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .navigationBarsPadding()
+                .padding(top = 12.dp, bottom = 24.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            // Drag handle.
+            Box(
+                modifier = Modifier
+                    .size(width = 40.dp, height = 4.dp)
+                    .clip(RoundedCornerShape(2.dp))
+                    .background(TextPrimary.copy(alpha = 0.4f)),
+            )
+            Spacer(Modifier.height(20.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceEvenly,
+            ) {
+                if (shareEnabled) {
+                    ActionItem(
+                        Icons.Outlined.Share,
+                        stringResource(R.string.action_share),
+                        TextPrimary,
+                        onShare,
+                    )
+                }
+                ActionItem(Icons.Outlined.Info, stringResource(R.string.info_title), TextPrimary, onInfo)
+                ActionItem(Icons.Outlined.Edit, stringResource(R.string.action_rename), TextPrimary, onRename)
+                ActionItem(Icons.Outlined.Delete, stringResource(R.string.action_delete), DeleteRed, onDelete)
+                // Videos have no crop or wallpaper actions.
+                if (!target.isVideo) {
+                    ActionItem(Icons.Outlined.Crop, stringResource(R.string.action_crop), TextPrimary, onCrop)
+                    ActionItem(
+                        Icons.Outlined.Wallpaper,
+                        stringResource(R.string.action_wallpaper),
+                        TextPrimary,
+                        onWallpaper,
+                    )
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun SideActionRail(
+    target: MediaItem,
+    shareEnabled: Boolean,
+    hazeState: HazeState,
+    onDelete: () -> Unit,
+    onShare: () -> Unit,
+    onInfo: () -> Unit,
+    onRename: () -> Unit,
+    onCrop: () -> Unit,
+    onWallpaper: () -> Unit,
+) {
+    Column(
+        modifier = Modifier
+            .navigationBarsPadding()
+            .padding(12.dp)
+            .width(SelectionRailWidth)
+            .clip(RailShape)
+            .hazeEffect(state = hazeState, style = ActionSheetHazeStyle)
+            .border(1.dp, Border.copy(alpha = 0.45f), RailShape)
+            .padding(vertical = 6.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(2.dp),
+    ) {
+        // Destructive action at the top: the rail is bottom-anchored, so the
+        // least reachable slot is also the one that needs the most intent.
+        RailAction(
+            Icons.Outlined.Delete,
+            stringResource(R.string.action_delete),
+            DeleteRed,
+            onDelete,
+        )
+        if (shareEnabled) {
+            RailAction(
+                Icons.Outlined.Share,
+                stringResource(R.string.action_share),
+                TextPrimary,
+                onShare,
+            )
+        }
+        RailAction(Icons.Outlined.Info, stringResource(R.string.info_title), TextPrimary, onInfo)
+        RailAction(Icons.Outlined.Edit, stringResource(R.string.action_rename), TextPrimary, onRename)
+        if (!target.isVideo) {
+            RailAction(Icons.Outlined.Crop, stringResource(R.string.action_crop), TextPrimary, onCrop)
+            RailAction(
+                Icons.Outlined.Wallpaper,
+                stringResource(R.string.action_wallpaper),
+                TextPrimary,
+                onWallpaper,
+            )
+        }
+    }
+}
+
+@Composable
+private fun RailAction(
+    icon: ImageVector,
+    label: String,
+    color: Color,
+    onClick: () -> Unit,
+) {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .clickable(role = Role.Button, onClick = onClick)
+            .padding(horizontal = 4.dp, vertical = 8.dp),
+    ) {
+        Box(
+            modifier = Modifier
+                .size(32.dp)
+                .clip(CircleShape)
+                .background(AmoledBlack.copy(alpha = 0.24f)),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = label,
+                tint = color,
+                modifier = Modifier.size(20.dp),
+            )
+        }
+        Spacer(Modifier.height(3.dp))
+        Text(
+            text = label,
+            color = TextPrimary,
+            fontSize = 11.sp,
+            fontWeight = FontWeight.Medium,
+            maxLines = 1,
+            style = TextStyle(shadow = ActionLabelShadow),
+        )
     }
 }
 
@@ -1448,7 +1643,13 @@ private fun ActionItem(
             )
         }
         Spacer(Modifier.height(6.dp))
-        Text(label, color = TextPrimary, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+        Text(
+            label,
+            color = TextPrimary,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Medium,
+            style = TextStyle(shadow = ActionLabelShadow),
+        )
     }
 }
 

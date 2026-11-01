@@ -1570,6 +1570,7 @@ fun GalleryScreen(
                 onWallpaper = { item -> wallpaperItem = item },
                 loopVideos = appSettings.loopVideos,
                 shareEnabled = appSettings.allowSharing,
+                actionPlacement = selectionPlacement,
             )
 
             // Crop is a full-screen editor layered above the viewer. Saving writes
