@@ -46,16 +46,13 @@ internal object MetadataReader {
         uri: Uri,
         mimeType: String?,
     ): List<MetadataSection> {
-        val exif = context.contentResolver.openInputStream(originalUri(context, uri))
-            ?.use { ExifInterface(it) }
+        val exif = openImage(context, uri)?.use { ExifInterface(it) }
         val sections = exif?.let(::exifSections).orEmpty().toMutableList()
         // PNG keeps its descriptive metadata in textual chunks rather than in
         // the EXIF dictionary, so it gets its own block.
         if (mimeType?.endsWith("png", ignoreCase = true) == true) {
             val pngText = SectionDraft(MetadataGroup.PNG_TEXT)
-            context.contentResolver.openInputStream(originalUri(context, uri))?.use { stream ->
-                PngText.addSection(stream, pngText)
-            }
+            openImage(context, uri)?.use { stream -> PngText.addSection(stream, pngText) }
             pngText.toSection()?.let(sections::add)
         }
         // Display order is the group order, whatever order the readers ran in.
@@ -63,20 +60,29 @@ internal object MetadataReader {
     }
 
     /**
+     * Opens the file's bytes, asking for the unredacted original when we may.
+     *
      * MediaProvider rewrites the EXIF block of a MediaStore stream to zero out
      * GPS latitude/longitude/altitude/timestamps unless the caller asks for the
      * original bytes and holds ACCESS_MEDIA_LOCATION. SAF document URIs are not
-     * redacted and reject the request, so they pass through untouched.
+     * redacted and reject that request, and some providers reject it outright,
+     * so the plain URI remains the fallback rather than a dead end.
      */
-    private fun originalUri(context: Context, uri: Uri): Uri {
+    private fun openImage(context: Context, uri: Uri): java.io.InputStream? {
         val granted = context.checkSelfPermission(Manifest.permission.ACCESS_MEDIA_LOCATION) ==
             PackageManager.PERMISSION_GRANTED
-        if (!granted) return uri
-        return try {
-            MediaStore.setRequireOriginal(uri)
-        } catch (_: Exception) {
-            uri
+        if (granted) {
+            val original = try {
+                MediaStore.setRequireOriginal(uri)
+            } catch (_: Exception) {
+                null
+            }
+            if (original != null) {
+                val stream = context.contentResolver.openInputStream(original)
+                if (stream != null) return stream
+            }
         }
+        return context.contentResolver.openInputStream(uri)
     }
 
     private fun exifSections(exif: ExifInterface): List<MetadataSection> {
@@ -150,10 +156,12 @@ internal object MetadataReader {
             R.string.info_aperture,
             formatAperture(attribute(ExifInterface.TAG_F_NUMBER)),
         )
-        // Cameras write ISO under PhotographicSensitivity since EXIF 2.3;
-        // the older ISOSpeedRatings tag is the fallback for legacy files.
-        val iso = attribute(ExifInterface.TAG_PHOTOGRAPHIC_SENSITIVITY)
-            ?: attribute(ExifInterface.TAG_ISO_SPEED_RATINGS)
+        // Cameras write ISO under PhotographicSensitivity since EXIF 2.3; the
+        // older ISOSpeedRatings tag is the fallback for legacy files. Only the
+        // tag we actually show is consumed, so the other stays in the tail.
+        val modernIso = attribute(ExifInterface.TAG_PHOTOGRAPHIC_SENSITIVITY)
+        val iso = modernIso ?: attribute(ExifInterface.TAG_ISO_SPEED_RATINGS)
+        if (modernIso != null) used += ExifInterface.TAG_ISO_SPEED_RATINGS
         exposure.text(R.string.info_iso, iso)
         exposure.text(
             R.string.info_focal_length,

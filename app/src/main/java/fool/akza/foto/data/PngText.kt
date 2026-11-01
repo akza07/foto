@@ -35,35 +35,49 @@ internal object PngText {
         0x89.toByte(), 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
     )
 
-    /** Upper bound on a single chunk we are willing to inflate or decode. */
+    /** Upper bound on a single textual chunk we are willing to inflate or decode. */
     private const val MaxChunkBytes = 1 shl 20
 
     /** Upper bound on one chunk's decoded text, so a zip bomb can't stall us. */
     private const val MaxTextBytes = 1 shl 16
 
-    /** Upper bound on the number of chunks returned for one file. */
-    private const val MaxChunks = 64
+    /** Upper bound on the number of chunks we walk in one file. */
+    private const val MaxChunksWalked = 256
 
-    /** Upper bound on the bytes read from one file, whatever the chunk headers say. */
+    /** Upper bound on the number of textual chunks returned for one file. */
+    private const val MaxTextChunks = 64
+
+    /** Upper bound on the text bytes read from one file, whatever its headers say. */
     private const val MaxFileBytes = 4 shl 20
 
     fun read(stream: InputStream): List<PngTextChunk> {
         if (!readFully(stream, Signature.size).contentEquals(Signature)) return emptyList()
         val chunks = mutableListOf<PngTextChunk>()
         var consumed = Signature.size
-        while (chunks.size < MaxChunks && consumed < MaxFileBytes) {
+        var walked = 0
+        while (walked < MaxChunksWalked && chunks.size < MaxTextChunks && consumed < MaxFileBytes) {
             val lengthBytes = readFully(stream, 4)
             if (lengthBytes.size < 4) break
             val length = readInt(lengthBytes)
-            if (length < 0 || length > MaxChunkBytes) break
+            if (length < 0) break
             val typeBytes = readFully(stream, 4)
             if (typeBytes.size < 4) break
             val type = String(typeBytes, Charsets.US_ASCII)
             if (type == "IEND") break
+            walked++
+
+            // Pixels (IDAT) and every other unknown chunk are skipped without
+            // decoding: a 12MP screenshot is one multi-megabyte IDAT, and the
+            // textual chunks we want usually come *after* it.
+            val textual = type == "tEXt" || type == "zTXt" || type == "iTXt"
+            if (!textual || length > MaxChunkBytes) {
+                if (!skipFully(stream, length.toLong() + 4L)) break
+                continue
+            }
             val data = readFully(stream, length)
             if (data.size < length) break
             // Every chunk is followed by a CRC we don't need to verify: a bad
-            // CRCs only means a corrupt file, and the value itself is still text.
+            // CRC only means a corrupt file, and the value itself is still text.
             readFully(stream, 4)
             consumed += 12 + length
             when (type) {
@@ -150,6 +164,23 @@ internal object PngText {
         }
     } catch (_: Exception) {
         null
+    }
+
+    /** Skips [count] bytes without allocating them; false when the stream ends first. */
+    private fun skipFully(stream: InputStream, count: Long): Boolean {
+        var remaining = count
+        val buffer = ByteArray(8 * 1024)
+        while (remaining > 0) {
+            val skipped = stream.skip(remaining)
+            if (skipped > 0) {
+                remaining -= skipped
+                continue
+            }
+            val read = stream.read(buffer, 0, minOf(buffer.size.toLong(), remaining).toInt())
+            if (read <= 0) return false
+            remaining -= read
+        }
+        return true
     }
 
     private fun readFully(stream: InputStream, count: Int): ByteArray {

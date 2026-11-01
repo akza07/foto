@@ -121,6 +121,7 @@ import fool.akza.foto.data.MediaFolder
 import fool.akza.foto.data.MediaItem
 import fool.akza.foto.data.MediaRepository
 import fool.akza.foto.data.MetadataIndexer
+import fool.akza.foto.data.MetadataStore
 import fool.akza.foto.data.RenameResult
 import fool.akza.foto.data.PrivateTrash
 import fool.akza.foto.data.SettingsRepository
@@ -418,7 +419,8 @@ fun GalleryScreen(
     // same identity-derived keys the UI reads. Folder contents are then
     // AoT-warmed so opening any album is instant — all of this drives the same
     // "Caching previews" progress pill (only real work is counted).
-    LaunchedEffect(visibleContent) {
+    val metadataIndexVersion by MetadataStore.version.collectAsState()
+    LaunchedEffect(visibleContent, metadataIndexVersion) {
         val snapshot = visibleContent ?: return@LaunchedEffect
         snapshot.folders.forEach { folder ->
             folder.previews.forEach { item -> ThumbCache.enqueueIfMissing(item) }

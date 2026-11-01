@@ -74,8 +74,9 @@ internal fun InfoSheet(item: MediaItem, onClose: () -> Unit) {
 
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
         // Tall metadata lists must not push the sheet past the window; the
-        // content scrolls inside instead.
-        val sheetMaxHeight = maxHeight * 0.85f
+        // content scrolls inside instead. The 12dp margins are part of the
+        // 85% budget, so the sheet's outer edge stays inside it.
+        val sheetMaxHeight = maxHeight * 0.85f - 24.dp
 
         // Scrim: tap outside closes.
         Box(

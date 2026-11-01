@@ -88,6 +88,8 @@ class MetadataFormatTest {
         assertEquals("+0.3 EV", formatExposureBias("3/10"))
         assertEquals("-0.3 EV", formatExposureBias("-3/10"))
         assertEquals("0 EV", formatExposureBias("0/1"))
+        // Below the printed precision the sign and decimals are noise.
+        assertEquals("0 EV", formatExposureBias("1/10000"))
         assertNull(formatExposureBias(null))
     }
 
@@ -138,6 +140,8 @@ class MetadataFormatTest {
     fun `bitrates switch unit at one megabit`() {
         assertEquals("12.4 Mbps", formatBitrate(12_400_000))
         assertEquals("850 kbps", formatBitrate(850_000))
+        // Rounds up into the next unit instead of printing "1000 kbps".
+        assertEquals("1 Mbps", formatBitrate(999_999))
         assertNull(formatBitrate(0))
     }
 
@@ -163,6 +167,9 @@ class MetadataFormatTest {
         assertEquals("May 1, 2024, 12:34 PM", formatExifDateTime("2024:05:01 12:34:56"))
         assertEquals("May 1, 2024", formatExifDateTime("2024:05:01"))
         assertEquals("May 1, 2024, 12:34 PM", formatExifDateTime("2024-05-01T12:34:56"))
+        // Zone offsets and subseconds are dropped, not turned into a wrong hour:
+        // EXIF local time is what the info sheet reports.
+        assertEquals("May 1, 2024, 12:34 PM", formatExifDateTime("2024-05-01T12:34:56+02:00"))
     }
 
     @Test

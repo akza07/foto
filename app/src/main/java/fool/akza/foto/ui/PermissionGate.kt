@@ -52,6 +52,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import fool.akza.foto.R
+import fool.akza.foto.data.MetadataStore
 import fool.akza.foto.data.SettingsRepository
 import fool.akza.foto.ui.theme.AmoledBlack
 import fool.akza.foto.ui.theme.Border
@@ -87,12 +88,20 @@ fun PermissionGate(
         granted = allGranted(context)
     }
 
+    // The metadata index is written with whatever the app was allowed to read,
+    // so a photo-location grant makes every stored row stale (GPS is redacted
+    // without it). Track the transition, whichever way the grant arrives.
+    var photoLocationGranted by remember { mutableStateOf(hasPhotoLocationAccess(context)) }
+
     // Re-check whenever we return to the foreground (permissions can be revoked
     // in Settings, and "don't ask again" + settings round-trips need a refresh).
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
                 granted = allGranted(context)
+                val locationNow = hasPhotoLocationAccess(context)
+                if (locationNow && !photoLocationGranted) MetadataStore.invalidate(context)
+                photoLocationGranted = locationNow
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -118,10 +127,7 @@ fun PermissionGate(
             )
             val settings by SettingsRepository.settings.collectAsState()
             LaunchedEffect(settings.tutorialSeen, settings.photoLocationAsked) {
-                val missing = ContextCompat.checkSelfPermission(
-                    context,
-                    android.Manifest.permission.ACCESS_MEDIA_LOCATION,
-                ) != PackageManager.PERMISSION_GRANTED
+                val missing = !hasPhotoLocationAccess(context)
                 if (settings.tutorialSeen && missing && !settings.photoLocationAsked) {
                     SettingsRepository.setPhotoLocationAsked(true)
                     photoLocationLauncher.launch(android.Manifest.permission.ACCESS_MEDIA_LOCATION)
@@ -258,6 +264,13 @@ private fun PermissionCard(
         }
     }
 }
+
+/** True when the app may read the location block out of a photo's EXIF. */
+private fun hasPhotoLocationAccess(context: android.content.Context): Boolean =
+    ContextCompat.checkSelfPermission(
+        context,
+        android.Manifest.permission.ACCESS_MEDIA_LOCATION,
+    ) == PackageManager.PERMISSION_GRANTED
 
 private fun requiredPermissions(): List<String> {
     return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {

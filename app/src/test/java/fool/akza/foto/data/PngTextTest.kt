@@ -90,6 +90,33 @@ class PngTextTest {
     }
 
     @Test
+    fun `a multi-megabyte image chunk before the text does not stop the walk`() {
+        // Screenshot PNGs put their pixels in one huge IDAT, and text chunks come
+        // after it; the walker must skip the payload, not give up on it.
+        val idat = chunk("IDAT", ByteArray(1_500_000) { 0x5A })
+        val png = png(idat, chunk("tEXt", "Comment".toByteArray() + 0 + "still here".toByteArray()))
+        val chunks = PngText.read(png.inputStream())
+        assertEquals(1, chunks.size)
+        assertEquals("still here", chunks[0].text)
+    }
+
+    @Test
+    fun `walking many empty chunks still reaches the last text chunk`() {
+        val noise = Array(200) { chunk("tIME", ByteArray(7)) }
+        val png = png(*noise, chunk("tEXt", "Comment".toByteArray() + 0 + "late".toByteArray()))
+        val chunks = PngText.read(png.inputStream())
+        assertEquals(1, chunks.size)
+        assertEquals("late", chunks[0].text)
+    }
+
+    @Test
+    fun `a pathologically long chunk list stops the walk`() {
+        val noise = Array(400) { chunk("tIME", ByteArray(7)) }
+        val png = png(*noise, chunk("tEXt", "Comment".toByteArray() + 0 + "late".toByteArray()))
+        assertTrue(PngText.read(png.inputStream()).isEmpty())
+    }
+
+    @Test
     fun `repeated keywords are all kept`() {
         val png = png(
             chunk("tEXt", "Comment".toByteArray() + 0 + "one".toByteArray()),

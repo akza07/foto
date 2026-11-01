@@ -5,7 +5,14 @@ import android.content.Context
 import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
 import fool.akza.foto.AppLog
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
@@ -34,6 +41,12 @@ object MetadataStore {
     private const val MaxSearchHits = 2000
 
     @Volatile private var helper: Helper? = null
+
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val _version = MutableStateFlow(0)
+
+    /** Bumped when the index is discarded, so surfacing code re-runs its pass. */
+    val version: StateFlow<Int> = _version.asStateFlow()
 
     private fun helper(context: Context): Helper {
         helper?.let { return it }
@@ -66,7 +79,7 @@ object MetadataStore {
     }
 
     /** Writes (or replaces) the searchable text of [item]. */
-    suspend fun upsert(context: Context, item: MediaItem, text: String) =
+    suspend fun upsert(context: Context, item: MediaItem, text: String, stamp: String) =
         withContext(Dispatchers.IO) {
             runCatching {
                 val values = ContentValues().apply {
@@ -74,7 +87,7 @@ object MetadataStore {
                     put("display_name", item.displayName)
                     put("bucket_name", item.bucketName)
                     put("mime_type", item.mimeType)
-                    put("stamp", item.previewStamp())
+                    put("stamp", stamp)
                     put("search_text", normalizeForSearch(text).take(MaxSearchTextLength))
                     put("indexed_at", System.currentTimeMillis())
                 }
@@ -113,6 +126,20 @@ object MetadataStore {
                 AppLog.w("metadata: search failed", it)
             }.getOrDefault(emptySet())
         }
+
+    /**
+     * Throws the whole index away and asks for a new pass. Used when something
+     * that changes what a file yields (the photo-location grant) flips, because
+     * the files themselves did not change.
+     */
+    fun invalidate(context: Context) {
+        val app = context.applicationContext
+        scope.launch {
+            runCatching { helper(app).writableDatabase.delete(TABLE, null, null) }
+                .onSuccess { _version.update { it + 1 } }
+                .onFailure { AppLog.w("metadata: invalidate failed", it) }
+        }
+    }
 
     /** Drops rows for files that no longer exist in the library. */
     suspend fun prune(context: Context, keep: Collection<String>) = withContext(Dispatchers.IO) {

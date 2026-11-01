@@ -67,7 +67,9 @@ internal fun formatExposureBias(raw: String?): String? {
         ev < 0.0 -> "-"
         else -> ""
     }
-    return "$sign${decimal(abs(ev), 2)} EV"
+    val magnitude = decimal(abs(ev), 2)
+    // Don't print "+0 EV": a bias smaller than the printed precision is zero.
+    return if (magnitude == "0") "0 EV" else "$sign$magnitude EV"
 }
 
 /** `2×`, `1.5×`. `1×` (the "not zoomed" default) is reported as absent. */
@@ -128,7 +130,9 @@ internal fun formatDurationMs(ms: Long): String? {
 /** `12.4 Mbps` / `850 kbps` from a bits-per-second count. */
 internal fun formatBitrate(bitsPerSecond: Long): String? {
     if (bitsPerSecond <= 0L) return null
-    return if (bitsPerSecond >= 1_000_000L) {
+    // Round first, then pick the unit, so 999_999 bits is "1 Mbps" and not
+    // "1000 kbps".
+    return if (bitsPerSecond >= 999_500L) {
         "${decimal(bitsPerSecond / 1_000_000.0, 1)} Mbps"
     } else {
         "${decimal(bitsPerSecond / 1000.0, 0)} kbps"
