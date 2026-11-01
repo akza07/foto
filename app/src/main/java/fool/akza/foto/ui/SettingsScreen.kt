@@ -60,6 +60,7 @@ import fool.akza.foto.data.AppSettings
 import fool.akza.foto.data.GalleryEvents
 import fool.akza.foto.data.GridSize
 import fool.akza.foto.data.MediaSort
+import fool.akza.foto.data.MetadataStore
 import fool.akza.foto.data.SelectionActionPlacement
 import fool.akza.foto.data.SettingsRepository
 import fool.akza.foto.data.attention.AttentionRepository
@@ -157,6 +158,11 @@ private fun SettingsRoot(
     var cacheBytes by remember { mutableStateOf<Long?>(null) }
     var clearing by remember { mutableStateOf(false) }
     var showClearConfirm by remember { mutableStateOf(false) }
+    // Search index summary; null while loading.
+    var indexFiles by remember { mutableStateOf<Int?>(null) }
+    var indexBytes by remember { mutableStateOf(0L) }
+    var clearingIndex by remember { mutableStateOf(false) }
+    var showClearIndexConfirm by remember { mutableStateOf(false) }
     var showClearHistoryConfirm by remember { mutableStateOf(false) }
     // Recorded visits, shown as the clear-history summary; null while loading.
     var historySessions by remember { mutableStateOf<Int?>(null) }
@@ -188,6 +194,12 @@ private fun SettingsRoot(
     LaunchedEffect(trashRefreshKey) {
         if (cacheBytes == null) {
             cacheBytes = with(Dispatchers.IO) { ThumbCache.totalCacheBytes() }
+        }
+        if (indexFiles == null) {
+            indexFiles = with(Dispatchers.IO) {
+                indexBytes = MetadataStore.diskBytes(context)
+                MetadataStore.count(context)
+            }
         }
         refreshTrash()
     }
@@ -359,6 +371,24 @@ private fun SettingsRoot(
                     )
                     SettingsDivider()
                     SettingsActionRow(
+                        title = stringResource(R.string.storage_clear_index_title),
+                        subtitle = when {
+                            clearingIndex -> stringResource(R.string.storage_clearing)
+                            indexFiles == null -> stringResource(R.string.storage_calculating)
+                            indexFiles == 0 -> stringResource(R.string.storage_index_empty)
+                            else -> stringResource(
+                                R.string.storage_index_summary,
+                                indexFiles!!,
+                                formatCacheSize(indexBytes),
+                            )
+                        },
+                        enabled = !clearingIndex && (indexFiles ?: 0) > 0,
+                        showChevron = !clearingIndex,
+                        loading = clearingIndex,
+                        onClick = { showClearIndexConfirm = true },
+                    )
+                    SettingsDivider()
+                    SettingsActionRow(
                         title = stringResource(R.string.storage_trash_title),
                         subtitle = when {
                             trashCount == null -> stringResource(R.string.storage_checking_trash)
@@ -439,6 +469,26 @@ private fun SettingsRoot(
                 }
             },
             onDismiss = { showClearConfirm = false },
+        )
+    }
+
+    if (showClearIndexConfirm) {
+        ConfirmDialog(
+            title = stringResource(R.string.clear_index_confirm_title),
+            message = stringResource(R.string.clear_index_confirm_message),
+            confirmLabel = stringResource(R.string.action_clear),
+            destructive = false,
+            onConfirm = {
+                showClearIndexConfirm = false
+                clearingIndex = true
+                scope.launch {
+                    MetadataStore.clear(context)
+                    indexFiles = 0
+                    indexBytes = 0L
+                    clearingIndex = false
+                }
+            },
+            onDismiss = { showClearIndexConfirm = false },
         )
     }
 

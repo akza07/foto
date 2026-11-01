@@ -275,6 +275,53 @@ object MetadataStore {
         }
     }
 
+    /** How many files the index currently knows about. */
+    suspend fun count(context: Context): Int = withContext(Dispatchers.IO) {
+        runCatching {
+            helper(context).readableDatabase
+                .rawQuery("SELECT COUNT(*) FROM $ENTRY", null)
+                .use { cursor -> if (cursor.moveToFirst()) cursor.getInt(0) else 0 }
+        }.getOrDefault(0)
+    }
+
+    /** Bytes the index occupies on disk, WAL included, so Settings can show it. */
+    fun diskBytes(context: Context): Long {
+        val db = context.applicationContext.getDatabasePath(DB_NAME)
+        return listOf(db, java.io.File("${db.path}-wal"), java.io.File("${db.path}-shm"))
+            .filter { it.isFile }
+            .sumOf { it.length() }
+    }
+
+    /**
+     * Empties the index and gives the space back to the filesystem.
+     *
+     * Unlike [invalidate] this does not ask for a rebuild: it is the user asking
+     * for the stored words to be gone, so the index stays empty until the library
+     * loads again (app start, pull-to-refresh), which rebuilds it from the files.
+     */
+    suspend fun clear(context: Context) = withContext(Dispatchers.IO) {
+        runCatching {
+            val db = helper(context).writableDatabase
+            db.beginTransaction()
+            try {
+                db.delete(ENTRY, null, null)
+                db.delete(WORD, null, null)
+                db.delete(LEXICON, null, null)
+                db.setTransactionSuccessful()
+            } finally {
+                db.endTransaction()
+            }
+            // The word table is the bulk of the file: without compacting, the tens
+            // of megabytes an index of a big library grew to would stay allocated.
+            db.execSQL("VACUUM")
+            // Under WAL the compacted pages are still in the log; folding them into
+            // the database is what actually returns the bytes to the filesystem.
+            db.execSQL("PRAGMA wal_checkpoint(TRUNCATE)")
+        }.onFailure {
+            AppLog.w("metadata: clear failed", it)
+        }
+    }
+
     /** Drops rows for files that no longer exist in the library. */
     suspend fun prune(context: Context, keep: Collection<String>) = withContext(Dispatchers.IO) {
         runCatching {

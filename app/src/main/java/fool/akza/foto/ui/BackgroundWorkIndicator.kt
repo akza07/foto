@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Sync
+import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Surface
@@ -81,6 +82,12 @@ private const val AppearDurationMs = 260
 /** Duration of the fade out when the work is done. */
 private const val DisappearDurationMs = 140
 
+/** How long a finished pass stays up as a check before it fades away. */
+private const val CompletedHoldMs = 1_600L
+
+/** Grace before "finished" is shown, so a hand-off between passes is not one. */
+private const val CompletedGraceMs = 300L
+
 /**
  * Background work indicator for the albums screen, shared by preview caching and
  * metadata indexing (which runs after it and feeds search).
@@ -116,6 +123,21 @@ fun BackgroundWorkIndicator(modifier: Modifier = Modifier) {
     // by hand keeps it open: that is an explicit request to see progress.
     var expanded by remember { mutableStateOf(true) }
     var userOpened by remember { mutableStateOf(false) }
+    // A pass that ends gets a short check instead of vanishing: "done" and
+    // "gave up halfway" must not look the same.
+    var finished by remember { mutableStateOf(false) }
+    var everRan by remember { mutableStateOf(false) }
+    // Both stores keep their final counts published after a pass ends, so the
+    // check state can report exactly what finished. The phase is remembered so
+    // "Caching previews" is not relabelled as indexing once both are done.
+    var lastLabel by remember { mutableStateOf(R.string.caching_previews) }
+    if (active) lastLabel = label
+    val shownLabel = if (active) label else lastLabel
+    val shown = if (shownLabel == R.string.caching_previews) {
+        PassSnapshot(shownLabel, thumbs.done, thumbs.total)
+    } else {
+        PassSnapshot(shownLabel, metadata.done, metadata.total)
+    }
     // 0 = full pill, 1 = collapsed chip. One value for every animated property
     // keeps position, size and content in step, so nothing can jump.
     val morph = remember { Animatable(0f) }
@@ -124,12 +146,21 @@ fun BackgroundWorkIndicator(modifier: Modifier = Modifier) {
     var pillSize by remember { mutableStateOf(IntSize.Zero) }
 
     LaunchedEffect(active) {
-        expanded = true
-        userOpened = false
-        morph.snapTo(0f)
         if (active) {
+            everRan = true
+            finished = false
+            expanded = true
+            userOpened = false
+            morph.snapTo(0f)
             delay(CollapseDelayMs)
             if (!userOpened) expanded = false
+        } else if (everRan) {
+            // Starting a pass cancels this, so the grace period only elapses when
+            // nothing took over.
+            delay(CompletedGraceMs)
+            finished = true
+            delay(CompletedHoldMs)
+            finished = false
         }
     }
     LaunchedEffect(expanded) {
@@ -142,15 +173,16 @@ fun BackgroundWorkIndicator(modifier: Modifier = Modifier) {
         }
     }
 
+    val visible = active || finished
     val appear by animateFloatAsState(
-        targetValue = if (active) 1f else 0f,
-        animationSpec = tween(if (active) AppearDurationMs else DisappearDurationMs),
+        targetValue = if (visible) 1f else 0f,
+        animationSpec = tween(if (visible) AppearDurationMs else DisappearDurationMs),
         label = "indicator-appear",
     )
 
     // Keep composing through the exit fade, then drop the tree so the (now
     // invisible) surface stops swallowing taps meant for the grid.
-    if (!active && appear == 0f) return
+    if (!visible && appear == 0f) return
 
     BoxWithConstraints(
         modifier = modifier
@@ -180,8 +212,8 @@ fun BackgroundWorkIndicator(modifier: Modifier = Modifier) {
         } else {
             stringResource(
                 R.string.indexing_metadata_chip,
-                done.coerceAtMost(total),
-                total,
+                shown.done.coerceAtMost(shown.total),
+                shown.total,
             )
         }
 
@@ -222,17 +254,21 @@ fun BackgroundWorkIndicator(modifier: Modifier = Modifier) {
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.Start,
                 ) {
-                    if (done < total) ProgressGlyph() else SyncGlyph()
+                    if (finished) CheckGlyph() else if (done < total) ProgressGlyph() else SyncGlyph()
                     Spacer(Modifier.width(10.dp))
                     Text(
-                        text = stringResource(label),
+                        text = stringResource(shown.label),
                         color = TextPrimary,
                         fontSize = 13.sp,
                         fontWeight = FontWeight.Medium,
                     )
                     Spacer(Modifier.width(8.dp))
                     Text(
-                        text = stringResource(R.string.caching_progress_count, done, total),
+                        text = stringResource(
+                            R.string.caching_progress_count,
+                            shown.done,
+                            shown.total,
+                        ),
                         color = TextMuted,
                         fontSize = 12.sp,
                     )
@@ -247,11 +283,28 @@ fun BackgroundWorkIndicator(modifier: Modifier = Modifier) {
                             scaleY = glyphScale
                         },
                 ) {
-                    if (done < total) ProgressGlyph(size = 18) else SyncGlyph(size = 18)
+                    when {
+                        finished -> CheckGlyph(size = 18)
+                        done < total -> ProgressGlyph(size = 18)
+                        else -> SyncGlyph(size = 18)
+                    }
                 }
             }
         }
     }
+}
+
+/** What the indicator is showing: which pass, and how far it got. */
+private data class PassSnapshot(val label: Int, val done: Int, val total: Int)
+
+@Composable
+private fun CheckGlyph(size: Int = 15) {
+    Icon(
+        imageVector = Icons.Rounded.Check,
+        contentDescription = null,
+        tint = TextPrimary,
+        modifier = Modifier.size(size.dp),
+    )
 }
 
 @Composable

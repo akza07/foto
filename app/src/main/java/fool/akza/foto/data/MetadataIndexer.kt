@@ -64,8 +64,15 @@ object MetadataIndexer {
      */
     private const val WriteBatchSize = 256
 
-    /** Files between two progress publications; the pill only needs to move. */
-    private const val ProgressEvery = 25
+    /**
+     * How often the pill's count is updated, at most. Time-based rather than a
+     * file count: on a 2000-file pass a 25-file step is a jump the user reads as
+     * a stall, while on a slow device publishing per file is needless churn.
+     */
+    private const val ProgressPublishMs = 100L
+
+    /** Files between two search-index refreshes; open results need not follow every step. */
+    private const val GenerationEvery = 50
 
     /**
      * Files still to read in the current pass. Indexing is invisible work that
@@ -170,7 +177,8 @@ object MetadataIndexer {
         }
 
         pruneIfSafe(context, items, keys.keys)
-        _progress.value = Progress()
+        // The final counts stay published: that is what lets the pill show a
+        // completed pass instead of resetting to 0/0 and vanishing.
         AppLog.d(
             "metadata: indexed ${readable.get()}/${pending.size} files in " +
                 "${System.currentTimeMillis() - startedAt}ms at $applied readers " +
@@ -250,6 +258,7 @@ object MetadataIndexer {
         var done = 0
         var writeMs = 0L
         var transactions = 0
+        var publishedAt = System.currentTimeMillis()
         for (entry in incoming) {
             batch += entry
             done++
@@ -258,16 +267,21 @@ object MetadataIndexer {
                 transactions++
                 batch.clear()
             }
-            if (done % ProgressEvery == 0) {
+            val now = System.currentTimeMillis()
+            if (done == total || now - publishedAt >= ProgressPublishMs) {
+                publishedAt = now
                 _progress.value = Progress(total = total, done = done)
-                _generation.update { it + 1 }
             }
+            if (done % GenerationEvery == 0) _generation.update { it + 1 }
         }
         if (batch.isNotEmpty()) {
             writeMs += commit(context, batch)
             transactions++
         }
+        // The final step is what tells the pill the pass completed rather than
+        // stopped, so it is published even when nothing else was.
         _progress.value = Progress(total = total, done = done)
+        _generation.update { it + 1 }
         return WriteStats(writeMs, transactions)
     }
 

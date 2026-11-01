@@ -36,6 +36,11 @@
     <string name="storage_clearing">Clearing…</string>
     <string name="storage_calculating">Calculating…</string>
     <string name="storage_nothing_cached">Nothing cached</string>
+    <string name="storage_clear_index_title">Clear search index</string>
+    <string name="storage_index_empty">Nothing indexed</string>
+    <string name="storage_index_summary">%1$d files · %2$s on this device</string>
+    <string name="clear_index_confirm_title">Clear search index?</string>
+    <string name="clear_index_confirm_message">The words stored for search are deleted and the database is compacted. Your files are untouched, and the index is rebuilt from them the next time your library loads.</string>
     <string name="storage_empty_trash_title">Empty trash</string>
     <string name="storage_trash_title">Trash</string>
     <string name="trash_restore">Restore</string>
