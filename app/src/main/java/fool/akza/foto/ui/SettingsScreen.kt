@@ -61,6 +61,7 @@ import fool.akza.foto.data.GalleryEvents
 import fool.akza.foto.data.GridSize
 import fool.akza.foto.data.MediaSort
 import fool.akza.foto.data.SettingsRepository
+import fool.akza.foto.data.attention.AttentionRepository
 import fool.akza.foto.data.TrashRepository
 import fool.akza.foto.data.thumbnails.ThumbCache
 import fool.akza.foto.data.thumbnails.VideoFrameCache
@@ -155,6 +156,10 @@ private fun SettingsRoot(
     var cacheBytes by remember { mutableStateOf<Long?>(null) }
     var clearing by remember { mutableStateOf(false) }
     var showClearConfirm by remember { mutableStateOf(false) }
+    var showClearHistoryConfirm by remember { mutableStateOf(false) }
+    // Recorded visits, shown as the clear-history summary; null while loading.
+    var historySessions by remember { mutableStateOf<Int?>(null) }
+    val attentionVersion by AttentionRepository.version.collectAsState()
     var showSortDialog by remember { mutableStateOf(false) }
     var showGridDialog by remember { mutableStateOf(false) }
     // App-private trash summary; null while loading.
@@ -183,6 +188,10 @@ private fun SettingsRoot(
             cacheBytes = with(Dispatchers.IO) { ThumbCache.totalCacheBytes() }
         }
         refreshTrash()
+    }
+
+    LaunchedEffect(attentionVersion) {
+        historySessions = AttentionRepository.summary(context).sessions
     }
 
     LaunchedEffect(Unit) {
@@ -294,6 +303,34 @@ private fun SettingsRoot(
                 }
             }
 
+            // ── Privacy ──────────────────────────────────────────────
+            item { SettingsSectionHeader(title = stringResource(R.string.section_privacy), topPadding = 16.dp) }
+            item {
+                SettingsGroup {
+                    SettingsToggleRow(
+                        title = stringResource(R.string.privacy_attention_title),
+                        subtitle = stringResource(R.string.privacy_attention_subtitle),
+                        checked = settings.attentionTracking,
+                        onCheckedChange = { SettingsRepository.setAttentionTracking(it) },
+                    )
+                    SettingsDivider()
+                    val sessions = historySessions
+                    SettingsActionRow(
+                        title = stringResource(R.string.privacy_clear_history_title),
+                        subtitle = if (sessions == 0) {
+                            stringResource(R.string.privacy_history_empty)
+                        } else {
+                            stringResource(R.string.privacy_clear_history_subtitle)
+                        },
+                        trailingText = sessions
+                            ?.takeIf { it > 0 }
+                            ?.let { pluralStringResource(R.plurals.item_count, it, it) },
+                        enabled = (sessions ?: 0) > 0,
+                        onClick = { showClearHistoryConfirm = true },
+                    )
+                }
+            }
+
             // ── Storage ──────────────────────────────────────────────
             item { SettingsSectionHeader(title = stringResource(R.string.section_storage), topPadding = 16.dp) }
             item {
@@ -393,6 +430,23 @@ private fun SettingsRoot(
                 }
             },
             onDismiss = { showClearConfirm = false },
+        )
+    }
+
+    if (showClearHistoryConfirm) {
+        ConfirmDialog(
+            title = stringResource(R.string.clear_history_confirm_title),
+            message = stringResource(R.string.clear_history_confirm_message),
+            confirmLabel = stringResource(R.string.action_clear),
+            destructive = true,
+            onConfirm = {
+                showClearHistoryConfirm = false
+                scope.launch {
+                    AttentionRepository.clear(context)
+                    historySessions = 0
+                }
+            },
+            onDismiss = { showClearHistoryConfirm = false },
         )
     }
 

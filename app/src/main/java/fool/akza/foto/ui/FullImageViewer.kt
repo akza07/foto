@@ -114,6 +114,9 @@ import kotlinx.coroutines.launch
 
 private val SheetRadius = RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp)
 
+/** Attention sampling cadence; small enough for 1s rules, cheap on the frame budget. */
+private const val SAMPLE_INTERVAL_MS = 250L
+
 /** A gesture must be this much more vertical than horizontal to count as vertical. */
 private const val VerticalGestureRatio = 2.0f
 
@@ -281,6 +284,33 @@ fun FullImageViewer(
     val haptics = LocalHapticFeedback.current
     val context = LocalContext.current
 
+    // Viewing-attention tracking for Insights. Read-only previews (Trash) are
+    // excluded so opening a trashed item never counts as watching it.
+    val attention = remember(previewOnly) {
+        if (previewOnly) null else ViewerAttentionTracker(context.applicationContext)
+    }
+    DisposableEffect(attention) {
+        onDispose { attention?.finish() }
+    }
+    // Only sample while the viewer is actually in the foreground; a backgrounded
+    // viewer must not keep a 4 Hz main-thread wakeup stream alive.
+    var attentionRunning by remember { mutableStateOf(false) }
+    LifecycleStartEffect(attention) {
+        attention?.setForeground(true)
+        attentionRunning = attention != null
+        onStopOrDispose {
+            attention?.setForeground(false)
+            attentionRunning = false
+        }
+    }
+    LaunchedEffect(attention, attentionRunning) {
+        if (attention == null || !attentionRunning) return@LaunchedEffect
+        while (true) {
+            delay(SAMPLE_INTERVAL_MS)
+            attention.sample()
+        }
+    }
+
     val pagerState = rememberPagerState(
         initialPage = initialIndex.coerceIn(0, (items.size - 1).coerceAtLeast(0)),
         pageCount = { items.size },
@@ -390,6 +420,9 @@ fun FullImageViewer(
 
     val close = {
         if (!leaving) {
+            // Stop counting before the exit animation, so the shrink back to the
+            // tile is not mistaken for viewing time.
+            attention?.setLeaving(true)
             exitSourceRect = sourceRect
             leaving = true
             scope.launch {
@@ -409,6 +442,15 @@ fun FullImageViewer(
     val currentItem = items.getOrNull(currentIndex)
 
     val currentPageIsVideo = currentItem?.isVideo == true
+
+    // A visit starts when a page settles and ends when the next one settles (or
+    // the viewer closes); the tracker flushes the previous item itself.
+    LaunchedEffect(currentItem?.uri) {
+        attention?.begin(currentItem)
+    }
+    LaunchedEffect(currentItem?.uri, videoPlaying) {
+        attention?.setPlaying(videoPlaying)
+    }
 
     // Immersive viewing: hide both system bars while the viewer is open so the
     // photo/video owns the whole screen, and bring them back on close. Swiping
@@ -574,6 +616,17 @@ fun FullImageViewer(
             // 0 at the tile (grid visible through the growing image) and 1 when
             // settled. Entry and exit are therefore the same continuous motion.
             .background(AmoledBlack.copy(alpha = p))
+            // Any touch revives the attention tracker's idle window (observed in
+            // the Initial pass without consuming, so no gesture is affected).
+            .pointerInput(attention) {
+                if (attention == null) return@pointerInput
+                awaitPointerEventScope {
+                    while (true) {
+                        awaitPointerEvent(PointerEventPass.Initial)
+                        attention.onTouch()
+                    }
+                }
+            }
             // Multi-touch watch: as soon as a second finger lands, every single-finger
             // gesture yields to the pinch-zoom on the image below.
             .pointerInput(Unit) {

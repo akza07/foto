@@ -34,6 +34,8 @@ data class AppSettings(
     val gridSize: GridSize = GridSize.MEDIUM,
     /** Whether the first-run tutorial has been completed or skipped. */
     val tutorialSeen: Boolean = false,
+    /** Whether per-item viewing time is recorded locally for Insights. */
+    val attentionTracking: Boolean = true,
 )
 
 object SettingsRepository {
@@ -47,6 +49,7 @@ object SettingsRepository {
     private const val KEY_SORT_ORDER = "sort_order"
     private const val KEY_GRID_SIZE = "grid_size"
     private const val KEY_TUTORIAL_SEEN = "tutorial_seen"
+    private const val KEY_ATTENTION_TRACKING = "attention_tracking"
 
     private val _settings = MutableStateFlow(AppSettings())
     val settings: StateFlow<AppSettings> = _settings.asStateFlow()
@@ -71,6 +74,7 @@ object SettingsRepository {
                 GridSize.valueOf(prefs.getString(KEY_GRID_SIZE, null) ?: GridSize.MEDIUM.name)
             }.getOrDefault(GridSize.MEDIUM),
             tutorialSeen = prefs.getBoolean(KEY_TUTORIAL_SEEN, false),
+            attentionTracking = prefs.getBoolean(KEY_ATTENTION_TRACKING, true),
         )
     }
 
@@ -116,6 +120,10 @@ object SettingsRepository {
 
     fun setTutorialSeen(value: Boolean) {
         setBoolean(KEY_TUTORIAL_SEEN, value) { it.copy(tutorialSeen = value) }
+    }
+
+    fun setAttentionTracking(value: Boolean) {
+        setBoolean(KEY_ATTENTION_TRACKING, value) { it.copy(attentionTracking = value) }
     }
 
     fun addTreeUri(uri: String) {

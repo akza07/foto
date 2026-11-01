@@ -254,8 +254,23 @@ edge-to-edge rendering.
   Pull down on the Albums or album grid to reload media and previews when the
   filesystem changed outside the app.
 
+### 5.4.3 Insights (viewing time)
+- The viewer measures how long each photo or video is actually on screen and
+  ranks them on an **Insights** screen, opened from a smart tile at the start of
+  the Albums grid (shown once something has been watched). The tile uses a
+  heavily blurred backdrop of the most-watched file, so it stays a hint.
+- Only the settled page counts, only in the foreground with the screen on. Time
+  stops after 6s without a touch — any tap, zoom, pan or action restarts it — a
+  visit needs at least 1s and is capped at 2 min. An image counts as a watch at
+  10s; a video counts at 3s of playback.
+- Three lenses — **Most watched**, **Longest look** and **Revisited** — with
+  7-day / 30-day / all-time periods. Rows show time, watch count and a relative
+  bar; tapping opens the viewer on that ranked list.
+- Stored on-device in SQLite. Settings → Privacy can stop recording or clear the
+  history.
+
 ### 5.5 Settings
-- **Gear icon** → Settings screen (slide transition). Grouped into four cards:
+- **Gear icon** → Settings screen (slide transition). Grouped into sections:
   - **Display** — *Prefer 120Hz refresh rate*: asks the system to run up to 120Hz
     on supported devices. Applied live (window attribute + Compose frame-rate vote),
     no restart needed.
@@ -269,6 +284,9 @@ edge-to-edge rendering.
     - **Only show selected folders** (toggle): switches between allow-list and deny-list.
     - **Manage folders** → a **Folders** sub-screen (slide transition, its own back
       handling) with the directory list and **Add directory**.
+  - **Privacy** — *Record viewing time*: turns the Insights tracker on or off
+    (existing history stays). *Clear viewing history*: shows the recorded visit
+    count and wipes it after a destructive confirm.
   - **Storage** — *Clear thumbnail cache* (shows the current size, confirms before
     clearing) and *Trash* (shows the count/size and opens a Trash screen with
     per-item restore and empty).

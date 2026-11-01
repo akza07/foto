@@ -50,6 +50,14 @@
     <string name="trash_delete_confirm_title">Delete permanently?</string>
     <string name="trash_delete_confirm_message">This item will be removed from the trash forever. This can\'t be undone.</string>
     <string name="action_empty">Empty</string>
+    <string name="section_privacy">Privacy</string>
+    <string name="privacy_attention_title">Record viewing time</string>
+    <string name="privacy_attention_subtitle">Rank the photos and videos you spend the most time with. Stored on this device.</string>
+    <string name="privacy_clear_history_title">Clear viewing history</string>
+    <string name="privacy_clear_history_subtitle">Remove all recorded viewing time from this device.</string>
+    <string name="privacy_history_empty">No viewing history yet</string>
+    <string name="clear_history_confirm_title">Clear viewing history?</string>
+    <string name="clear_history_confirm_message">All recorded viewing time will be deleted and Insights will reset. This can\'t be undone.</string>
     <string name="section_about">About</string>
     <string name="about_app_name">Foto</string>
     <string name="about_version">Version %1$s</string>
@@ -226,6 +234,26 @@
         <item quantity="one">Delete %1$d item?</item>
         <item quantity="other">Delete %1$d items?</item>
     </plurals>
+
+    <!-- Insights -->
+    <string name="insights_title">Insights</string>
+    <string name="insights_period_week">7 days</string>
+    <string name="insights_period_month">30 days</string>
+    <string name="insights_period_all">All time</string>
+    <string name="insights_lens_watched">Most watched</string>
+    <string name="insights_lens_longest">Longest look</string>
+    <string name="insights_lens_revisited">Revisited</string>
+    <string name="insights_summary_label">On screen</string>
+    <string name="insights_summary_meta">%1$s · %2$s</string>
+    <plurals name="insights_watch_count">
+        <item quantity="one">%1$d watch</item>
+        <item quantity="other">%1$d watches</item>
+    </plurals>
+    <string name="insights_row_meta">%1$s · %2$s</string>
+    <string name="insights_empty_title">Nothing here yet</string>
+    <string name="insights_empty_body">Spend a little time with your photos and videos and they\'ll show up here, ranked.</string>
+    <string name="insights_legend">A watch is one viewing of 10s or more (3s for video). Counting pauses after 15s without a touch.</string>
+    <string name="insights_privacy_note">Measured only while Foto is on screen, and stored on this device.</string>
 
     <!-- First-run tutorial -->
     <string name="tutorial_welcome_title">Welcome to Foto</string>

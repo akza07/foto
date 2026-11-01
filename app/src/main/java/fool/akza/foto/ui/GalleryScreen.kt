@@ -121,6 +121,9 @@ import fool.akza.foto.data.MediaItem
 import fool.akza.foto.data.MediaRepository
 import fool.akza.foto.data.PrivateTrash
 import fool.akza.foto.data.SettingsRepository
+import fool.akza.foto.data.attention.AttentionRepository
+import fool.akza.foto.data.attention.AttentionTile
+import fool.akza.foto.data.attention.attentionKey
 import fool.akza.foto.data.SystemTrash
 import fool.akza.foto.data.mediaCollectionUri
 import fool.akza.foto.data.MediaSort
@@ -258,6 +261,14 @@ fun GalleryScreen(
     var reloadKey by remember { mutableStateOf(0) }
     var selection by remember { mutableStateOf<SelectionState>(SelectionState()) }
     var showSearch by remember { mutableStateOf(false) }
+    var showInsights by remember { mutableStateOf(false) }
+    // Smart-tile snapshot, refreshed whenever a viewing session is written or
+    // the history is cleared, so the tile appears/disappears on its own.
+    val attentionVersion by AttentionRepository.version.collectAsState()
+    var insightsTile by remember { mutableStateOf<AttentionTile?>(null) }
+    LaunchedEffect(attentionVersion) {
+        insightsTile = AttentionRepository.tile(context)
+    }
     // Full library (folders + loose), used for name search. Populated by the
     // same pass that warms the thumbnail cache.
     var allItems by remember { mutableStateOf<List<MediaItem>>(emptyList()) }
@@ -559,10 +570,12 @@ fun GalleryScreen(
     // BackHandler so system back runs the animated scale-out instead of removing
     // the viewer in a single frame.
     BackHandler(
-        enabled = isSelecting || openFolder != null || showSettings || showSearch,
+        enabled = isSelecting || openFolder != null || showSettings || showSearch || showInsights,
         onBack = {
             if (showSearch) {
                 showSearch = false
+            } else if (showInsights) {
+                showInsights = false
             } else if (isSelecting) {
                 clearSelection()
             } else if (showSettings) {
@@ -679,6 +692,11 @@ fun GalleryScreen(
         deletedItems.forEach { item ->
             ThumbCache.evict(item.uri)
             VideoPosterMemory.remove(item.uri)
+        }
+        // Insights should not keep ranking files that no longer exist (and the
+        // smart tile must not use a deleted file as its preview).
+        scope.launch {
+            AttentionRepository.forget(context, deletedItems.map { it.attentionKey() })
         }
         // A deleted video's poster must not survive in the process-wide memory
         // cache; clearing the whole small cache guarantees it (covers re-seed
@@ -1132,6 +1150,8 @@ fun GalleryScreen(
             },
             onSettingsClick = { if (directoryStack.isEmpty()) showSettings = true },
             onSearchClick = { if (directoryStack.isEmpty()) showSearch = true },
+            insights = insightsTile,
+            onInsightsClick = { if (directoryStack.isEmpty()) showInsights = true },
             minTileSize = appSettings.gridSize.minTileDp.dp,
             sortOrder = appSettings.sortOrder,
             gridSize = appSettings.gridSize,
@@ -1166,7 +1186,7 @@ fun GalleryScreen(
             // Skip the (expensive) blur while an opaque screen covers the root.
             frostEnabled = (directoryStack.isEmpty() || directoryStack.size == 1 && closing) &&
                 viewerItems == null &&
-                !showSettings && !showSearch,
+                !showSettings && !showSearch && !showInsights,
         )
 
         androidx.compose.animation.AnimatedVisibility(
@@ -1199,6 +1219,19 @@ fun GalleryScreen(
                 minTileSize = appSettings.gridSize.minTileDp.dp,
                 onTilePositioned = registerTileRect,
                 onTileDisposed = unregisterTileRect,
+            )
+        }
+
+        androidx.compose.animation.AnimatedVisibility(
+            visible = showInsights,
+            enter = slideInHorizontally(initialOffsetX = { it }) + fadeIn(),
+            exit = slideOutHorizontally(targetOffsetX = { it }) + fadeOut(),
+        ) {
+            InsightsScreen(
+                onBack = { showInsights = false },
+                // The viewer draws above Insights, so closing it reveals the
+                // ranked list again; no source rect means a clean fade in/out.
+                onOpen = { list, index -> openViewer(list, index, Rect.Zero) },
             )
         }
 
@@ -1260,10 +1293,17 @@ fun GalleryScreen(
             // in that case the viewer fades out instead of flying to its opener.
             val currentViewerUri =
                 viewing.getOrNull(viewerIndex.coerceIn(0, viewing.lastIndex))?.uri
-            val visibleTileRect = currentViewerUri?.let { tileRects[it] }?.takeIf { rect ->
-                rect.right > 0f && rect.bottom > 0f &&
-                    rect.left < rootView.width.toFloat() &&
-                    rect.top < rootView.height.toFloat()
+            // While Insights covers the gallery its tiles are still composed
+            // (and publishing bounds), but they are not visible: fade instead of
+            // morphing into a tile that sits behind the opaque cover.
+            val visibleTileRect = if (showInsights) {
+                null
+            } else {
+                currentViewerUri?.let { tileRects[it] }?.takeIf { rect ->
+                    rect.right > 0f && rect.bottom > 0f &&
+                        rect.left < rootView.width.toFloat() &&
+                        rect.top < rootView.height.toFloat()
+                }
             }
             val viewerExitRect = visibleTileRect ?: if (currentViewerUri == viewerOpenerUri) {
                 viewerSourceRect
@@ -1683,6 +1723,8 @@ private fun MainGalleryGrid(
     onGridSizeChange: (GridSize) -> Unit = {},
     isRefreshing: Boolean = false,
     onRefresh: () -> Unit = {},
+    insights: AttentionTile? = null,
+    onInsightsClick: () -> Unit = {},
 ) {
     val gridState = rememberLazyGridState()
     val currentContent by rememberUpdatedState(content)
@@ -1878,6 +1920,19 @@ private fun MainGalleryGrid(
                     horizontalArrangement = Arrangement.spacedBy(GridSpacing),
                     verticalArrangement = Arrangement.spacedBy(GridSpacing),
                 ) {
+                    insights?.takeIf { !selection.active }?.let { tile ->
+                        item(key = "insights") {
+                            InsightsTile(
+                                tile = tile,
+                                onClick = onInsightsClick,
+                                // Deletes/reloads reflow the grid instead of jumping.
+                                modifier = Modifier.animateItem(
+                                    fadeInSpec = tween(180),
+                                    fadeOutSpec = tween(180),
+                                ),
+                            )
+                        }
+                    }
                     items(current.folders, key = { "folder:${it.bucketId}" }) { folder ->
                         FolderTile(
                             folder = folder,

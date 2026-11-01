@@ -436,10 +436,13 @@ Real playback via single ExoPlayer per viewer session (no per-page players). Aud
    - Toggle “Respect .nomedia” / “Hide media in folders marked .nomedia, including inside folders you add.” (default on; hides granted-tree `.nomedia` when on, shows when off; default view already excludes via scanner).
    - Toggle “Only show selected folders” / ON “Show only media inside the folders you add.” / OFF “Show all media except the folders you add.” (default off).
    - Action+chevron “Manage folders” trailing “None / 1 folder / N folders” → Folders sub-screen.
-5. **Storage**
+5. **Privacy**
+   - Toggle “Record viewing time” / “Rank the photos and videos you spend the most time with. Stored on this device.” (default on; off stops new writes, existing history stays).
+   - Action “Clear viewing history” subtitle “No viewing history yet” (disabled) or “Remove all recorded viewing time from this device.” trailing item count → destructive confirm (“Clear viewing history?” / “All recorded viewing time will be deleted and Insights will reset. This can’t be undone.”) → wipes the attention table; the Albums tile disappears.
+6. **Storage**
    - Action “Clear thumbnail cache” subtitle: “Clearing…” (spinner, disabled) / “Calculating…” / “Nothing cached” (disabled) / size (`%.1f MB`/`%.0f KB`/`%d B`) → non-destructive confirm (“Clear thumbnail cache?” / “Cached previews will be deleted …” / Cancel + Clear light) → clears + reloads.
    - Action+chevron “Trash” subtitle “Checking…” / “Trash is empty” / “N items · size” → Trash screen.
-6. **About**
+7. **About**
    - Dead row “Foto” / “Version X” (package version, fallback “1.0”), no chevron.
    - Row “Replay tutorial” / “Show the walkthrough again.” no chevron → unmarks tutorial so overlay appears immediately.
    - Row “Share crash log” / “Send the last crash report” appears only when a Java crash was captured (`CrashLog`, written from the default uncaught-exception handler); tapping shares the trace and clears it. Native crashes never reach it.
@@ -460,7 +463,23 @@ Merged list of Android's system trash (MediaStore `QUERY_ARG_MATCH_TRASHED`, API
 
 ---
 
-## 15. First-Run Tutorial (5 pages)
+## 15. Viewing Insights (attention)
+
+**What it measures:** viewer time per item, stored locally in SQLite (one row per visit, replaced every 15s as a crash checkpoint). Only the settled page of the full-screen viewer counts, and only while the app is in the foreground with the screen interactive (`PowerManager.isInteractive`); the entry/exit morph, background and Trash previews are excluded.
+
+**Rules:** a visit needs ≥1s to be written; time stops after 15s without a touch (tap, zoom, pan, long-press and action-sheet taps all restart the window) and one visit is capped at 120s. The idle window is deliberately longer than the image watch threshold, so a quiet 10s+ look can qualify without gestures. An image is a **watch** at 10s of active time; a video is timed by real playback (wall clock while `isPlaying`, loop-safe) and is a watch at 3s. The row is replaced in place, so the visit count never inflates; the tracker flushes on page settle, background, close and dispose.
+
+**Smart tile:** first cell of the Albums grid (square, same density), shown once any visit exists and hidden in selection mode. The item with the most accumulated viewing time is drawn as a **heavy blur** (28dp via `RenderEffect`, scaled 1.2× so no transparent edges; API 31+ only — older versions show the plain surface instead, never the sharp photo) with no dimming overlay, deliberately unreadable so the tile stays a hint rather than a preview. A 26dp `BarChart` glyph sits on a 52dp black-38% disc for legibility, labelled “Insights” + “N items”. It is not a selection unit, so long-press/glide ignore it.
+
+**Screen** (opaque cover, slides/fades like Settings): frosted header “Insights” + back. Summary card (“On screen” 12sp muted label, total time 30sp SemiBold, “N items · M watches” 13sp muted), period chips (7 days / 30 days / All time), lens chips (Most watched / Longest look / Revisited, horizontally scrollable), a one-line legend (“A watch is one viewing of 10s or more (3s for video). Counting pauses after 15s without a touch.”), then a 12dp group of ranked rows: rank number, 52dp thumb 10dp corners (+ video badge), name 14sp Medium 1 line, 3dp relative bar on a `Border` track, “time · N watches” 11sp muted. The aggregate covers every item (the summary counts all of them) but at most 60 rows are rendered. Tapping row *k* opens the viewer on the rendered list at *k* with `Rect.Zero` (fade, no tile morph — tile rects are ignored while the Insights cover is up); closing the viewer returns to Insights. Footer: “Measured only while Foto is on screen, and stored on this device.”
+
+**Lenses:** Most watched = watch count desc → total time → recency; Longest look = longest single visit; Revisited = visit count → recency. Period chips filter by visit start time.
+
+**Settings → Privacy:** “Record viewing time” toggle (default on; off stops new writes, history stays) and “Clear viewing history” (trailing item count, destructive confirm) which wipes the table and hides the tile. Nothing leaves the device; rows older than two years are pruned on the first write per process, and a permanently deleted file's history is dropped from the log so it can't reappear as a dead row or tile preview.
+
+---
+
+## 16. First-Run Tutorial (5 pages)
 
 Overlay on gallery when permissions granted + unseen; replayable via Settings (appears immediately, no restart). Back/Skip/Get Started all complete (persist seen).
 
@@ -479,7 +498,7 @@ Overlay on gallery when permissions granted + unseen; replayable via Settings (a
 
 ---
 
-## 16. Motion System (repro recipe)
+## 17. Motion System (repro recipe)
 
 - Tweens `FastOutSlowInEasing` unless noted: dialog scrim 180ms fade / card 240ms scale 0.92→1 + 180ms fade; delete-progress bar frame-chased (τ≈110ms, 50ms to finish) + 360ms hold at 100%; deck forward 320ms / reverse 260ms; viewer entry 280ms / exit 240ms; delete/restore slide 280ms; chrome fade 200ms; poster veil 150ms; poster fade 120ms; seeker thicken 150ms; video HUD hide 200ms; pull-to-refresh minimum 300ms.
 - Bottom action drawer: the sheet slides 260ms up / 200ms down and fades; its full-screen scrim only fades (180/140ms). Never slide the scrim with the sheet — a sliding tint reads as a second page entering from the bottom.
@@ -489,7 +508,7 @@ Overlay on gallery when permissions granted + unseen; replayable via Settings (a
 
 ---
 
-## 17. Content Discovery & Data Behaviors (user-visible)
+## 18. Content Discovery & Data Behaviors (user-visible)
 
 - Sort: Newest/Oldest/Name A–Z/Z–A applies to folders + items.
 - Grid density: Small/Medium/Large changes min tile only, no reload.
@@ -504,9 +523,9 @@ Overlay on gallery when permissions granted + unseen; replayable via Settings (a
 
 ---
 
-## 18. Accessibility & Edge Cases
+## 19. Accessibility & Edge Cases
 
-- Content descriptions: Search/Settings/Filter/Back/Clear/Selected/Select all/Exit selection/Video/Restore/Delete/Remove/Crop reset/Lock/Home/Aspect/Preview.
+- Content descriptions: Search/Settings/Filter/Back/Clear/Selected/Select all/Exit selection/Video/Restore/Delete/Remove/Crop reset/Lock/Home/Aspect/Preview/Insights/period and lens chips (selectable Tabs).
 - Live-region polite on toast/undo; switches expose Role.Switch (whole row toggleable); action rows Role.Button; radial hint announces “Release to X”.
 - Touch targets: header icons 40dp+ (viewer back 40dp, actions 44dp), drawer wells 54dp, video controls 44dp, tutorial CTA 50dp.
 - Empty/error/loading covered per screen (§6.4, §8, §11 error, permission fallback, cache “Nothing cached”, trash “empty”, folders “No folders added”).
