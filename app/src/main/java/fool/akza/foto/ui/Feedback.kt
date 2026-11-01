@@ -2,7 +2,6 @@ package fool.akza.foto.ui
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -32,9 +31,13 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -53,6 +56,8 @@ import fool.akza.foto.ui.theme.Surface as SurfaceColor
 import fool.akza.foto.ui.theme.TextMuted
 import fool.akza.foto.ui.theme.TextPrimary
 import kotlinx.coroutines.delay
+import kotlin.math.abs
+import kotlin.math.exp
 import kotlin.math.roundToInt
 
 /** Shadcn-style toast: a small rounded pill at the bottom center that auto-dismisses. */
@@ -160,32 +165,72 @@ internal fun UndoBar(key: Int, onUndo: () -> Unit, onDismiss: () -> Unit) {
     }
 }
 
+/** Time constant (seconds) of the bar chasing the real count while it runs. */
+private const val ProgressChaseTau = 0.11f
+/** Faster catch-up once every item is done, so the bar lands before the card exits. */
+private const val ProgressFinishTau = 0.05f
+/** Gap small enough to land exactly on the target instead of easing forever. */
+internal const val ProgressSnapEpsilon = 0.002f
+
+/**
+ * One frame of the delete bar's chase toward [target].
+ *
+ * Always moves toward the target without overshooting, easing exponentially
+ * with a fixed time constant so a burst of per-file updates keeps one
+ * continuous velocity (a fixed-duration tween per update restarts its easing
+ * curve on every file, which is what made the bar look steppy). Snaps once it
+ * is within [ProgressSnapEpsilon] so the bar lands exactly on 100%.
+ */
+internal fun chaseProgress(current: Float, target: Float, dtSeconds: Float): Float {
+    if (dtSeconds <= 0f) return current
+    val gap = target - current
+    if (abs(gap) <= ProgressSnapEpsilon) return target
+    val tau = if (target >= 1f) ProgressFinishTau else ProgressChaseTau
+    return current + gap * (1f - exp(-dtSeconds / tau))
+}
+
 /** Modal progress card used while a bulk delete copies/trashes items. */
 @Composable
 internal fun DeleteProgressOverlay(
     visible: Boolean,
+    runId: Int,
     done: Int,
     total: Int,
 ) {
-    // Keep the last real values while the exit animation plays, and animate the
-    // bar between per-item updates so 5 files read as one continuous motion.
-    var shownDone by remember { mutableStateOf(done) }
-    var shownTotal by remember { mutableStateOf(total) }
-    LaunchedEffect(done, total) {
+    // Everything is keyed on [runId], so a new delete starts from zero instead of
+    // animating backwards from whatever fraction the previous run ended on. The
+    // live values keep updating while the run is active and freeze once it ends,
+    // so the card's exit still shows the completed count.
+    var targetDone by remember(runId) { mutableIntStateOf(done) }
+    var targetTotal by remember(runId) { mutableIntStateOf(total) }
+    LaunchedEffect(runId, done, total) {
         if (total > 0) {
-            shownDone = done
-            shownTotal = total
+            targetDone = done
+            targetTotal = total
         }
     }
-    val target = if (shownTotal <= 0) 0f else {
-        (shownDone.toFloat() / shownTotal).coerceIn(0f, 1f)
+    val target = if (targetTotal <= 0) 0f else {
+        (targetDone.toFloat() / targetTotal).coerceIn(0f, 1f)
     }
-    val animated by animateFloatAsState(
-        targetValue = target,
-        animationSpec = tween(durationMillis = 320, easing = FastOutSlowInEasing),
-        label = "deleteProgress",
-    )
-    val animatedDone = (animated * shownTotal).roundToInt().coerceIn(0, shownTotal)
+
+    // Frame-driven chase instead of a per-item tween, so the bar reads as one
+    // continuous sweep no matter how fast or uneven the individual files are.
+    var shown by remember(runId) { mutableFloatStateOf(0f) }
+    val liveTarget by rememberUpdatedState(target)
+    LaunchedEffect(runId, visible) {
+        if (!visible) return@LaunchedEffect
+        var lastNanos = 0L
+        while (true) {
+            withFrameNanos { now ->
+                if (lastNanos != 0L) {
+                    val dt = ((now - lastNanos) / 1_000_000_000f).coerceIn(0f, 0.1f)
+                    shown = chaseProgress(shown, liveTarget, dt)
+                }
+                lastNanos = now
+            }
+        }
+    }
+    val animatedDone = (shown * targetTotal).roundToInt().coerceIn(0, targetTotal)
     val interaction = remember { MutableInteractionSource() }
 
     AnimatedVisibility(
@@ -233,7 +278,7 @@ internal fun DeleteProgressOverlay(
                         )
                         Spacer(Modifier.height(14.dp))
                         LinearProgressIndicator(
-                            progress = { animated },
+                            progress = { shown },
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .height(4.dp)
@@ -246,7 +291,7 @@ internal fun DeleteProgressOverlay(
                             text = stringResource(
                                 R.string.delete_progress_count,
                                 animatedDone,
-                                shownTotal,
+                                targetTotal,
                             ),
                             color = TextMuted,
                             fontSize = 13.sp,

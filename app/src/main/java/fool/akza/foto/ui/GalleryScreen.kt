@@ -77,6 +77,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -384,13 +385,6 @@ fun GalleryScreen(
         }
     }
 
-    // Surface MediaStore changes so the gallery reloads when files
-    // appear or disappear. MainActivity's SyncCoordinator (debounced) emits;
-    // the composed gallery collects.
-    LaunchedEffect(Unit) {
-        GalleryEvents.reload.collect { reload() }
-    }
-
     // Pre-warm the thumbnail cache for everything currently visible. Folder
     // covers and loose items carry full MediaItems, so the warm pass uses the
     // same identity-derived keys the UI reads. Folder contents are then
@@ -646,12 +640,27 @@ fun GalleryScreen(
     var nextConsentLaunch by remember { mutableStateOf<androidx.activity.result.IntentSenderRequest?>(null) }
     // Progress for a blocking bulk-delete modal; null when no delete is running.
     var deleteProgress by remember { mutableStateOf<DeleteProgress?>(null) }
+    // Bumped once per bulk-delete run so the modal starts its bar from zero for
+    // a new batch instead of animating back from the previous run's fraction.
+    var deleteProgressRun by remember { mutableIntStateOf(0) }
     // Shared busy overlay for single-item deletes and copy/move transfers.
     var busyMessage by remember { mutableStateOf<UiText?>(null) }
     // Last non-null busy message, kept so the overlay can animate out.
     var lastBusyMessage by remember { mutableStateOf<UiText?>(null) }
     LaunchedEffect(busyMessage) {
         if (busyMessage != null) lastBusyMessage = busyMessage
+    }
+
+    // Surface MediaStore changes so the gallery reloads when files appear or
+    // disappear. MainActivity's SyncCoordinator (debounced) emits; the composed
+    // gallery collects. A running bulk delete is skipped: it trashes files one
+    // by one and each removal pings MediaStore, so reloading mid-batch competes
+    // with the progress UI (the bar stalls, then catches up). The batch reloads
+    // itself once it finishes.
+    LaunchedEffect(Unit) {
+        GalleryEvents.reload.collect {
+            if (deleteProgress == null) reload()
+        }
     }
 
     // Removes deleted items from the visible content + viewer and reloads.
@@ -867,6 +876,7 @@ fun GalleryScreen(
             val bulk = items.size > 1
             if (saf.isNotEmpty()) {
                 if (bulk) {
+                    deleteProgressRun += 1
                     deleteProgress = DeleteProgress(done = 0, total = items.size)
                 } else {
                     busyMessage = UiText.Res(R.string.deleting)
@@ -1443,6 +1453,7 @@ fun GalleryScreen(
         val progress = deleteProgress
         DeleteProgressOverlay(
             visible = progress != null,
+            runId = deleteProgressRun,
             done = progress?.done ?: 0,
             total = progress?.total ?: 0,
         )

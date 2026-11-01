@@ -159,7 +159,7 @@ No custom font family; system default with Material3 defaults. Exact usages:
 - Shown for bulk deletes that include SAF documents (MediaStore-only batches use the platform prompt). Full-screen black 68% scrim; taps are swallowed.
 - Centered card: full-width with 32dp side margins, `#09090B`, 16dp corners, 1dp `Border`, 8dp shadow, 24dp inner padding.
 - Title “Deleting items…” 18sp SemiBold; 14dp gap; 4dp rounded progress bar (white fill on `#27272A` track); 10dp gap; “N of M” 13sp muted.
-- The bar animates every update over 320ms `FastOutSlowIn`, and the displayed count is interpolated from the same fraction (no per-item jump). On completion it holds at 100% for 360ms before the modal exits.
+- The bar chases the real count with a frame-driven exponential ease (τ ≈ 110ms, 50ms once every item is done), snapping exactly onto the target, so a burst of per-file updates reads as one continuous sweep instead of a re-started tween per item. State is keyed by a per-run id: a new batch starts from 0 rather than animating back from the previous run’s fraction. The displayed count is interpolated from the same fraction. On completion it holds at 100% for 360ms before the modal exits. Library reloads are deferred while a batch runs (the batch reloads once at the end), so MediaStore churn can’t stall the progress loop mid-delete.
 - Enter: scrim 180ms fade + card 0.94→1 scale / 220ms + fade. Exit: 0.96 scale / 180ms + 140ms fade.
 
 ### 4.6 Confirmation dialog (shared)
@@ -481,7 +481,7 @@ Overlay on gallery when permissions granted + unseen; replayable via Settings (a
 
 ## 16. Motion System (repro recipe)
 
-- Tweens `FastOutSlowInEasing` unless noted: dialog scrim 180ms fade / card 240ms scale 0.92→1 + 180ms fade; delete-progress bar 320ms per update + 360ms hold at 100%; deck forward 320ms / reverse 260ms; viewer entry 280ms / exit 240ms; delete/restore slide 280ms; chrome fade 200ms; poster veil 150ms; poster fade 120ms; seeker thicken 150ms; video HUD hide 200ms; pull-to-refresh minimum 300ms.
+- Tweens `FastOutSlowInEasing` unless noted: dialog scrim 180ms fade / card 240ms scale 0.92→1 + 180ms fade; delete-progress bar frame-chased (τ≈110ms, 50ms to finish) + 360ms hold at 100%; deck forward 320ms / reverse 260ms; viewer entry 280ms / exit 240ms; delete/restore slide 280ms; chrome fade 200ms; poster veil 150ms; poster fade 120ms; seeker thicken 150ms; video HUD hide 200ms; pull-to-refresh minimum 300ms.
 - Bottom action drawer: the sheet slides 260ms up / 200ms down and fades; its full-screen scrim only fades (180/140ms). Never slide the scrim with the sheet — a sliding tint reads as a second page entering from the bottom.
 - Springs: radial open `MediumBouncy/MediumLow`, close `NoBouncy/Medium`, bloom allows 1.2 overshoot; double-tap zoom `NoBouncy/MediumLow`.
 - Shimmer 1200ms linear infinite; sync slide from top + fade (defaults); settings/folders/trash/search slide from right + fade; drawer slide from bottom + fade; toast slide half-height + fade.
