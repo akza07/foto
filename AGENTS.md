@@ -33,6 +33,24 @@ Then perform `cp apk-output/foto-arm64-android16-release.apk /media/XYZ/Diffusio
 
 - **App identity**: application ID `fool.akza.foto`, launcher name `Foto`.
 
+## Versioning
+
+Every major feature or user-visible behaviour change must increment the app
+version, and the bump must be part of the same change that ships it.
+
+- **Source of truth**: `app/build.gradle.kts` → `android.defaultConfig.versionCode`
+  (monotonic integer) and `versionName` (`major.minor`, shown in Settings → About
+  and used in the APK metadata). Do not introduce a second version source.
+- **`versionCode`**: increment for every release APK that ships any change. Never
+  reuse or decrease it — Android relies on it for updates.
+- **`versionName`**: increment for every major feature or behaviour change —
+  minor (`1.1` → `1.2`) for a feature release, major for a redesign or a
+  compatibility break. Small internal fixes may bump only `versionCode`.
+- **Ordering**: bump before `./gradlew :app:assembleRelease`, so the APK, the
+  About row and the artifact copied to `apk-output/` all report the same version.
+- **Commit body**: mention the new version (e.g. “Bump to 1.2 (versionCode 3)”) so
+  the shipped artifact stays traceable.
+
 ## Commit messages
 
 Follow the format already used in this repository. Use a conventional subject
