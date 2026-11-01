@@ -75,7 +75,7 @@ object MetadataStore {
                     put("bucket_name", item.bucketName)
                     put("mime_type", item.mimeType)
                     put("stamp", item.previewStamp())
-                    put("search_text", text.lowercase().take(MaxSearchTextLength))
+                    put("search_text", normalizeForSearch(text).take(MaxSearchTextLength))
                     put("indexed_at", System.currentTimeMillis())
                 }
                 helper(context).writableDatabase.insertWithOnConflict(
@@ -92,7 +92,7 @@ object MetadataStore {
     /** URIs whose indexed metadata contains [query]. */
     suspend fun search(context: Context, query: String): Set<String> =
         withContext(Dispatchers.IO) {
-            val needle = query.trim().lowercase()
+            val needle = normalizeForSearch(query)
             if (needle.isEmpty()) return@withContext emptySet()
             runCatching {
                 helper(context).readableDatabase.query(
@@ -171,6 +171,17 @@ object MetadataStore {
             }
         }
     }.trim()
+
+    /**
+     * Lowercases and turns punctuation into single spaces, so a query matches the
+     * way a person types it: "ISO 400" finds `ISO: 400`, "37 46" finds
+     * `37° 46' 29.6" N`, and "canon eos" finds `Camera model: Canon EOS R6`.
+     */
+    internal fun normalizeForSearch(text: String): String =
+        text.lowercase().replace(SearchNoise, " ").trim()
+
+    /** Everything that isn't a letter or digit is a separator for search. */
+    private val SearchNoise = Regex("[^\\p{L}\\p{N}]+")
 
     /** Escapes `%` and `_` so a literal query can't turn into a wildcard. */
     internal fun likePattern(query: String): String {

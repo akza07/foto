@@ -2,7 +2,6 @@ package fool.akza.foto.ui
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
-import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -65,9 +64,6 @@ internal fun InfoSheet(item: MediaItem, onClose: () -> Unit) {
     // PNG text chunks can be long (comments, XMP, license blobs); keep the
     // block readable until the reader asks for the rest.
     var expandedPngText by remember(item) { mutableStateOf(false) }
-
-    // Back closes the sheet, not the viewer underneath it.
-    BackHandler { onClose() }
 
     // Back closes the sheet, not the viewer underneath it.
     BackHandler { onClose() }

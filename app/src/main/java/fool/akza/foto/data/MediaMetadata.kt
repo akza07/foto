@@ -11,6 +11,7 @@ import fool.akza.foto.R
 enum class MetadataGroup(@StringRes val titleRes: Int) {
     FILE(R.string.info_section_file),
     IMAGE(R.string.info_section_image),
+    PNG_TEXT(R.string.info_section_png_text),
     VIDEO(R.string.info_section_video),
     AUDIO(R.string.info_section_audio),
     DATES(R.string.info_section_dates),
@@ -18,7 +19,6 @@ enum class MetadataGroup(@StringRes val titleRes: Int) {
     EXPOSURE(R.string.info_section_exposure),
     LOCATION(R.string.info_section_location),
     TAGS(R.string.info_section_tags),
-    PNG_TEXT(R.string.info_section_png_text),
     OTHER(R.string.info_section_other),
 }
 

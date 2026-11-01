@@ -58,7 +58,8 @@ internal object MetadataReader {
             }
             pngText.toSection()?.let(sections::add)
         }
-        return sections
+        // Display order is the group order, whatever order the readers ran in.
+        return sections.sortedBy { it.group.ordinal }
     }
 
     /**
@@ -357,7 +358,7 @@ internal object MetadataReader {
             )
             tags.toSection()?.let(sections::add)
 
-            sections
+            sections.sortedBy { it.group.ordinal }
         } finally {
             runCatching { retriever.release() }
         }

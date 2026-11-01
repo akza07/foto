@@ -60,6 +60,18 @@ class MetadataStoreTest {
     }
 
     @Test
+    fun `queries match labels and values however punctuation is typed`() {
+        val text = MetadataStore.normalizeForSearch(
+            "Camera model: Canon EOS R6\nISO: 400\nLatitude: 37° 46' 29.6\" N\nComment (zTXt): hello",
+        )
+        assertTrue(text.contains("iso 400"))
+        assertTrue(text.contains("canon eos r6"))
+        assertTrue(text.contains("37 46 29 6 n"))
+        assertTrue(text.contains("comment ztxt"))
+        assertEquals("iso 400", MetadataStore.normalizeForSearch("  ISO:   400 "))
+    }
+
+    @Test
     fun `like patterns escape wildcards`() {
         assertEquals("%50\\%\\_off%", MetadataStore.likePattern("50%_off"))
         assertEquals("%a\\\\b%", MetadataStore.likePattern("a\\b"))
