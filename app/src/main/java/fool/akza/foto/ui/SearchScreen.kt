@@ -2,6 +2,15 @@ package fool.akza.foto.ui
 
 import android.net.Uri
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -43,6 +52,7 @@ import androidx.compose.runtime.setValue
 import kotlinx.coroutines.delay
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Rect
@@ -257,15 +267,21 @@ fun SearchScreen(
                     .padding(horizontal = 12.dp),
                 contentAlignment = Alignment.CenterStart,
             ) {
-                if (query.isEmpty()) {
-                    Text(
-                        text = stringResource(R.string.search_placeholder),
-                        color = TextMuted,
-                        fontSize = 16.sp,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
+                // The placeholder fades out as the first character lands instead
+                // of vanishing in one frame.
+                val placeholderAlpha by animateFloatAsState(
+                    targetValue = if (query.isEmpty()) 1f else 0f,
+                    animationSpec = tween(120),
+                    label = "search-placeholder",
+                )
+                Text(
+                    text = stringResource(R.string.search_placeholder),
+                    color = TextMuted,
+                    fontSize = 16.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.alpha(placeholderAlpha),
+                )
                 BasicTextField(
                     value = query,
                     onValueChange = { query = it },
@@ -278,7 +294,11 @@ fun SearchScreen(
                         .focusRequester(focusRequester),
                 )
             }
-            if (query.isNotEmpty()) {
+            AnimatedVisibility(
+                visible = query.isNotEmpty(),
+                enter = fadeIn(tween(120)),
+                exit = fadeOut(tween(120)),
+            ) {
                 IconButton(onClick = { query = "" }) {
                     Icon(
                         imageVector = Icons.Outlined.Close,
@@ -291,8 +311,22 @@ fun SearchScreen(
         },
     ) { contentModifier ->
         val bottomInset = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
-        when {
-            query.isBlank() -> {
+        val state = when {
+            query.isBlank() -> SearchState.Hint
+            results.isEmpty() -> SearchState.Empty
+            else -> SearchState.Results
+        }
+        // Typing swaps three different layouts (hint, empty state, results).
+        // A short crossfade keeps that from reading as a hard cut; the grid
+        // itself animates its own items, so a query that stays in Results does
+        // not crossfade.
+        AnimatedContent(
+            targetState = state,
+            transitionSpec = { fadeIn(tween(180)) togetherWith fadeOut(tween(120)) },
+            label = "search-state",
+        ) { state ->
+        when (state) {
+            SearchState.Hint -> {
                 Box(modifier = contentModifier, contentAlignment = Alignment.Center) {
                     Text(
                         text = stringResource(R.string.search_hint),
@@ -305,7 +339,7 @@ fun SearchScreen(
                     )
                 }
             }
-            results.isEmpty() -> {
+            SearchState.Empty -> {
                 Box(modifier = contentModifier, contentAlignment = Alignment.Center) {
                     Text(
                         text = if (indexProgress.isIndexing) {
@@ -322,7 +356,7 @@ fun SearchScreen(
                     )
                 }
             }
-            else -> {
+            SearchState.Results -> {
                 LazyVerticalGrid(
                     columns = GridCells.Adaptive(minSize = minTileSize),
                     modifier = contentModifier.navigationBarsPadding(),
@@ -338,6 +372,7 @@ fun SearchScreen(
                     item(
                         key = "search-scope",
                         span = { GridItemSpan(maxLineSpan) },
+                        contentType = "caption",
                     ) {
                         Text(
                             text = stringResource(R.string.search_scope),
@@ -350,6 +385,7 @@ fun SearchScreen(
                         item(
                             key = "search-indexing",
                             span = { GridItemSpan(maxLineSpan) },
+                            contentType = "notice",
                         ) {
                             IndexingNotice(indexProgress.remaining, indexProgress.total)
                         }
@@ -362,17 +398,16 @@ fun SearchScreen(
                             item(
                                 key = "header:name:$label",
                                 span = { GridItemSpan(maxLineSpan) },
+                                contentType = "month",
                             ) {
                                 Text(
                                     text = label,
+                                    modifier = Modifier
+                                        .animateItem()
+                                        .padding(start = 4.dp, top = 8.dp, bottom = 2.dp),
                                     color = TextMuted,
                                     fontSize = 13.sp,
                                     fontWeight = FontWeight.SemiBold,
-                                    modifier = Modifier.padding(
-                                        start = 4.dp,
-                                        top = 8.dp,
-                                        bottom = 2.dp,
-                                    ),
                                 )
                             }
                             items(group, key = { "search:${it.uri}" }) { item ->
@@ -380,8 +415,11 @@ fun SearchScreen(
                                     item = item,
                                     metadataOnly = false,
                                     modifier = Modifier.animateItem(
-                                        fadeInSpec = null,
-                                        fadeOutSpec = null,
+                                        fadeInSpec = tween(180),
+                                        fadeOutSpec = tween(140),
+                                        placementSpec = spring(
+                                            stiffness = Spring.StiffnessMediumLow,
+                                        ),
                                     ),
                                     results = results,
                                     keyboard = keyboard,
@@ -397,21 +435,27 @@ fun SearchScreen(
                         item(
                             key = "header:metadata",
                             span = { GridItemSpan(maxLineSpan) },
+                            contentType = "month",
                         ) {
-                            Text(
-                                text = stringResource(
-                                    R.string.search_metadata_header,
-                                    metadataOnlyResults.size,
-                                ),
-                                color = TextPrimary,
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                modifier = Modifier.padding(
-                                    start = 4.dp,
-                                    top = 16.dp,
-                                    bottom = 2.dp,
-                                ),
-                            )
+                            // The count grows while the background pass runs, so
+                            // it fades between values instead of flickering.
+                            AnimatedContent(
+                                targetState = metadataOnlyResults.size,
+                                transitionSpec = {
+                                    fadeIn(tween(160)) togetherWith fadeOut(tween(100))
+                                },
+                                label = "metadata-count",
+                            ) { count ->
+                                Text(
+                                    text = stringResource(R.string.search_metadata_header, count),
+                                    color = TextPrimary,
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    modifier = Modifier
+                                        .animateItem()
+                                        .padding(start = 4.dp, top = 16.dp, bottom = 2.dp),
+                                )
+                            }
                         }
                         metadataOnlyResults
                             .groupBy { monthLabel(it.dateAdded, unknownDateLabel) }
@@ -419,17 +463,16 @@ fun SearchScreen(
                                 item(
                                     key = "header:meta:$label",
                                     span = { GridItemSpan(maxLineSpan) },
+                                    contentType = "month",
                                 ) {
                                     Text(
                                         text = label,
                                         color = TextMuted,
                                         fontSize = 13.sp,
                                         fontWeight = FontWeight.SemiBold,
-                                        modifier = Modifier.padding(
-                                            start = 4.dp,
-                                            top = 8.dp,
-                                            bottom = 2.dp,
-                                        ),
+                                        modifier = Modifier
+                                            .animateItem()
+                                            .padding(start = 4.dp, top = 8.dp, bottom = 2.dp),
                                     )
                                 }
                                 items(group, key = { "search:${it.uri}" }) { item ->
@@ -437,8 +480,11 @@ fun SearchScreen(
                                         item = item,
                                         metadataOnly = true,
                                         modifier = Modifier.animateItem(
-                                            fadeInSpec = null,
-                                            fadeOutSpec = null,
+                                            fadeInSpec = tween(180),
+                                            fadeOutSpec = tween(140),
+                                            placementSpec = spring(
+                                                stiffness = Spring.StiffnessMediumLow,
+                                            ),
                                         ),
                                         results = results,
                                         keyboard = keyboard,
@@ -452,5 +498,9 @@ fun SearchScreen(
                 }
             }
         }
+        }
     }
 }
+
+/** What the search body is showing; drives the crossfade between layouts. */
+private enum class SearchState { Hint, Empty, Results }
