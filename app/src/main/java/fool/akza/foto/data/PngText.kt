@@ -44,10 +44,14 @@ internal object PngText {
     /** Upper bound on the number of chunks returned for one file. */
     private const val MaxChunks = 64
 
+    /** Upper bound on the bytes read from one file, whatever the chunk headers say. */
+    private const val MaxFileBytes = 4 shl 20
+
     fun read(stream: InputStream): List<PngTextChunk> {
         if (!readFully(stream, Signature.size).contentEquals(Signature)) return emptyList()
         val chunks = mutableListOf<PngTextChunk>()
-        while (chunks.size < MaxChunks) {
+        var consumed = Signature.size
+        while (chunks.size < MaxChunks && consumed < MaxFileBytes) {
             val lengthBytes = readFully(stream, 4)
             if (lengthBytes.size < 4) break
             val length = readInt(lengthBytes)
@@ -61,6 +65,7 @@ internal object PngText {
             // Every chunk is followed by a CRC we don't need to verify: a bad
             // CRCs only means a corrupt file, and the value itself is still text.
             readFully(stream, 4)
+            consumed += 12 + length
             when (type) {
                 "tEXt" -> parseText(data)?.let { chunks += it }
                 "zTXt" -> parseCompressedText(data)?.let { chunks += it }

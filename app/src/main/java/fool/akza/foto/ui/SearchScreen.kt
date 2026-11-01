@@ -35,6 +35,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.delay
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
@@ -60,6 +61,9 @@ import fool.akza.foto.ui.theme.TextMuted
 import fool.akza.foto.ui.theme.TextPrimary
 
 private val SearchGridSpacing = 8.dp
+
+/** Quiet period before a metadata query runs, so per-keystroke scans can't queue. */
+private const val SearchDebounceMs = 150L
 
 /** One search result tile; metadata-only hits are marked so the match is clear. */
 @Composable
@@ -145,7 +149,14 @@ fun SearchScreen(
     var metadataHits by remember { mutableStateOf<Set<String>>(emptySet()) }
     LaunchedEffect(query) {
         val q = query.trim()
-        metadataHits = if (q.isEmpty()) emptySet() else MetadataStore.search(context, q)
+        if (q.isEmpty()) {
+            metadataHits = emptySet()
+            return@LaunchedEffect
+        }
+        // Typing is faster than a LIKE scan over the whole index; a short pause
+        // keeps one query in flight instead of a queue of them.
+        delay(SearchDebounceMs)
+        metadataHits = MetadataStore.search(context, q)
     }
 
     val trimmedQuery = query.trim()
