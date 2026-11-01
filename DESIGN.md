@@ -173,7 +173,7 @@ No custom font family; system default with Material3 defaults. Exact usages:
 
 ### 4.7 Option dialog (sort/grid)
 
-- Same scrim/card geometry as confirm (70% scrim, 32dp margins, 16dp corners, 1dp `Border`, 20dp inner, 18sp title + 8dp gap).
+- Same scrim/card geometry as confirm (70% scrim, 32dp margins, 16dp corners, 1dp `Border`, 20dp inner, 18sp title + 8dp gap). Enter: same bloom as the confirm dialog (180ms scrim fade, card 0.92→1 scale / 240ms + 180ms fade).
 - Each option: full-width 8dp corners, 8dp horizontal / 12dp vertical padding. Label 15sp (current: `#FAFAFA` SemiBold; others: muted Normal) + current shows 18dp Check `#FAFAFA` (“Selected”).
 - Tap selects, persists, closes (sort also reloads gallery).
 
@@ -409,7 +409,7 @@ Real playback via single ExoPlayer per viewer session (no per-page players). Aud
 
 **Action bar (edge chosen in Settings → Display → Selection actions, right side by default):** a compact vertical rail hugging the left or right physical edge (RTL does not mirror it), 76dp wide, `#09090B`, 16dp corners and 12dp elevation, 12dp off the edge and above the nav-bar inset. Four actions stacked Delete / Copy / Move / Share, each a full-width 10dp-round clickable with 4dp/8dp padding: 22dp white icon + 3dp gap + 11sp Medium muted label. Taps that land between the actions are swallowed so they cannot toggle a tile hidden behind the rail. Windows shorter than 600dp (landscape phones, short split-screen) keep the original full-width bar instead, since a rail would fill the screen: single row 16dp/4dp `SpaceEvenly`, same action cells, nav-bar padding. The selection count and Close live only in the top header, so the bar stays short and leaves more grid visible.
 
-**Behaviors:** Delete → system trash request for MediaStore items, private trash for SAF documents (in-app confirm for the latter) → Undo. Single SAF deletes show a blocking “Deleting…” spinner; bulk deletes show the blocking “Deleting items…” progress modal (see §4.5). Pull down on the root Albums grid or an album grid to reload media and previews; the indicator sits below the frosted header and stays at least 300ms. Selection chrome animates: header cross-fades, badges fade+scale in, action bar slides in from its configured edge (up from the bottom, or in from the left/right). Copy/Move → system directory picker (SAF) + busy overlay (“Copying/Moving N items…”) → toasts (“Copied/Moved N items” or partial “Moved X, copied Y”). Share → chooser with grants.
+**Behaviors:** Delete always asks first for a bulk selection: the confirm dialog shows the resolved item count and whether the delete is recoverable, regardless of the “Confirm before deleting” preference, because one mis-tap can remove a whole album. Confirming runs the system trash request for MediaStore items and the private trash for SAF documents → Undo. Single SAF deletes show a blocking “Deleting…” spinner; bulk deletes show the blocking “Deleting items…” progress modal (see §4.5). Pull down on the root Albums grid or an album grid to reload media and previews; the indicator sits below the frosted header and stays at least 300ms. Selection chrome animates: header cross-fades, badges fade+scale in, action bar slides in from its configured edge (up from the bottom, or in from the left/right). Copy/Move → system directory picker (SAF) + busy overlay (“Copying/Moving N items…”) → toasts (“Copied/Moved N items” or partial “Moved X, copied Y”). Share → chooser with grants.
 
 ---
 
@@ -428,10 +428,11 @@ Real playback via single ExoPlayer per viewer session (no per-page players). Aud
    - Toggle “Prefer 120Hz refresh rate” / “Run the display at up to 120Hz on supported devices.” (default on).
    - Action+chevron “Sort order” / “How media and folders are ordered.” trailing current label → dialog Newest/Oldest/Name A–Z/Z–A (default Newest).
    - Action+chevron “Grid size” / “Thumbnail density in the grid.” trailing label → dialog Small (88dp) / Medium (112dp default) / Large (144dp).
+   - Action+chevron “Selection actions” / “Edge the multi-select bar sits on, for one-handed reach.” trailing Right side (default) / Left side / Bottom → moves the multi-select bar to that physical edge; windows shorter than 600dp keep the bottom bar.
 2. **Playback**
    - Toggle “Loop videos” / “Restart a video when it ends.” (default off).
 3. **Behavior**
-   - Toggle “Confirm before deleting” / “Show a confirmation dialog before deleting photos and videos.” (default on).
+   - Toggle “Confirm before deleting” / “Show a confirmation dialog before deleting photos and videos.” (default on; applies to single-item deletes — bulk selection deletes always confirm).
 4. **Library** (changes reload gallery)
    - Toggle “Respect .nomedia” / “Hide media in folders marked .nomedia, including inside folders you add.” (default on; hides granted-tree `.nomedia` when on, shows when off; default view already excludes via scanner).
    - Toggle “Only show selected folders” / ON “Show only media inside the folders you add.” / OFF “Show all media except the folders you add.” (default off).

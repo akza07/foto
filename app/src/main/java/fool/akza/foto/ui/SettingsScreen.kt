@@ -449,7 +449,7 @@ private fun SettingsRoot(
     }
 }
 
-/** Simple single-choice dialog reused by the sort-order and grid-size rows. */
+/** Simple single-choice dialog reused by the sort/grid/selection-placement rows. */
 @Composable
 private fun <T> OptionPickerDialog(
     title: String,
@@ -459,13 +459,7 @@ private fun <T> OptionPickerDialog(
     onSelect: (T) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(AmoledBlack.copy(alpha = 0.7f))
-            .clickable(onClick = onDismiss, indication = null, interactionSource = null),
-        contentAlignment = Alignment.Center,
-    ) {
+    AnimatedDialog(onDismiss = onDismiss) {
         Surface(
             modifier = Modifier
                 .fillMaxWidth()

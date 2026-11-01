@@ -1401,12 +1401,11 @@ fun GalleryScreen(
                         batchDeleteScope.launch {
                             val items = resolveSelectionItems()
                             if (items.isNotEmpty()) {
-                                if (needsAppConfirm(items)) {
-                                    pendingBatchDelete = items
-                                } else {
-                                    requestBatchDelete(items)
-                                    clearSelection()
-                                }
+                                // Bulk deletes always ask first, even when the system
+                                // trash prompt would follow: one mis-tap in selection
+                                // mode can remove a whole album, so the count and the
+                                // undo story are shown before anything disappears.
+                                pendingBatchDelete = items
                             }
                         }
                     }

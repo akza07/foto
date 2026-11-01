@@ -250,8 +250,9 @@ edge-to-edge rendering.
   so it stays under the thumb one-handed; Settings → Display → Selection actions
   can move it to the left side or back to a full-width bottom bar, and windows
   shorter than 600dp (landscape phones) keep the bottom bar. Copy/Move use the
-  system directory picker (SAF). Deleting shows a blocking progress modal for
-  bulk private-trash copies.
+  system directory picker (SAF). Deleting always shows an in-app confirmation
+  with the resolved item count first, then a blocking progress modal for bulk
+  private-trash copies.
 - Keep holding and glide across tiles to sweep them: starting on an unselected
   tile adds every tile you cross, starting on an already selected one removes
   them. One glide is one direction; a fresh glide can go the other way.
