@@ -32,6 +32,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import fool.akza.foto.R
+import fool.akza.foto.data.MetadataIndexer
 import fool.akza.foto.data.thumbnails.ThumbCache
 import fool.akza.foto.ui.theme.Border
 import fool.akza.foto.ui.theme.Surface as ThemeSurface
@@ -41,16 +42,23 @@ import fool.akza.foto.ui.theme.TextPrimary
 private val BarShape = RoundedCornerShape(50)
 
 /**
- * Floating standalone pill showing thumbnail-caching progress. Content-sized
+ * Floating standalone pill showing background work: thumbnail caching first,
+ * then metadata indexing (which runs after it and feeds search). Content-sized
  * and rounded so it reads as an overlay — the caller is responsible for
  * positioning it (e.g. `align(Alignment.TopCenter)` + safe-area padding below
- * the app bar). Disappears automatically once `done == total`.
+ * the app bar). Disappears automatically once the work is done.
  */
 @Composable
 fun ThumbnailSyncBar(modifier: Modifier = Modifier) {
-    val progress by ThumbCache.progress.collectAsState()
+    val thumbs by ThumbCache.progress.collectAsState()
+    val metadata by MetadataIndexer.progress.collectAsState()
+    // Previews gate what the grid can draw, so they own the pill while they run;
+    // metadata indexing takes over the same spot afterwards.
+    val previews = thumbs.isIndexing
+    val progress = if (previews) thumbs.done to thumbs.total else metadata.done to metadata.total
+    val label = if (previews) R.string.caching_previews else R.string.indexing_metadata
     AnimatedVisibility(
-        visible = progress.isIndexing,
+        visible = previews || metadata.isIndexing,
         enter = slideInVertically(initialOffsetY = { -it }) + fadeIn(),
         exit = slideOutVertically(targetOffsetY = { -it }) + fadeOut(),
         modifier = modifier,
@@ -69,7 +77,7 @@ fun ThumbnailSyncBar(modifier: Modifier = Modifier) {
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.Start,
             ) {
-                if (progress.done < progress.total) {
+                if (progress.first < progress.second) {
                     CircularProgressIndicator(
                         modifier = Modifier.size(15.dp),
                         strokeWidth = 2.dp,
@@ -87,14 +95,18 @@ fun ThumbnailSyncBar(modifier: Modifier = Modifier) {
                 }
                 Spacer(Modifier.width(10.dp))
                 Text(
-                    text = stringResource(R.string.caching_previews),
+                    text = stringResource(label),
                     color = TextPrimary,
                     fontSize = 13.sp,
                     fontWeight = FontWeight.Medium,
                 )
                 Spacer(Modifier.width(8.dp))
                 Text(
-                    text = stringResource(R.string.caching_progress_count, progress.done, progress.total),
+                    text = stringResource(
+                        R.string.caching_progress_count,
+                        progress.first,
+                        progress.second,
+                    ),
                     color = TextMuted,
                     fontSize = 12.sp,
                 )

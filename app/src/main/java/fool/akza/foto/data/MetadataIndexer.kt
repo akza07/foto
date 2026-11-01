@@ -9,6 +9,10 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -31,6 +35,30 @@ object MetadataIndexer {
     private const val BatchSize = 25
 
     private const val PauseMs = 60L
+
+    /**
+     * Files still to read in the current pass. Indexing is invisible work that
+     * takes a while on a big library, so both the album screen (as a pill next to
+     * the thumbnail sync one) and the search screen (as a notice above the
+     * results) surface it instead of leaving people to wonder why a query about
+     * their camera finds nothing yet.
+     */
+    data class Progress(val total: Int = 0, val done: Int = 0) {
+        val isIndexing: Boolean get() = total > 0 && done < total
+
+        /** Files not read yet. */
+        val remaining: Int get() = (total - done).coerceAtLeast(0)
+    }
+
+    private val _progress = MutableStateFlow(Progress())
+
+    /** Live progress of the pass, or `0/0` when idle. */
+    val progress: StateFlow<Progress> = _progress.asStateFlow()
+
+    private val _generation = MutableStateFlow(0)
+
+    /** Bumped as the index grows, so open search results can refresh themselves. */
+    val generation: StateFlow<Int> = _generation.asStateFlow()
 
     private val mutex = Mutex()
 
@@ -60,7 +88,9 @@ object MetadataIndexer {
         val pending = items.filter { keys[it.uri.toString()] != known[it.uri.toString()] }
 
         var indexed = 0
+        var done = 0
         val batches = pending.chunked(BatchSize)
+        if (pending.isNotEmpty()) _progress.value = Progress(total = pending.size, done = 0)
         batches.forEachIndexed { batchIndex, batch ->
             batch.forEach { item ->
                 // Cancellation must unwind, not be logged as a per-file failure.
@@ -87,7 +117,11 @@ object MetadataIndexer {
                 } catch (e: Exception) {
                     AppLog.w("metadata: index failed for ${item.uri}", e)
                 }
+                done++
             }
+            // Publish per batch rather than per file: the pill only needs to move.
+            _progress.value = Progress(total = pending.size, done = done)
+            _generation.update { it + 1 }
             if (batchIndex < batches.lastIndex) delay(PauseMs)
         }
 
@@ -96,6 +130,7 @@ object MetadataIndexer {
         // empty library — settings (require-explicit, .nomedia) and transient
         // provider misses can filter everything out — so never prune on it.
         if (items.isNotEmpty()) MetadataStore.prune(context, keys.keys)
+        _progress.value = Progress()
         return indexed
     }
 

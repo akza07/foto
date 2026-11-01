@@ -188,12 +188,14 @@ No custom font family; system default with Material3 defaults. Exact usages:
 
 - 26dp circle, black 60%, centered 18dp white `PlayArrow` (“Video”). Bottom-end of tile with 8dp inset, drawn on top.
 
-### 4.10 Thumbnail sync pill (“Caching previews”)
+### 4.10 Background-work pill (“Caching previews” / “Indexing metadata”)
 
 - Top-center, 64dp below status-bar top, above Albums + album. Content-sized pill: 50dp round, `#09090B`, 1dp `#27272A` stroke, 12dp shadow. Row 16dp horizontal / 9dp vertical.
-- Leading: 15dp circular progress (2dp round, white on `#27272A` track) while `done < total`; else 15dp `Sync` outlined white. 10dp gap → “Caching previews” 13sp Medium white. 8dp gap → `done/total` 12sp muted.
+- The pill is shared by the two background passes, in order: preview caching first (it gates what the grid can draw), then metadata indexing (which feeds search). Same geometry for both; only the label changes to “Indexing metadata”.
+- Leading: 15dp circular progress (2dp round, white on `#27272A` track) while `done < total`; else 15dp `Sync` outlined white. 10dp gap → label 13sp Medium white. 8dp gap → `done/total` 12sp muted.
 - No percentage is shown: the total can grow while discovery is still running, so a percentage would jump backwards. The count is the only progress readout.
 - Slides+fades from top on enter/exit; visible only while indexing; hides when `done == total`.
+- Suppressed while the search screen is open: that screen reports the same work inline (see §8), and the pill would otherwise land on top of its scope caption.
 
 ### 4.11 Pull-to-refresh
 

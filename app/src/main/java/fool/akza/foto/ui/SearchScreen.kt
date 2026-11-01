@@ -5,6 +5,9 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
@@ -26,11 +29,13 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Search
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -55,10 +60,12 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import fool.akza.foto.R
 import fool.akza.foto.data.MediaItem
+import fool.akza.foto.data.MetadataIndexer
 import fool.akza.foto.data.MetadataStore
 import fool.akza.foto.data.matchesAllTokens
 import fool.akza.foto.data.tokenizeForSearch
 import fool.akza.foto.ui.theme.AmoledBlack
+import fool.akza.foto.ui.theme.Border
 import fool.akza.foto.ui.theme.TextMuted
 import fool.akza.foto.ui.theme.TextPrimary
 
@@ -66,6 +73,31 @@ private val SearchGridSpacing = 8.dp
 
 /** Quiet period before a metadata query runs, so per-keystroke scans can't queue. */
 private const val SearchDebounceMs = 150L
+
+/** Quiet progress line: search results improve while the background pass runs. */
+@Composable
+private fun IndexingNotice(remaining: Int, total: Int) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = 4.dp, top = 10.dp, bottom = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        CircularProgressIndicator(
+            modifier = Modifier.size(12.dp),
+            strokeWidth = 1.5.dp,
+            color = TextMuted,
+            trackColor = Border,
+        )
+        Spacer(Modifier.width(8.dp))
+        Text(
+            text = stringResource(R.string.search_indexing_notice, remaining, total),
+            color = TextMuted,
+            fontSize = 13.sp,
+            lineHeight = 18.sp,
+        )
+    }
+}
 
 /** One search result tile; metadata-only hits are marked so the match is clear. */
 @Composable
@@ -149,14 +181,20 @@ fun SearchScreen(
 
     val context = LocalContext.current
     var metadataHits by remember { mutableStateOf<Set<String>>(emptySet()) }
-    LaunchedEffect(query) {
+
+    // Indexing is background work; surface it and let results fill in as files
+    // are read rather than making the user retype the query later.
+    val indexProgress by MetadataIndexer.progress.collectAsState()
+    val indexGeneration by MetadataIndexer.generation.collectAsState()
+
+    LaunchedEffect(query, indexGeneration) {
         val q = query.trim()
         if (q.isEmpty()) {
             metadataHits = emptySet()
             return@LaunchedEffect
         }
-        // Typing is faster than a LIKE scan over the whole index; a short pause
-        // keeps one query in flight instead of a queue of them.
+        // Typing (or a batch of newly indexed files) can outpace a lookup; a
+        // short pause keeps one query in flight instead of a queue of them.
         delay(SearchDebounceMs)
         metadataHits = MetadataStore.search(context, q)
     }
@@ -270,7 +308,11 @@ fun SearchScreen(
             results.isEmpty() -> {
                 Box(modifier = contentModifier, contentAlignment = Alignment.Center) {
                     Text(
-                        text = stringResource(R.string.search_no_results),
+                        text = if (indexProgress.isIndexing) {
+                            stringResource(R.string.search_no_results_indexing, indexProgress.remaining)
+                        } else {
+                            stringResource(R.string.search_no_results)
+                        },
                         color = TextMuted,
                         fontSize = 14.sp,
                         textAlign = TextAlign.Center,
@@ -303,6 +345,14 @@ fun SearchScreen(
                             fontSize = 13.sp,
                             modifier = Modifier.padding(start = 4.dp, top = 4.dp),
                         )
+                    }
+                    if (indexProgress.isIndexing) {
+                        item(
+                            key = "search-indexing",
+                            span = { GridItemSpan(maxLineSpan) },
+                        ) {
+                            IndexingNotice(indexProgress.remaining, indexProgress.total)
+                        }
                     }
                     // Name hits first, grouped by month so long result sets
                     // stay navigable.
