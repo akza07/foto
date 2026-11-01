@@ -352,6 +352,13 @@ private fun SettingsRoot(
             item {
                 SettingsGroup {
                     SettingsToggleRow(
+                        title = stringResource(R.string.privacy_allow_sharing_title),
+                        subtitle = stringResource(R.string.privacy_allow_sharing_subtitle),
+                        checked = settings.allowSharing,
+                        onCheckedChange = { SettingsRepository.setAllowSharing(it) },
+                    )
+                    SettingsDivider()
+                    SettingsToggleRow(
                         title = stringResource(R.string.privacy_share_metadata_title),
                         subtitle = stringResource(R.string.privacy_share_metadata_subtitle),
                         checked = settings.stripShareMetadata,

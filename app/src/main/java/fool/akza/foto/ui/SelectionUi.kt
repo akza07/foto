@@ -124,7 +124,7 @@ internal fun SelectionActionBar(
     onDelete: () -> Unit,
     onCopy: () -> Unit,
     onMove: () -> Unit,
-    onShare: () -> Unit,
+    onShare: (() -> Unit)?,
     modifier: Modifier = Modifier,
 ) {
     if (placement == SelectionActionPlacement.BOTTOM) {
@@ -140,7 +140,7 @@ private fun SelectionBottomBar(
     onDelete: () -> Unit,
     onCopy: () -> Unit,
     onMove: () -> Unit,
-    onShare: () -> Unit,
+    onShare: (() -> Unit)?,
     modifier: Modifier = Modifier,
 ) {
     Surface(
@@ -160,7 +160,9 @@ private fun SelectionBottomBar(
             SelectionAction(Icons.Outlined.Delete, stringResource(R.string.action_delete), onDelete)
             SelectionAction(Icons.Outlined.ContentCopy, stringResource(R.string.action_copy), onCopy)
             SelectionAction(Icons.AutoMirrored.Outlined.DriveFileMove, stringResource(R.string.action_move), onMove)
-            SelectionAction(Icons.Outlined.Share, stringResource(R.string.action_share), onShare)
+            if (onShare != null) {
+                SelectionAction(Icons.Outlined.Share, stringResource(R.string.action_share), onShare)
+            }
         }
     }
 }
@@ -174,7 +176,7 @@ private fun SelectionSideRail(
     onDelete: () -> Unit,
     onCopy: () -> Unit,
     onMove: () -> Unit,
-    onShare: () -> Unit,
+    onShare: (() -> Unit)?,
     modifier: Modifier = Modifier,
 ) {
     Surface(
@@ -206,7 +208,9 @@ private fun SelectionSideRail(
                     stringResource(R.string.action_move),
                     onMove,
                 )
-                SelectionRailAction(Icons.Outlined.Share, stringResource(R.string.action_share), onShare)
+                if (onShare != null) {
+                    SelectionRailAction(Icons.Outlined.Share, stringResource(R.string.action_share), onShare)
+                }
             }
         }
     }

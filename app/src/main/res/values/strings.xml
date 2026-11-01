@@ -58,6 +58,8 @@
     <string name="trash_delete_confirm_message">This item will be removed from the trash forever. This can\'t be undone.</string>
     <string name="action_empty">Empty</string>
     <string name="section_privacy">Privacy</string>
+    <string name="privacy_allow_sharing_title">Allow sharing</string>
+    <string name="privacy_allow_sharing_subtitle">Show Share actions in the viewer and selection bar. Turn off to prevent accidental sharing of photos and videos.</string>
     <string name="privacy_share_metadata_title">Remove metadata when sharing photos</string>
     <string name="privacy_share_metadata_subtitle">Shared photos are re-saved without EXIF, GPS, XMP, PNG text or GIF comments. Rotation is kept for still photos; videos are shared unchanged.</string>
     <string name="privacy_attention_title">Record viewing time</string>

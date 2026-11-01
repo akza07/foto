@@ -252,7 +252,8 @@ private suspend fun AwaitPointerEventScope.drainUntilUp(pointerId: androidx.comp
  *   single-finger gestures yield to pinch-zoom.
  * - Long-press (images + videos): radial action wheel at the finger;
  *   videos offer Delete/Info/Share (no Crop); Wallpaper is only in the bottom
- *   action sheet. Swipe up: bottom action sheet.
+ *   action sheet. Swipe up: bottom action sheet. Share is omitted entirely when
+ *   the Allow sharing setting is off.
  * - Swipe down (at 1x / settled video): dismisses.
  * - Counter pill (top-left): current/total.
  * - Back button (top-left): dismisses.
@@ -271,6 +272,8 @@ fun FullImageViewer(
     onCrop: (MediaItem) -> Unit,
     onWallpaper: (MediaItem) -> Unit,
     loopVideos: Boolean = false,
+    /** Whether the wheel and action sheet offer Share. */
+    shareEnabled: Boolean = true,
     /** View/play only: no action wheel, drawer, delete, share, info, crop or wallpaper. */
     previewOnly: Boolean = false,
     pendingRemoval: MediaItem? = null,
@@ -593,7 +596,7 @@ fun FullImageViewer(
             when (action) {
                 ViewerAction.Delete -> if (!deleteInProgress) onDelete(item)
                 ViewerAction.Info -> onInfo(item)
-                ViewerAction.Share -> onShare(item)
+                ViewerAction.Share -> if (shareEnabled) onShare(item)
                 ViewerAction.Crop -> if (!item.isVideo) onCrop(item)
             }
         }
@@ -602,13 +605,15 @@ fun FullImageViewer(
     // adjacent pages share a media type. Read the current callback when the finger
     // lifts so a radial action always applies to the page being viewed now.
     val latestOnRadialAction = rememberUpdatedState(onRadialAction)
-    // Sectors offered by the wheel: videos drop Crop (Delete stays on top).
-    val radialActions = remember(currentPageIsVideo) {
-        if (currentPageIsVideo) {
+    // Sectors offered by the wheel: videos drop Crop (Delete stays on top),
+    // and Share disappears entirely when the privacy setting disables it.
+    val radialActions = remember(currentPageIsVideo, shareEnabled) {
+        val actions = if (currentPageIsVideo) {
             listOf(ViewerAction.Delete, ViewerAction.Info, ViewerAction.Share)
         } else {
             ViewerAction.entries
         }
+        if (shareEnabled) actions else actions.filterNot { it == ViewerAction.Share }
     }
     val latestRadialActions = rememberUpdatedState(radialActions)
     val latestIsVideo = rememberUpdatedState(currentPageIsVideo)
@@ -965,6 +970,7 @@ fun FullImageViewer(
         ActionSheet(
             visible = drawerVisible && !previewOnly,
             item = currentItem,
+            shareEnabled = shareEnabled,
             onCloseDrawer = { drawerVisible = false },
             onDelete = {
                 drawerVisible = false
@@ -1317,6 +1323,7 @@ private fun ZoomableImage(
 private fun ActionSheet(
     visible: Boolean,
     item: MediaItem?,
+    shareEnabled: Boolean,
     onCloseDrawer: () -> Unit,
     onDelete: () -> Unit,
     onShare: () -> Unit,
@@ -1387,7 +1394,14 @@ private fun ActionSheet(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceEvenly,
                     ) {
-                        ActionItem(Icons.Outlined.Share, stringResource(R.string.action_share), TextPrimary, onShare)
+                        if (shareEnabled) {
+                            ActionItem(
+                                Icons.Outlined.Share,
+                                stringResource(R.string.action_share),
+                                TextPrimary,
+                                onShare,
+                            )
+                        }
                         ActionItem(Icons.Outlined.Info, stringResource(R.string.info_title), TextPrimary, onInfo)
                         ActionItem(Icons.Outlined.Edit, stringResource(R.string.action_rename), TextPrimary, onRename)
                         ActionItem(Icons.Outlined.Delete, stringResource(R.string.action_delete), DeleteRed, onDelete)

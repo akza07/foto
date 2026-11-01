@@ -1307,7 +1307,7 @@ fun GalleryScreen(
     // runs off the main thread behind the same busy overlay as copy/move. The
     // setting applies to photos; videos keep their original container bytes.
     val prepareAndShare: suspend (List<MediaItem>) -> Unit = { items ->
-        if (items.isNotEmpty()) {
+        if (items.isNotEmpty() && appSettings.allowSharing) {
             val stripMetadata = appSettings.stripShareMetadata
             val preparing = stripMetadata && items.any { !it.isVideo }
             if (preparing) busyMessage = UiText.Res(R.string.share_preparing)
@@ -1569,6 +1569,7 @@ fun GalleryScreen(
                 onCrop = { item -> cropItem = item },
                 onWallpaper = { item -> wallpaperItem = item },
                 loopVideos = appSettings.loopVideos,
+                shareEnabled = appSettings.allowSharing,
             )
 
             // Crop is a full-screen editor layered above the viewer. Saving writes
@@ -1673,7 +1674,7 @@ fun GalleryScreen(
                 },
                 onCopy = launchCopy,
                 onMove = launchMove,
-                onShare = shareSelection,
+                onShare = if (appSettings.allowSharing) shareSelection else null,
             )
         }
 
