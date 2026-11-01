@@ -17,6 +17,12 @@ data class GalleryContent(
     val folders: List<MediaFolder>,
     val looseItems: List<MediaItem>,
     val allItems: List<MediaItem> = emptyList(),
+    /**
+     * True for the on-disk snapshot painted before the real scan lands: [folders]
+     * and [looseItems] are the exact grid to render, while [allItems] is still
+     * empty, so the UI must not derive albums from it.
+     */
+    val provisional: Boolean = false,
 )
 
 data class MediaInfo(
@@ -397,21 +403,6 @@ object MediaRepository {
      * All items in every visible folder plus all loose items, in one pass.
      * Used to AoT-warm the thumbnail cache so opening any album is instant.
      */
-    suspend fun loadAllItems(
-        context: Context,
-        content: GalleryContent,
-        excludeUris: Set<Uri> = emptySet(),
-        excludePaths: Set<String> = emptySet(),
-    ): List<MediaItem> =
-        withContext(Dispatchers.IO) {
-            val folderItems = content.folders.flatMap {
-                loadBucket(context, it, excludeUris, excludePaths)
-            }
-            (folderItems + content.looseItems).filterNot {
-                it.isExcluded(excludeUris, excludePaths)
-            }
-        }
-
     /**
      * Resolves a single content Uri handed over by another app (VIEW/SEND) into a
      * [MediaItem] so the viewer can open it. Falls back to a minimal item built
@@ -948,5 +939,5 @@ object MediaRepository {
  * canonical path so a lingering MediaStore twin of a SAF-deleted file (same
  * physical file, different URI) is hidden too.
  */
-private fun MediaItem.isExcluded(uris: Set<Uri>, paths: Set<String>): Boolean =
+internal fun MediaItem.isExcluded(uris: Set<Uri>, paths: Set<String>): Boolean =
     uri in uris || (canonicalPath()?.let { it in paths } == true)
