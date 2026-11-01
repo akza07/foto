@@ -188,14 +188,14 @@ No custom font family; system default with Material3 defaults. Exact usages:
 
 - 26dp circle, black 60%, centered 18dp white `PlayArrow` (“Video”). Bottom-end of tile with 8dp inset, drawn on top.
 
-### 4.10 Background-work pill (“Caching previews” / “Indexing metadata”)
+### 4.10 Background-work indicator (“Caching previews” / “Indexing metadata”)
 
-- Top-center, 64dp below status-bar top, above Albums + album. Content-sized pill: 50dp round, `#09090B`, 1dp `#27272A` stroke, 12dp shadow. Row 16dp horizontal / 9dp vertical.
-- The pill is shared by the two background passes, in order: preview caching first (it gates what the grid can draw), then metadata indexing (which feeds search). Same geometry for both; only the label changes to “Indexing metadata”.
-- Leading: 15dp circular progress (2dp round, white on `#27272A` track) while `done < total`; else 15dp `Sync` outlined white. 10dp gap → label 13sp Medium white. 8dp gap → `done/total` 12sp muted.
-- No percentage is shown: the total can grow while discovery is still running, so a percentage would jump backwards. The count is the only progress readout.
-- Slides+fades from top on enter/exit; visible only while indexing; hides when `done == total`.
-- Suppressed while the search screen is open: that screen reports the same work inline (see §8), and the pill would otherwise land on top of its scope caption.
+- Two phases, because both passes can run for a while and a permanent banner becomes noise.
+- **Phase 1 (expanded, top-center, 64dp below the status bar):** content-sized pill, 50dp round corners, `#09090B`, 1dp `#27272A` stroke, 12dp shadow, row 16dp horizontal / 9dp vertical. Leading 15dp circular progress (2dp round, white on `#27272A` track) while `done < total`, else 15dp `Sync` outlined white; 10dp gap → label 13sp Medium white (“Caching previews” or “Indexing metadata”); 8dp gap → `done/total` 12sp muted. Shows when work starts and slides/fades in from the top.
+- **Phase 2 (collapsed chip, top-end, 64dp below the status bar, 12dp from the end edge):** after 2.5s the pill steps aside to a 40dp `CircleShape` chip with the same surface/border/shadow, holding only an 18dp progress glyph (spinner, or `Sync` when done). Slides+fades in from the end edge, so the screen is not covered while the pass finishes.
+- Tapping the chip brings the full pill back (and keeps it up); tapping the full pill tucks it away again. The chip's accessibility label is “Indexing metadata, N of M files done. Tap to see progress.”
+- Both phases disappear when the work is done, and the next pass starts expanded again. No percentage is shown: the total can grow while discovery is running, so a percentage would jump backwards; the count is the only progress readout.
+- Suppressed while the search screen is open: that screen reports the same work inline (see §8).
 
 ### 4.11 Pull-to-refresh
 

@@ -1658,18 +1658,12 @@ fun GalleryScreen(
             total = progress?.total ?: 0,
         )
 
-        // Floating pill overlay, centered below the app bar (in safe area).
-        // Positioned once at the root so it covers both the Albums grid and
-        // the open album grid without z-fighting. The search screen reports the
-        // same work inline (with its own notice), so the pill would only sit on
-        // top of its scope caption there.
+        // Background-work indicator, positioned once at the root so it covers
+        // both the Albums grid and the open album grid. The search screen reports
+        // the same work inline (with its own notice), so the indicator stays out
+        // of its way.
         if (!showSearch) {
-            ThumbnailSyncBar(
-                modifier = Modifier
-                    .align(Alignment.TopCenter)
-                    .statusBarsPadding()
-                    .padding(top = 64.dp),
-            )
+            BackgroundWorkIndicator(modifier = Modifier.fillMaxSize())
         }
     }
 }
