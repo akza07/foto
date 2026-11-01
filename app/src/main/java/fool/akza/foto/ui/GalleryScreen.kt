@@ -1947,6 +1947,10 @@ private fun TimelineGrid(
 ) {
     val chronological = sortOrder == MediaSort.DATE_NEWEST || sortOrder == MediaSort.DATE_OLDEST
     val entries = rememberTimelineEntries(items, chronological)
+    // A sort change rebuilds the headers around different anchors; keeping the
+    // old pixel offset lands the user in an unrelated month, so return to the
+    // newest (or first) item instead.
+    LaunchedEffect(sortOrder) { gridState.scrollToItem(0) }
     val tileBounds = remember { mutableMapOf<String, Rect>() }
     val haptics = LocalHapticFeedback.current
     var gridCoordinates by remember { mutableStateOf<LayoutCoordinates?>(null) }
