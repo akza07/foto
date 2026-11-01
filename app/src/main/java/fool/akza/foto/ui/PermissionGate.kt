@@ -32,6 +32,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -70,6 +71,15 @@ fun PermissionGate(
     val lifecycleOwner = LocalLifecycleOwner.current
 
     var granted by remember { mutableStateOf(allGranted(context)) }
+
+    // Photo-location access is separate from the media grant and entirely
+    // optional: MediaProvider redacts GPS EXIF from streams handed to apps that
+    // lack it, so without this the info sheet can never show where a photo was
+    // taken. Ask once, after the walkthrough, and never block the gallery on a
+    // denial — the Location block simply stays out of the sheet.
+    val photoLocationLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) {}
 
     val launcher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()

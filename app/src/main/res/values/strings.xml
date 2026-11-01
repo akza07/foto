@@ -114,7 +114,9 @@
 
     <!-- Info sheet -->
     <string name="info_title">Info</string>
+    <string name="info_close">Close info</string>
     <string name="info_name">Name</string>
+    <string name="info_path">Path</string>
     <string name="info_type">Type</string>
     <string name="info_size">Size</string>
     <string name="info_dimensions">Dimensions</string>
@@ -123,6 +125,134 @@
     <string name="info_date_modified">Date modified</string>
     <string name="info_kind_video">Video</string>
     <string name="info_kind_image">Image</string>
+    <string name="info_no_metadata">This file has no embedded metadata.</string>
+    <string name="info_yes">Yes</string>
+    <string name="info_no">No</string>
+
+    <!-- Info sheet: sections -->
+    <string name="info_section_file">File</string>
+    <string name="info_section_image">Image</string>
+    <string name="info_section_video">Video</string>
+    <string name="info_section_audio">Audio</string>
+    <string name="info_section_dates">Dates</string>
+    <string name="info_section_camera">Camera</string>
+    <string name="info_section_exposure">Exposure</string>
+    <string name="info_section_location">Location</string>
+    <string name="info_section_tags">Tags</string>
+    <string name="info_section_other">All metadata</string>
+
+    <!-- Info sheet: field labels -->
+    <string name="info_orientation">Orientation</string>
+    <string name="info_color_space">Color space</string>
+    <string name="info_bits_per_sample">Bit depth</string>
+    <string name="info_resolution">Resolution</string>
+    <string name="info_description">Description</string>
+    <string name="info_date_taken">Date taken</string>
+    <string name="info_date_digitized">Date digitized</string>
+    <string name="info_date_in_file">Date in file</string>
+    <string name="info_make">Camera make</string>
+    <string name="info_model">Camera model</string>
+    <string name="info_lens">Lens</string>
+    <string name="info_lens_serial">Lens serial</string>
+    <string name="info_serial">Body serial</string>
+    <string name="info_software">Software</string>
+    <string name="info_artist">Artist</string>
+    <string name="info_copyright">Copyright</string>
+    <string name="info_exposure_time">Exposure time</string>
+    <string name="info_aperture">Aperture</string>
+    <string name="info_iso">ISO</string>
+    <string name="info_focal_length">Focal length</string>
+    <string name="info_focal_length_35mm">35 mm equivalent</string>
+    <string name="info_exposure_bias">Exposure bias</string>
+    <string name="info_exposure_program">Exposure program</string>
+    <string name="info_exposure_mode">Exposure mode</string>
+    <string name="info_metering">Metering mode</string>
+    <string name="info_flash">Flash</string>
+    <string name="info_white_balance">White balance</string>
+    <string name="info_scene_capture">Scene type</string>
+    <string name="info_digital_zoom">Digital zoom</string>
+    <string name="info_subject_distance">Subject distance</string>
+    <string name="info_latitude">Latitude</string>
+    <string name="info_longitude">Longitude</string>
+    <string name="info_altitude">Altitude</string>
+    <string name="info_gps_time">GPS time</string>
+    <string name="info_gps_datum">Map datum</string>
+    <string name="info_duration">Duration</string>
+    <string name="info_bitrate">Bitrate</string>
+    <string name="info_frame_rate">Frame rate</string>
+    <string name="info_rotation">Rotation</string>
+    <string name="info_frames">Frames</string>
+    <string name="info_has_video">Has video</string>
+    <string name="info_has_audio">Has audio</string>
+    <string name="info_color_standard">Color standard</string>
+    <string name="info_color_transfer">Color transfer</string>
+    <string name="info_color_range">Color range</string>
+    <string name="info_sample_rate">Sample rate</string>
+    <string name="info_audio_bit_depth">Bit depth</string>
+    <string name="info_tracks">Tracks</string>
+    <string name="info_media_title">Title</string>
+    <string name="info_album_artist">Album artist</string>
+    <string name="info_author">Author</string>
+    <string name="info_composer">Composer</string>
+    <string name="info_writer">Writer</string>
+    <string name="info_date">Date</string>
+    <string name="info_year">Year</string>
+    <string name="info_genre">Genre</string>
+    <string name="info_track">Track</string>
+    <string name="info_disc">Disc</string>
+    <string name="info_total_tracks">Total tracks</string>
+    <string name="info_compilation">Compilation</string>
+    <string name="info_location">Location</string>
+
+    <!-- Info sheet: orientation -->
+    <string name="info_orientation_normal">Normal</string>
+    <string name="info_orientation_mirror_horizontal">Mirrored horizontally</string>
+    <string name="info_orientation_rotate_180">Rotated 180°</string>
+    <string name="info_orientation_mirror_vertical">Mirrored vertically</string>
+    <string name="info_orientation_transpose">Mirrored, rotated 90°</string>
+    <string name="info_orientation_rotate_90">Rotated 90° clockwise</string>
+    <string name="info_orientation_transverse">Mirrored, rotated 270°</string>
+    <string name="info_orientation_rotate_270">Rotated 270° clockwise</string>
+
+    <!-- Info sheet: exposure program -->
+    <string name="info_program_undefined">Not recorded</string>
+    <string name="info_program_manual">Manual</string>
+    <string name="info_program_normal">Program auto</string>
+    <string name="info_program_aperture">Aperture priority</string>
+    <string name="info_program_shutter">Shutter priority</string>
+    <string name="info_program_creative">Creative</string>
+    <string name="info_program_action">Action</string>
+    <string name="info_program_portrait">Portrait</string>
+    <string name="info_program_landscape">Landscape</string>
+
+    <!-- Info sheet: exposure mode -->
+    <string name="info_exposure_mode_auto">Auto</string>
+    <string name="info_exposure_mode_manual">Manual</string>
+    <string name="info_exposure_mode_bracket">Auto bracket</string>
+
+    <!-- Info sheet: metering mode -->
+    <string name="info_metering_unknown">Unknown</string>
+    <string name="info_metering_average">Average</string>
+    <string name="info_metering_center">Center-weighted</string>
+    <string name="info_metering_spot">Spot</string>
+    <string name="info_metering_multi_spot">Multi-spot</string>
+    <string name="info_metering_multi_segment">Multi-segment</string>
+    <string name="info_metering_partial">Partial</string>
+    <string name="info_metering_other">Other</string>
+
+    <!-- Info sheet: white balance, scene, flash, color space -->
+    <string name="info_white_balance_auto">Auto</string>
+    <string name="info_white_balance_manual">Manual</string>
+    <string name="info_scene_standard">Standard</string>
+    <string name="info_scene_landscape">Landscape</string>
+    <string name="info_scene_portrait">Portrait</string>
+    <string name="info_scene_night">Night</string>
+    <string name="info_flash_fired">Fired</string>
+    <string name="info_flash_not_fired">Did not fire</string>
+    <string name="info_flash_unavailable">No flash</string>
+    <string name="info_color_space_srgb">sRGB</string>
+    <string name="info_color_space_uncalibrated">Uncalibrated</string>
+
     <string name="size_gb">%1$s GB</string>
     <string name="size_mb">%1$s MB</string>
     <string name="size_kb">%1$s KB</string>

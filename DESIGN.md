@@ -88,7 +88,7 @@ No custom font family; system default with Material3 defaults. Exact usages:
 - Toast/Undo: 14sp Medium black on light pill; Undo action 14sp Bold.
 - Sync pill: 13sp Medium `#FAFAFA` + 12sp `#A1A1AA` count.
 - Search input/placeholder: 16sp (`#FAFAFA` / `#A1A1AA`); group header: 13sp SemiBold `#A1A1AA`; scope/hint/empty: 13–14sp `#A1A1AA` centered.
-- Info sheet title: 18sp SemiBold; rows: 14sp (`#A1A1AA` label left, `#FAFAFA` value right).
+- Info sheet title: 18sp SemiBold + 20dp muted Close; section labels 12sp SemiBold muted 0.8sp tracking; rows: 14sp (`#A1A1AA` label left, `#FAFAFA` value right), both wrapping.
 - Video HUD times: 12sp Medium (`#FAFAFA` current, `#A1A1AA` total); speed chip: 12sp SemiBold `#A1A1AA`; error title 14sp Medium, message 12sp muted.
 - Trash row name: 14sp Medium `#FAFAFA`; size/summary: 12sp `#A1A1AA`.
 - Delete-progress modal: title 18sp SemiBold `#FAFAFA`; count 13sp `#A1A1AA`.
@@ -402,9 +402,14 @@ Real playback via single ExoPlayer per viewer session (no per-page players). Aud
 ## 12. Info Bottom Sheet
 
 - Full black 60% scrim; tap outside or system back closes (the sheet owns the back press, so the viewer stays open). No drag handle, no swipe, no peek — static sheet.
-- Sheet: bottom-center, full-width + 12dp outer margin, 16dp corners, `#09090B`, inner 20dp.
-- Title “Info” 18sp SemiBold + 12dp gap; rows full-width `SpaceBetween` 4dp vertical: label 14sp muted left, value 14sp white right.
-- Rows: Name (or …), Type (MIME else Image/Video), Size (formatted or …), Dimensions `W × H` (if known), Album (if known), Date added (`MMM d, yyyy` or …), Date modified (if >0). Async load.
+- Sheet: bottom-center, full-width + 12dp outer margin, 16dp corners, `#09090B`, 1dp `Border`, inner 20dp horizontal, max height 85% of the window. The body scrolls inside (lazy list) while header stays put; taps inside the sheet never dismiss it.
+- Header: title “Info” 18sp SemiBold, then a 20dp muted `Close` icon in a 32dp box at the trailing edge.
+- Section label: 12sp SemiBold muted, 0.8sp tracking, 18dp above (6dp for the first section) and 2dp below.
+- Rows: full-width, 14sp with 19sp line height, 5dp vertical: label muted 46% (+12dp end gap) left, value white 54% right; both wrap, values never truncate.
+- Section “File”: Name (`…` until loaded), Type (MIME, else Image/Video), Size, Dimensions `W × H` (if known), Path (if known), Album (if known), Date added (`MMM d, yyyy`), Date modified (if > 0).
+- Metadata blocks, in this order, each omitted when empty: **Image** (orientation in words, color space, bit depth, resolution in dpi/dpcm, description) or **Video** (duration `1:02:03`, bitrate `12.4 Mbps`, frame rate, rotation, frame count, MIME, has video/audio, color standard/transfer/range) plus **Audio** (sample rate `48 kHz`, bit depth, tracks); **Dates** (date taken / digitized / date in file, with clock time when present); **Camera** (make, model, lens, lens serial, body serial, software, artist, copyright); **Exposure** (exposure time `1/250 s` or `2.5 s`, aperture `f/1.8`, ISO, focal length and 35 mm equivalent, bias `+0.3 EV`, program, mode, metering, flash, white balance, scene type, digital zoom `2.5×`, subject distance); **Location** (latitude/longitude as `37° 46' 29.6" N`, altitude, GPS time, map datum); **Tags** (title, artist, album, album artist, author, composer, writer, date, year, genre, track, disc, total tracks, compilation, location); **All metadata** — every other present EXIF tag under its humanized name (`ISOSpeedRatings` → “ISO Speed Ratings”), skipping offsets, thumbnail pointers, XMP/maker-note blobs and any value over 160 characters.
+- Absent values are omitted rather than shown as placeholders. A file with no readable metadata shows one muted 13sp line: “This file has no embedded metadata.”
+- Loading is async and off the main thread (MediaStore/SAF columns plus an EXIF parse of the file's header).
 
 ---
 
