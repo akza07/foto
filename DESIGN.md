@@ -88,7 +88,7 @@ No custom font family; system default with Material3 defaults. Exact usages:
 - Toast/Undo: 14sp Medium black on light pill; Undo action 14sp Bold.
 - Sync pill: 13sp Medium `#FAFAFA` + 12sp `#A1A1AA` count.
 - Search input/placeholder: 16sp (`#FAFAFA` / `#A1A1AA`); group header: 13sp SemiBold `#A1A1AA`; scope/hint/empty: 13–14sp `#A1A1AA` centered.
-- Info sheet title: 18sp SemiBold; rows: 14sp (`#A1A1AA` label left, `#FAFAFA` value right).
+- Info sheet title: 18sp SemiBold + 20dp muted Close; section labels 12sp SemiBold muted 0.8sp tracking; rows: 14sp (`#A1A1AA` label left, `#FAFAFA` value right), both wrapping.
 - Video HUD times: 12sp Medium (`#FAFAFA` current, `#A1A1AA` total); speed chip: 12sp SemiBold `#A1A1AA`; error title 14sp Medium, message 12sp muted.
 - Trash row name: 14sp Medium `#FAFAFA`; size/summary: 12sp `#A1A1AA`.
 - Delete-progress modal: title 18sp SemiBold `#FAFAFA`; count 13sp `#A1A1AA`.
@@ -188,12 +188,14 @@ No custom font family; system default with Material3 defaults. Exact usages:
 
 - 26dp circle, black 60%, centered 18dp white `PlayArrow` (“Video”). Bottom-end of tile with 8dp inset, drawn on top.
 
-### 4.10 Thumbnail sync pill (“Caching previews”)
+### 4.10 Background-work indicator (“Caching previews” / “Indexing metadata”)
 
-- Top-center, 64dp below status-bar top, above Albums + album. Content-sized pill: 50dp round, `#09090B`, 1dp `#27272A` stroke, 12dp shadow. Row 16dp horizontal / 9dp vertical.
-- Leading: 15dp circular progress (2dp round, white on `#27272A` track) while `done < total`; else 15dp `Sync` outlined white. 10dp gap → “Caching previews” 13sp Medium white. 8dp gap → `done/total` 12sp muted.
-- No percentage is shown: the total can grow while discovery is still running, so a percentage would jump backwards. The count is the only progress readout.
-- Slides+fades from top on enter/exit; visible only while indexing; hides when `done == total`.
+- Two phases, because both passes can run for a while and a permanent banner becomes noise.
+- **Phase 1 (expanded, top-center, 64dp below the status bar):** content-sized pill, 50dp round corners, `#09090B`, 1dp `#27272A` stroke, 12dp shadow, row 16dp horizontal / 9dp vertical. Leading 15dp circular progress (2dp round, white on `#27272A` track) while `done < total`, else 15dp `Sync` outlined white; 10dp gap → label 13sp Medium white (“Caching previews” or “Indexing metadata”); 8dp gap → `done/total` 12sp muted. Shows when work starts and slides/fades in from the top.
+- **Phase 2 (collapsed chip, top-end, 64dp below the status bar, 12dp from the end edge):** after 2.5s the pill steps aside to a 40dp `CircleShape` chip with the same surface/border/shadow, holding only an 18dp progress glyph (spinner, or `Sync` when done). Slides+fades in from the end edge, so the screen is not covered while the pass finishes.
+- Tapping the chip brings the full pill back (and keeps it up); tapping the full pill tucks it away again. The chip's accessibility label is “Indexing metadata, N of M files done. Tap to see progress.”
+- Both phases disappear when the work is done, and the next pass starts expanded again. No percentage is shown: the total can grow while discovery is running, so a percentage would jump backwards; the count is the only progress readout.
+- Suppressed while the search screen is open: that screen reports the same work inline (see §8).
 
 ### 4.11 Pull-to-refresh
 
@@ -231,6 +233,8 @@ No custom font family; system default with Material3 defaults. Exact usages:
 ---
 
 ## 6. Albums Grid (Home)
+
+**Launch:** a returning launch paints the **last album grid from disk first** — folders, counts, dates and cover items only, written after every successful scan (`gallery_snapshot.tsv`, ~10–20 KB, parsed in about 15 ms) — and the live MediaStore scan replaces it a few hundred milliseconds later without re-flowing the tiles. The full-screen spinner is therefore only seen on a first run, when the snapshot is missing/corrupt, or when the library was emptied. The same snapshot is what keeps folder counts and covers identical between the provisional and final content; it is not a full item list, so search and nested-folder navigation fill in when the scan lands.
 
 ### 6.1 Header
 
@@ -287,7 +291,7 @@ No custom font family; system default with Material3 defaults. Exact usages:
 ### 7.3 Nested folders & pull-to-refresh
 - Child folders appear first in the album grid using the same stack tile; tapping one pushes another album level with the same deck-unpack motion. Back pops one level and returns to the parent folder.
 - Pull down on any album level to reload media and previews; the indicator sits below the frosted header (see §4.11). Empty states are scrollable so refresh still works.
-- There are no tag/content filters in the album grid; search is name-only (see §8).
+- There are no tag/content filters in the album grid; search covers file names and indexed metadata (see §8).
 
 ---
 
@@ -295,13 +299,15 @@ No custom font family; system default with Material3 defaults. Exact usages:
 
 **Opens:** magnifier in Albums header. Slides+fades from right (parent). System back closes. No shared-element; viewer opens via tile-zoom.
 
-**Header (frosted, black bg):** row status-bar+56dp+4dp sides: back arrow white (“Back”) → close; decorative muted `Search` icon; input weight 1 (12dp horizontal padding box): overlay placeholder “Search file names” 16sp muted when empty + auto-focused text field 16sp white, white cursor, Search IME; when non-empty right `Close` muted (“Clear”) clears query.
+**Header (frosted, black bg):** row status-bar+56dp+4dp sides: back arrow white (“Back”) → close; decorative muted `Search` icon; input weight 1 (12dp horizontal padding box): overlay placeholder “Search names and metadata” 16sp muted when empty + auto-focused text field 16sp white, white cursor, Search IME; when non-empty right `Close` muted (“Clear”) clears query.
 
-**Behavior:** names only. The query is trimmed; an empty query shows no results. Case-insensitive substring match over the display name only (not album, path, type, or image content). Results update immediately — there is no mode switch, debounce, or on-device embedding. Tapping a tile hides the keyboard and opens the viewer at that result.
+**Behavior:** fuzzy, token-based matching over two sources. The query is lowercased and split on anything that isn't a letter or digit, so `f/1.8`, `37° 46' N` and `Canon-EOS` become tokens. A file matches when **every** query token matches some word of it — order is free (`eos canon` = `canon eos`) — and a token matches when (1) a word equals it, (2) a word starts with it (`lighth` → `lighthouse`), or (3) it is within a small edit budget of a word: 0 edits up to 3 characters, 1 edit up to 6, 2 edits above (Damerau-Levenshtein, so a transposition costs one). That makes `canonn` find `Canon`, `lighthosue` find `lighthouse` and `expousre` find `Exposure`; nothing phonetic or semantic is attempted.
 
-**Results:** adaptive grid (same density/spacing as gallery; top clears frosted bar; 12dp sides; 8dp spacing). First full-span caption “Matches file names across your whole library” 13sp muted (4dp start/top). Groups by “MMMM yyyy” from date-added else “Unknown date” (encounter order); per-group full-span header 13sp SemiBold muted (4dp start, 8dp top, 2dp bottom). Tiles identical to gallery (12dp, badge, shimmer/error, no selection).
+Sources: (1) the file name; (2) a local SQLite index (`metadata.db`) holding each file's metadata as words — name, album, path, type, and every label and value the info sheet shows (camera, lens, exposure, dates, place, PNG text). The index is filled by a background, incremental, throttled pass; only files whose `lastModified:size` stamp changed are re-read, and the stamp also carries the photo-location grant and the display name/album so a permission change or a rename re-indexes. Words are looked up through a prefix range scan over a distinct-word lexicon, falling back to an edit-distance scan of that lexicon (a few thousand short strings, length-bucketed) only when the prefix scan finds nothing — which is exactly the mistyped case; results are intersected per token and capped, and search still gets better while the first pass runs. Tapping a tile hides the keyboard and opens the viewer at that result.
 
-**Empty states (centered, 14sp muted, 24dp sides):** blank query → “Searches file names across all photos and videos. Image contents and text are not searched.”; no matches → “No file names match this search”.
+**Results:** adaptive grid (same density/spacing as gallery; top clears frosted bar; 12dp sides; 8dp spacing). First full-span caption “Matches file names and metadata across your whole library” 13sp muted (4dp start/top). Name hits group by “MMMM yyyy” from date-added else “Unknown date” (encounter order); per-group full-span header 13sp SemiBold muted (4dp start, 8dp top, 2dp bottom). Metadata-only hits follow under a full-span header “Found in metadata (N)” 13sp SemiBold white (4dp start, 16dp top) and then the same month grouping; each of those tiles carries a small black-60% pill label “Metadata” (10sp Medium white) at 8dp top-start so the reason for the hit is visible. Tiles are otherwise identical to gallery (12dp, badge, shimmer/error, no selection).
+
+**Empty states (centered, 14sp muted, 24dp sides):** blank query → “Searches file names and the metadata stored in your photos and videos — camera, lens, exposure, dates, place, and PNG text. Image contents and text inside the picture are not searched.”; no matches → “No file names or metadata match this search”.
 
 ---
 
@@ -402,9 +408,15 @@ Real playback via single ExoPlayer per viewer session (no per-page players). Aud
 ## 12. Info Bottom Sheet
 
 - Full black 60% scrim; tap outside or system back closes (the sheet owns the back press, so the viewer stays open). No drag handle, no swipe, no peek — static sheet.
-- Sheet: bottom-center, full-width + 12dp outer margin, 16dp corners, `#09090B`, inner 20dp.
-- Title “Info” 18sp SemiBold + 12dp gap; rows full-width `SpaceBetween` 4dp vertical: label 14sp muted left, value 14sp white right.
-- Rows: Name (or …), Type (MIME else Image/Video), Size (formatted or …), Dimensions `W × H` (if known), Album (if known), Date added (`MMM d, yyyy` or …), Date modified (if >0). Async load.
+- Sheet: bottom-center, full-width + 12dp outer margin, 16dp corners, `#09090B`, 1dp `Border`, inner 20dp horizontal, max height 85% of the window. The body scrolls inside (lazy list) while header stays put; taps inside the sheet never dismiss it.
+- Header: title “Info” 18sp SemiBold, then a 20dp muted `Close` icon in a 32dp box at the trailing edge.
+- Section label: 12sp SemiBold muted, 0.8sp tracking, 18dp above (6dp for the first section) and 2dp below.
+- Rows: full-width, 14sp with 19sp line height, 5dp vertical: label muted 46% (+12dp end gap) left, value white 54% right; both wrap, values never truncate.
+- Section “File”: Name (`…` until loaded), Type (MIME, else Image/Video), Size, Dimensions `W × H` (if known), Path (if known), Album (if known), Date added (`MMM d, yyyy`), Date modified (if > 0).
+- Metadata blocks, in this order, each omitted when empty: **Image** (orientation in words, color space, bit depth, resolution in dpi/dpcm, description), **PNG text** (PNG files only, see below), or **Video** (duration `1:02:03`, bitrate `12.4 Mbps`, frame rate, rotation, frame count, has video/audio, color standard/transfer/range) plus **Audio** (sample rate `48 kHz`, bit depth); **Dates** (date taken / digitized / date in file, with clock time when present); **Camera** (make, model, lens, lens serial, body serial, software, artist, copyright); **Exposure** (exposure time `1/250 s` or `2.5 s`, aperture `f/1.8`, ISO, focal length and 35 mm equivalent, bias `+0.3 EV`, program, mode, metering, flash, white balance, scene type, digital zoom `2.5×`, subject distance); **Location** (latitude/longitude as `37° 46' 29.6" N`, altitude, GPS time, map datum); **Tags** (title, artist, album, album artist, author, composer, writer, date, year, genre, track, disc, total tracks, compilation, location; QuickTime containers that only carry their 1904 epoch placeholder are dropped); **All metadata** — every present tag from a curated detail list under its humanized name (`ISOSpeedRatings` → “ISO Speed Ratings”), enumerated values that we can word (`Contrast: Normal`, `Light Source: Daylight`) included. The list is curated on purpose: offsets, thumbnail pointers, XMP/maker-note blobs and any value over 160 characters are skipped, and a new tag has to be added to that list to appear here (tags with a dedicated row above are never repeated). **PNG text** is collapsed by default: the section header is followed by a single right-aligned tappable “View more (N)” row (14sp Medium, N = number of keyword-value pairs) and nothing else. Tapping it expands the block in place — every `tEXt`/`zTXt`/`iTXt` pair verbatim, with `(zTXt)`/`(iTXt)` appended to the keyword — and turns the row into “Show less”, which collapses it again. Rows fade in/out over 180/140ms on expand/collapse.
+- Absent values are omitted rather than shown as placeholders. A file with no readable metadata shows one muted 13sp line: “This file has no embedded metadata.”
+- Loading is async and off the main thread (MediaStore/SAF columns plus an EXIF parse of the file's header and, for PNG, its textual chunks).
+- GPS rows need `ACCESS_MEDIA_LOCATION`: MediaProvider zeroes the GPS block of a stream handed to an app without it. The gate asks for that permission once, after the walkthrough, and a denial simply leaves the Location block out.
 
 ---
 
@@ -503,7 +515,7 @@ Overlay on gallery when permissions granted + unseen; replayable via Settings (n
 **Pages (exact copy; all illustrations Compose-drawn, mock card 86% width 4:3 22dp `#18181B` 1dp border):**
 
 1. “Welcome to Foto” / “A fast, AMOLED-first gallery for the photos and videos already on your device.” — 3×3 tiles (`Border` 9dp; one video tile 13dp Play).
-2. “Find your photos” / “Open an album to see everything inside, or tap the search icon to find a file by name.” — mock pill search (12×96dp `Border` + 20dp Search) over 2×3 grid.
+2. “Find your photos” / “Open an album to see everything inside, or tap the search icon to find a photo by name, camera, date or place.” — mock pill search (12×96dp `Border` + 20dp Search) over 2×3 grid.
 3. “View and zoom” / “Swipe between photos, double-tap or pinch to zoom, and swipe down to close.” — portrait rect (`Border` 16dp 62%×74%) + 52dp ring (2dp white) + 8dp dot + 28dp `KeyboardArrowDown` muted.
 4. “Actions in one motion” / “Long-press anywhere, slide to Delete, Info, Share or Crop, then release to run it.” — 180dp radial (black-35% disc, `Border` rings/spokes) + 4 icons 90°×54dp (Delete red, others white 22dp/26dp boxes) + center Close 20dp + finger dot (16dp ring 2dp white offset 70dp@30°).
 5. “Select and stay safe” / “Long-press a tile to enter selection mode, then glide your finger across tiles to select many in one motion. Start a new glide on a selected tile to deselect. Delete, copy, move or share them; deletes go to the trash — undo right away, or empty it from Settings.” — 2×3 grid (3 checked: 16dp white circle + 11dp black Check) + bottom Delete(red)/Copy/Move/Share 20dp + floating Undo pill (white 50dp, bottom 16dp, 11sp black “Moved to trash  ·  Undo” 14dp/7dp).
@@ -515,6 +527,7 @@ Overlay on gallery when permissions granted + unseen; replayable via Settings (n
 - Tweens `FastOutSlowInEasing` unless noted: dialog scrim 180ms fade / card 240ms scale 0.92→1 + 180ms fade; tutorial 220ms fade in / 160ms fade out; delete-progress bar frame-chased (τ≈110ms, 50ms to finish) + 360ms hold at 100%; deck forward 320ms / reverse 260ms; viewer entry 280ms / exit 240ms; delete/restore slide 280ms; chrome fade 200ms; poster veil 150ms; poster fade 120ms; seeker thicken 150ms; video HUD hide 200ms; pull-to-refresh minimum 300ms.
 - Bottom action drawer: the sheet slides 260ms up / 200ms down and fades; its full-screen scrim only fades (180/140ms). Never slide the scrim with the sheet — a sliding tint reads as a second page entering from the bottom.
 - Springs: radial open `MediumBouncy/MediumLow`, close `NoBouncy/Medium`, bloom allows 1.2 overshoot; double-tap zoom `NoBouncy/MediumLow`.
+- Search filtering: hint/empty/results crossfade 180ms in / 120ms out; result tiles and month headers fade 180ms in, 140ms out and re-place on a medium-low spring; the “Found in metadata (N)” count fades 160/100ms; the placeholder fades 120ms.
 - Shimmer 1200ms linear infinite; sync slide from top + fade (defaults); settings/folders/trash/search slide from right + fade; drawer slide from bottom + fade; toast slide half-height + fade.
 - Draw-phase transforms (`graphicsLayer`) for deck/viewer/zoom/blur so frames don’t recompose; album blur gated to phase ≥0.98; viewer blur 16dp×radial progress; momentum decay friction 0.6 threshold 0.5; double-tap 1↔3× (pinch 1–5×); swipe threshold 56dp; tap vs long-press via press-timeout + touch-slop.
 

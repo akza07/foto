@@ -47,6 +47,9 @@ data class AppSettings(
     val tutorialSeen: Boolean = false,
     /** Whether per-item viewing time is recorded locally for Insights. */
     val attentionTracking: Boolean = true,
+    /** Whether the (optional) photo-location permission was already requested.
+     * Asking once keeps a denial from turning into a dialog on every launch. */
+    val photoLocationAsked: Boolean = false,
 )
 
 object SettingsRepository {
@@ -62,6 +65,7 @@ object SettingsRepository {
     private const val KEY_SELECTION_ACTION_PLACEMENT = "selection_action_placement"
     private const val KEY_TUTORIAL_SEEN = "tutorial_seen"
     private const val KEY_ATTENTION_TRACKING = "attention_tracking"
+    private const val KEY_PHOTO_LOCATION_ASKED = "photo_location_asked"
 
     private val _settings = MutableStateFlow(AppSettings())
     val settings: StateFlow<AppSettings> = _settings.asStateFlow()
@@ -93,6 +97,7 @@ object SettingsRepository {
             }.getOrDefault(SelectionActionPlacement.RIGHT),
             tutorialSeen = prefs.getBoolean(KEY_TUTORIAL_SEEN, false),
             attentionTracking = prefs.getBoolean(KEY_ATTENTION_TRACKING, true),
+            photoLocationAsked = prefs.getBoolean(KEY_PHOTO_LOCATION_ASKED, false),
         )
     }
 
@@ -148,6 +153,10 @@ object SettingsRepository {
 
     fun setAttentionTracking(value: Boolean) {
         setBoolean(KEY_ATTENTION_TRACKING, value) { it.copy(attentionTracking = value) }
+    }
+
+    fun setPhotoLocationAsked(value: Boolean) {
+        setBoolean(KEY_PHOTO_LOCATION_ASKED, value) { it.copy(photoLocationAsked = value) }
     }
 
     fun addTreeUri(uri: String) {

@@ -32,6 +32,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -51,6 +52,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import fool.akza.foto.R
+import fool.akza.foto.data.MetadataStore
 import fool.akza.foto.data.SettingsRepository
 import fool.akza.foto.ui.theme.AmoledBlack
 import fool.akza.foto.ui.theme.Border
@@ -71,11 +73,25 @@ fun PermissionGate(
 
     var granted by remember { mutableStateOf(allGranted(context)) }
 
+    // Photo-location access is separate from the media grant and entirely
+    // optional: MediaProvider redacts GPS EXIF from streams handed to apps that
+    // lack it, so without this the info sheet can never show where a photo was
+    // taken. Ask once, after the walkthrough, and never block the gallery on a
+    // denial — the Location block simply stays out of the sheet.
+    val photoLocationLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) {}
+
     val launcher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { result ->
         granted = allGranted(context)
     }
+
+    // The metadata index is written with whatever the app was allowed to read,
+    // so a photo-location grant makes every stored row stale (GPS is redacted
+    // without it). Track the transition, whichever way the grant arrives.
+    var photoLocationGranted by remember { mutableStateOf(hasPhotoLocationAccess(context)) }
 
     // Re-check whenever we return to the foreground (permissions can be revoked
     // in Settings, and "don't ask again" + settings round-trips need a refresh).
@@ -83,6 +99,9 @@ fun PermissionGate(
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
                 granted = allGranted(context)
+                val locationNow = hasPhotoLocationAccess(context)
+                if (locationNow && !photoLocationGranted) MetadataStore.invalidate(context)
+                photoLocationGranted = locationNow
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -107,6 +126,13 @@ fun PermissionGate(
                 onOpenUriHandled = onOpenUriHandled,
             )
             val settings by SettingsRepository.settings.collectAsState()
+            LaunchedEffect(settings.tutorialSeen, settings.photoLocationAsked) {
+                val missing = !hasPhotoLocationAccess(context)
+                if (settings.tutorialSeen && missing && !settings.photoLocationAsked) {
+                    SettingsRepository.setPhotoLocationAsked(true)
+                    photoLocationLauncher.launch(android.Manifest.permission.ACCESS_MEDIA_LOCATION)
+                }
+            }
             // Fade the walkthrough over the gallery (and back out when completed)
             // so replaying it from Settings is not a hard full-screen cut.
             AnimatedVisibility(
@@ -238,6 +264,13 @@ private fun PermissionCard(
         }
     }
 }
+
+/** True when the app may read the location block out of a photo's EXIF. */
+private fun hasPhotoLocationAccess(context: android.content.Context): Boolean =
+    ContextCompat.checkSelfPermission(
+        context,
+        android.Manifest.permission.ACCESS_MEDIA_LOCATION,
+    ) == PackageManager.PERMISSION_GRANTED
 
 private fun requiredPermissions(): List<String> {
     return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {

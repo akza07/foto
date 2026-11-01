@@ -17,6 +17,12 @@ data class GalleryContent(
     val folders: List<MediaFolder>,
     val looseItems: List<MediaItem>,
     val allItems: List<MediaItem> = emptyList(),
+    /**
+     * True for the on-disk snapshot painted before the real scan lands: [folders]
+     * and [looseItems] are the exact grid to render, while [allItems] is still
+     * empty, so the UI must not derive albums from it.
+     */
+    val provisional: Boolean = false,
 )
 
 data class MediaInfo(
@@ -27,6 +33,9 @@ data class MediaInfo(
     val dateAdded: Long,
     val dateModified: Long = 0L,
     val mimeType: String? = null,
+    /** Full EXIF/container metadata, grouped for the info sheet. Empty when the
+     * file carries none or cannot be read. */
+    val metadata: List<MetadataSection> = emptyList(),
 )
 
 /** Outcome of a [MediaRepository.delete] attempt. */
@@ -397,21 +406,6 @@ object MediaRepository {
      * All items in every visible folder plus all loose items, in one pass.
      * Used to AoT-warm the thumbnail cache so opening any album is instant.
      */
-    suspend fun loadAllItems(
-        context: Context,
-        content: GalleryContent,
-        excludeUris: Set<Uri> = emptySet(),
-        excludePaths: Set<String> = emptySet(),
-    ): List<MediaItem> =
-        withContext(Dispatchers.IO) {
-            val folderItems = content.folders.flatMap {
-                loadBucket(context, it, excludeUris, excludePaths)
-            }
-            (folderItems + content.looseItems).filterNot {
-                it.isExcluded(excludeUris, excludePaths)
-            }
-        }
-
     /**
      * Resolves a single content Uri handed over by another app (VIEW/SEND) into a
      * [MediaItem] so the viewer can open it. Falls back to a minimal item built
@@ -511,78 +505,80 @@ object MediaRepository {
             }
         }
 
-    /** Reads metadata for the info sheet. */
+    /** Reads metadata for the info sheet: file facts plus the embedded EXIF. */
     suspend fun loadInfo(context: Context, item: MediaItem): MediaInfo? =
         withContext(Dispatchers.IO) {
             try {
-                if (DocumentsContract.isDocumentUri(context, item.uri)) {
-                    // SAF item: read document columns directly.
-                    val projection = arrayOf(
-                        DocumentsContract.Document.COLUMN_DISPLAY_NAME,
-                        DocumentsContract.Document.COLUMN_SIZE,
-                        DocumentsContract.Document.COLUMN_LAST_MODIFIED,
-                        DocumentsContract.Document.COLUMN_MIME_TYPE,
-                    )
-                    context.contentResolver.query(
+                val base = loadBaseInfo(context, item)
+                base?.copy(
+                    metadata = MetadataReader.read(
+                        context,
                         item.uri,
-                        projection,
-                        null,
-                        null,
-                        null,
-                    )?.use { cursor ->
-                        if (cursor.moveToFirst()) {
-                            val name = cursor.getString(0)
-                                ?: item.uri.lastPathSegment ?: "Unknown"
-                            val size = cursor.getLong(1)
-                            val lastModified = cursor.getLong(2)
-                            val mime = cursor.getString(3)
-                            val (w, h) = readDimensions(context, item.uri, mime)
-                            val seconds = if (lastModified > 0) lastModified / 1000L else 0L
-                            MediaInfo(name, size, w, h, seconds, seconds, mime)
-                        } else {
-                            null
-                        }
-                    }
-                } else {
-                    val projection = arrayOf(
-                        MediaStore.MediaColumns.DISPLAY_NAME,
-                        MediaStore.MediaColumns.SIZE,
-                        MediaStore.MediaColumns.DATE_ADDED,
-                        MediaStore.MediaColumns.DATE_MODIFIED,
-                        MediaStore.MediaColumns.WIDTH,
-                        MediaStore.MediaColumns.HEIGHT,
-                        MediaStore.MediaColumns.MIME_TYPE,
-                    )
-                    context.contentResolver.query(
-                        item.uri,
-                        projection,
-                        null,
-                        null,
-                        null,
-                    )?.use { cursor ->
-                        if (cursor.moveToFirst()) {
-                            val name = cursor.getString(0) ?: item.uri.lastPathSegment ?: "Unknown"
-                            val size = cursor.getLong(1)
-                            val dateAdded = cursor.getLong(2)
-                            val dateModified = cursor.getLong(3)
-                            var w = cursor.getInt(4)
-                            var h = cursor.getInt(5)
-                            val mime = cursor.getString(6)
-                            if (w <= 0 || h <= 0) {
-                                val dims = readDimensions(context, item.uri, mime)
-                                w = dims.first
-                                h = dims.second
-                            }
-                            MediaInfo(name, size, w, h, dateAdded, dateModified, mime)
-                        } else {
-                            null
-                        }
-                    }
-                }
+                        item.isVideo,
+                        base.mimeType ?: item.mimeType,
+                    ),
+                )
             } catch (e: Exception) {
                 null
             }
         }
+
+    /** Name/size/dimensions/dates from MediaStore or the SAF document columns. */
+    private fun loadBaseInfo(context: Context, item: MediaItem): MediaInfo? = try {
+        if (DocumentsContract.isDocumentUri(context, item.uri)) {
+            // SAF item: read document columns directly.
+            val projection = arrayOf(
+                DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+                DocumentsContract.Document.COLUMN_SIZE,
+                DocumentsContract.Document.COLUMN_LAST_MODIFIED,
+                DocumentsContract.Document.COLUMN_MIME_TYPE,
+            )
+            context.contentResolver.query(item.uri, projection, null, null, null)?.use { cursor ->
+                if (cursor.moveToFirst()) {
+                    val name = cursor.getString(0) ?: item.uri.lastPathSegment ?: "Unknown"
+                    val size = cursor.getLong(1)
+                    val lastModified = cursor.getLong(2)
+                    val mime = cursor.getString(3)
+                    val (w, h) = readDimensions(context, item.uri, mime)
+                    val seconds = if (lastModified > 0) lastModified / 1000L else 0L
+                    MediaInfo(name, size, w, h, seconds, seconds, mime)
+                } else {
+                    null
+                }
+            }
+        } else {
+            val projection = arrayOf(
+                MediaStore.MediaColumns.DISPLAY_NAME,
+                MediaStore.MediaColumns.SIZE,
+                MediaStore.MediaColumns.DATE_ADDED,
+                MediaStore.MediaColumns.DATE_MODIFIED,
+                MediaStore.MediaColumns.WIDTH,
+                MediaStore.MediaColumns.HEIGHT,
+                MediaStore.MediaColumns.MIME_TYPE,
+            )
+            context.contentResolver.query(item.uri, projection, null, null, null)?.use { cursor ->
+                if (cursor.moveToFirst()) {
+                    val name = cursor.getString(0) ?: item.uri.lastPathSegment ?: "Unknown"
+                    val size = cursor.getLong(1)
+                    val dateAdded = cursor.getLong(2)
+                    val dateModified = cursor.getLong(3)
+                    var w = cursor.getInt(4)
+                    var h = cursor.getInt(5)
+                    val mime = cursor.getString(6)
+                    if (w <= 0 || h <= 0) {
+                        val dims = readDimensions(context, item.uri, mime)
+                        w = dims.first
+                        h = dims.second
+                    }
+                    MediaInfo(name, size, w, h, dateAdded, dateModified, mime)
+                } else {
+                    null
+                }
+            }
+        }
+    } catch (e: Exception) {
+        null
+    }
 
     /**
      * Best-effort pixel dimensions: MediaMetadataRetriever (rotation-aware) for
@@ -951,5 +947,5 @@ object MediaRepository {
  * canonical path so a lingering MediaStore twin of a SAF-deleted file (same
  * physical file, different URI) is hidden too.
  */
-private fun MediaItem.isExcluded(uris: Set<Uri>, paths: Set<String>): Boolean =
+internal fun MediaItem.isExcluded(uris: Set<Uri>, paths: Set<String>): Boolean =
     uri in uris || (canonicalPath()?.let { it in paths } == true)

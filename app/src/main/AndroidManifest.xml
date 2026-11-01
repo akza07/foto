@@ -12,6 +12,10 @@
         android:maxSdkVersion="32" />
     <!-- Normal permission: required to hand a bitmap to the system wallpaper service. -->
     <uses-permission android:name="android.permission.SET_WALLPAPER" />
+    <!-- Normal permission: without it MediaProvider hands back a copy of the EXIF
+         block with GPS latitude/longitude/altitude/time zeroed out, so the info
+         sheet could never show where a photo was taken. -->
+    <uses-permission android:name="android.permission.ACCESS_MEDIA_LOCATION" />
 
     <application
         android:allowBackup="false"

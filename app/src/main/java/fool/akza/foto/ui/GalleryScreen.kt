@@ -126,7 +126,12 @@ import fool.akza.foto.data.driveDeleteQueue
 import fool.akza.foto.R
 import fool.akza.foto.data.MediaFolder
 import fool.akza.foto.data.MediaItem
+import fool.akza.foto.data.GallerySnapshot
 import fool.akza.foto.data.MediaRepository
+import fool.akza.foto.data.buildDirectoryHierarchy
+import fool.akza.foto.data.isExcluded
+import fool.akza.foto.data.MetadataIndexer
+import fool.akza.foto.data.MetadataStore
 import fool.akza.foto.data.RenameResult
 import fool.akza.foto.data.PrivateTrash
 import fool.akza.foto.data.SettingsRepository
@@ -456,7 +461,10 @@ fun GalleryScreen(
         return null
     }
     val rootGalleryContent = remember(hierarchy, visibleContent) {
-        if (visibleContent == null) return@remember null
+        val cached = visibleContent ?: return@remember null
+        // A snapshot already *is* the album grid; deriving it from an item list
+        // that is still loading would blank every count.
+        if (cached.provisional) return@remember cached
         GalleryContent(
             folders = hierarchy.directories.map { it.folder },
             looseItems = hierarchy.rootItems,
@@ -476,11 +484,45 @@ fun GalleryScreen(
             AppLog.w("delete: reload re-queued $leaked suppressed item(s)")
         }
         content = loaded
+        // Snapshot exactly what the albums grid shows — the hierarchy-derived
+        // folders, not the flat directory list — so the next launch paints the
+        // same tiles instead of re-flowing them a second later.
+        val selectedRoots = if (appSettings.requireExplicit) {
+            appSettings.selectedTreeUris.mapNotNull { treeUri ->
+                MediaRepository.treeUriToRelativePath(context, treeUri)
+            }
+        } else {
+            emptyList()
+        }
+        val levels = buildDirectoryHierarchy(
+            loaded.allItems,
+            appSettings.sortOrder,
+            selectedRoots,
+            context.getString(R.string.folder_storage),
+        )
+        GallerySnapshot.write(
+            context,
+            GalleryContent(
+                folders = levels.directories.map { it.folder },
+                looseItems = levels.rootItems,
+            ),
+        )
         if (refreshing) {
             // Keep the pull indicator up long enough to read even when the
             // provider answers instantly.
             delay(300)
             refreshing = false
+        }
+    }
+
+    // Paint the last album grid immediately: a returning launch should not wait
+    // for MediaStore to answer before showing albums whose previews are already
+    // cached on disk. The real load below replaces this snapshot moments later.
+    LaunchedEffect(Unit) {
+        if (content == null) {
+            GallerySnapshot.read(context)?.let { cached ->
+                if (content == null) content = cached
+            }
         }
     }
 
@@ -497,7 +539,8 @@ fun GalleryScreen(
     // same identity-derived keys the UI reads. Folder contents are then
     // AoT-warmed so opening any album is instant — all of this drives the same
     // "Caching previews" progress pill (only real work is counted).
-    LaunchedEffect(visibleContent) {
+    val metadataIndexVersion by MetadataStore.version.collectAsState()
+    LaunchedEffect(visibleContent, metadataIndexVersion) {
         val snapshot = visibleContent ?: return@LaunchedEffect
         snapshot.folders.forEach { folder ->
             folder.previews.forEach { item -> ThumbCache.enqueueIfMissing(item) }
@@ -511,10 +554,18 @@ fun GalleryScreen(
         }
 
         // AoT warm every item in every folder (deduped, chunked, capped).
-        val loaded = MediaRepository.loadAllItems(context, snapshot, removedUris, removedPaths)
+        // `load` already returned every item it grouped (folders only keep their
+        // three newest covers), so re-querying each bucket here was pure waste —
+        // one query per album, on the thread thumbnails needed.
+        val loaded = snapshot.allItems
+            .filterNot { it.isExcluded(removedUris, removedPaths) }
             .distinctBy { it.uri }
         allItems = loaded
         ThumbCache.enqueueAllIfMissing(loaded.take(CACHE_WARM_CAP))
+
+        // Keep the metadata search index in step with the library. Incremental
+        // and throttled: only files whose stamp changed are read.
+        MetadataIndexer.sync(context, loaded)
     }
 
     val closeFolder = {
@@ -1703,15 +1754,13 @@ fun GalleryScreen(
             total = progress?.total ?: 0,
         )
 
-        // Floating pill overlay, centered below the app bar (in safe area).
-        // Positioned once at the root so it covers both the Albums grid and
-        // the open album grid without z-fighting.
-        ThumbnailSyncBar(
-            modifier = Modifier
-                .align(Alignment.TopCenter)
-                .statusBarsPadding()
-                .padding(top = 64.dp),
-        )
+        // Background-work indicator, positioned once at the root so it covers
+        // both the Albums grid and the open album grid. The search screen reports
+        // the same work inline (with its own notice), so the indicator stays out
+        // of its way.
+        if (!showSearch) {
+            BackgroundWorkIndicator(modifier = Modifier.fillMaxSize())
+        }
     }
 }
 
