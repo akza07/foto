@@ -58,6 +58,8 @@
     <string name="trash_delete_confirm_message">This item will be removed from the trash forever. This can\'t be undone.</string>
     <string name="action_empty">Empty</string>
     <string name="section_privacy">Privacy</string>
+    <string name="privacy_share_metadata_title">Remove metadata when sharing photos</string>
+    <string name="privacy_share_metadata_subtitle">Shared photos are re-saved without EXIF, GPS, XMP, PNG text or GIF comments. Rotation is kept for still photos; videos are shared unchanged.</string>
     <string name="privacy_attention_title">Record viewing time</string>
     <string name="privacy_attention_subtitle">Rank the photos and videos you spend the most time with. Stored on this device.</string>
     <string name="privacy_clear_history_title">Clear viewing history</string>
@@ -421,6 +423,8 @@
         <item quantity="one">Moving %1$d item…</item>
         <item quantity="other">Moving %1$d items…</item>
     </plurals>
+    <string name="share_preparing">Removing metadata…</string>
+    <string name="share_metadata_failed">Couldn\'t prepare a photo without metadata. Nothing was shared.</string>
     <plurals name="delete_confirm_count">
         <item quantity="one">Delete %1$d item?</item>
         <item quantity="other">Delete %1$d items?</item>

@@ -128,6 +128,8 @@ import fool.akza.foto.data.MediaFolder
 import fool.akza.foto.data.MediaItem
 import fool.akza.foto.data.GallerySnapshot
 import fool.akza.foto.data.MediaRepository
+import fool.akza.foto.data.MediaSharing
+import fool.akza.foto.data.ShareResult
 import fool.akza.foto.data.buildDirectoryHierarchy
 import fool.akza.foto.data.isExcluded
 import fool.akza.foto.data.MetadataIndexer
@@ -164,6 +166,7 @@ import android.content.IntentSender
 import dev.chrisbanes.haze.hazeEffect
 import dev.chrisbanes.haze.hazeSource
 import dev.chrisbanes.haze.rememberHazeState
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -1300,47 +1303,47 @@ fun GalleryScreen(
     }
 
     // ── Share ───────────────────────────────────────────────────────────────
-    val shareSelection: () -> Unit = {
-        transferScope.launch {
-            val items = resolveSelectionItems()
-            if (items.isEmpty()) return@launch
-            if (items.size == 1) {
-                val item = items.first()
-                val send = Intent(Intent.ACTION_SEND).apply {
-                    type = if (item.isVideo) "video/*" else "image/*"
-                    putExtra(Intent.EXTRA_STREAM, item.uri)
-                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    // Preparing a metadata-free copy reads and rewrites the whole image, so it
+    // runs off the main thread behind the same busy overlay as copy/move. The
+    // setting applies to photos; videos keep their original container bytes.
+    val prepareAndShare: suspend (List<MediaItem>) -> Unit = { items ->
+        if (items.isNotEmpty()) {
+            val stripMetadata = appSettings.stripShareMetadata
+            val preparing = stripMetadata && items.any { !it.isVideo }
+            if (preparing) busyMessage = UiText.Res(R.string.share_preparing)
+            try {
+                when (val result = MediaSharing.prepare(context, items, stripMetadata)) {
+                    is ShareResult.Ready ->
+                        context.startActivity(Intent.createChooser(result.send, null))
+                    ShareResult.Failed -> {
+                        toastKey += 1
+                        toastMessage = UiText.Res(R.string.share_metadata_failed)
+                    }
                 }
-                context.startActivity(Intent.createChooser(send, null))
-            } else {
-                val uris = items.map { it.uri }
-                // Use the broadest MIME type that covers the batch so video+image
-                // mixes share cleanly (recipients filter per URI).
-                val anyVideo = items.any { it.isVideo }
-                val anyImage = items.any { !it.isVideo }
-                val shareType = when {
-                    anyVideo && anyImage -> "*/*"
-                    anyVideo -> "video/*"
-                    else -> "image/*"
-                }
-                val send = Intent(Intent.ACTION_SEND_MULTIPLE).apply {
-                    type = shareType
-                    putParcelableArrayListExtra(Intent.EXTRA_STREAM, ArrayList(uris))
-                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                }
-                context.startActivity(Intent.createChooser(send, null))
+            } catch (e: CancellationException) {
+                // Leaving the gallery while a copy is being prepared is not a
+                // share failure; let the coroutine cancel normally.
+                throw e
+            } catch (_: Exception) {
+                // A missing chooser or a provider that vanished mid-share
+                // should read as a normal failure, not take the app down.
+                toastKey += 1
+                toastMessage = UiText.Res(R.string.share_metadata_failed)
+            } finally {
+                busyMessage = null
             }
         }
     }
 
-    val shareItem = { item: MediaItem ->
-        val send = Intent(Intent.ACTION_SEND).apply {
-            type = if (item.isVideo) "video/*" else "image/*"
-            putExtra(Intent.EXTRA_STREAM, item.uri)
-            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-        }
-        context.startActivity(Intent.createChooser(send, null))
+    val shareItems: (List<MediaItem>) -> Unit = { items ->
+        transferScope.launch { prepareAndShare(items) }
     }
+
+    val shareSelection: () -> Unit = {
+        transferScope.launch { prepareAndShare(resolveSelectionItems()) }
+    }
+
+    val shareItem = { item: MediaItem -> shareItems(listOf(item)) }
 
     // The root Albums grid stays composed underneath the album, so when the album
     // fades on back, the folder stack is already exactly where the collapsing tiles

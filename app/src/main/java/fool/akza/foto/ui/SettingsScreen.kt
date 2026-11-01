@@ -352,6 +352,13 @@ private fun SettingsRoot(
             item {
                 SettingsGroup {
                     SettingsToggleRow(
+                        title = stringResource(R.string.privacy_share_metadata_title),
+                        subtitle = stringResource(R.string.privacy_share_metadata_subtitle),
+                        checked = settings.stripShareMetadata,
+                        onCheckedChange = { SettingsRepository.setStripShareMetadata(it) },
+                    )
+                    SettingsDivider()
+                    SettingsToggleRow(
                         title = stringResource(R.string.privacy_attention_title),
                         subtitle = stringResource(R.string.privacy_attention_subtitle),
                         checked = settings.attentionTracking,

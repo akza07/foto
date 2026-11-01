@@ -23,8 +23,8 @@ android {
         targetSdk = 37
         // Date-based versioning (see AGENTS.md): YYMMDD * 100 + daily build
         // number (00 for the first build of the day).
-        versionCode = 26110118
-        versionName = "2026.11.01-r18"
+        versionCode = 26110119
+        versionName = "2026.11.01-r19"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 

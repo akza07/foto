@@ -25,6 +25,18 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.Foto">
 
+        <!-- Hands metadata-free share copies to the chooser without exposing the
+             original file. The authority is namespaced off the application id. -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.share"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
+
         <activity
             android:name=".MainActivity"
             android:exported="true"

@@ -179,7 +179,11 @@ edge-to-edge rendering.
     (added folders, `.nomedia` content) have no platform trash, so Foto moves their
     bytes into an app-private trash. Both kinds show an **Undo** bar and appear in
     **Settings → Storage → Trash** with restore and permanent delete.
-  - **Share:** `ACTION_SEND` chooser with URI grant.
+  - **Share:** `ACTION_SEND` chooser with URI grant. With *Settings → Privacy →
+    Remove metadata when sharing photos* on (the default), each image is rewritten
+    into the app cache without EXIF/GPS/XMP/PNG text/GIF comments and handed out
+    through a `FileProvider`; still-photo EXIF rotation is baked into the pixels
+    first. Videos are shared unchanged.
   - **Info:** sheet with name, size, and date.
   - **Crop:** full-screen editor with drag handles, a thirds grid and Free/1:1/4:5/16:9
     ratios. It decodes upright (EXIF applied), caps the working bitmap at 3072px for
@@ -294,9 +298,14 @@ edge-to-edge rendering.
     - **Only show selected folders** (toggle): switches between allow-list and deny-list.
     - **Manage folders** → a **Folders** sub-screen (slide transition, its own back
       handling) with the directory list and **Add directory**.
-  - **Privacy** — *Record viewing time*: turns the Insights tracker on or off
-    (existing history stays). *Clear viewing history*: shows the recorded visit
-    count and wipes it after a destructive confirm.
+  - **Privacy** — *Remove metadata when sharing photos* (on by default): shared
+    photos are re-saved without EXIF, GPS, XMP, PNG text or GIF comments, with
+    rotation baked into the pixels (and large photos sampled down if a full
+    decode would exhaust the heap); the copies live in the app cache and expire
+    after a day, and videos keep their original bytes. *Record viewing time*:
+    turns the Insights tracker on or off (existing history stays). *Clear viewing
+    history*: shows the recorded visit count and wipes it after a destructive
+    confirm.
   - **Storage** — *Clear thumbnail cache* (shows the current size, confirms before
     clearing) and *Trash* (shows the count/size and opens a Trash screen with
     per-item restore and empty).

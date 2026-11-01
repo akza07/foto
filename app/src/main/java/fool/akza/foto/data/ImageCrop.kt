@@ -5,7 +5,6 @@ import android.content.ContentValues
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
-import android.graphics.Matrix
 import android.net.Uri
 import android.provider.DocumentsContract
 import android.provider.MediaStore
@@ -171,37 +170,6 @@ object ImageCropper {
             sample *= 2
         }
         return sample
-    }
-
-    private fun applyExifOrientation(source: Bitmap, orientation: Int): Bitmap {
-        val matrix = Matrix()
-        when (orientation) {
-            ExifInterface.ORIENTATION_FLIP_HORIZONTAL -> matrix.setScale(-1f, 1f)
-            ExifInterface.ORIENTATION_ROTATE_180 -> matrix.setRotate(180f)
-            ExifInterface.ORIENTATION_FLIP_VERTICAL -> {
-                matrix.setRotate(180f)
-                matrix.postScale(-1f, 1f)
-            }
-            ExifInterface.ORIENTATION_TRANSPOSE -> {
-                matrix.setRotate(90f)
-                matrix.postScale(-1f, 1f)
-            }
-            ExifInterface.ORIENTATION_ROTATE_90 -> matrix.setRotate(90f)
-            ExifInterface.ORIENTATION_TRANSVERSE -> {
-                matrix.setRotate(-90f)
-                matrix.postScale(-1f, 1f)
-            }
-            ExifInterface.ORIENTATION_ROTATE_270 -> matrix.setRotate(-90f)
-            else -> return source
-        }
-        return try {
-            val rotated = Bitmap.createBitmap(source, 0, 0, source.width, source.height, matrix, true)
-            if (rotated !== source) source.recycle()
-            rotated
-        } catch (e: Exception) {
-            AppLog.w("crop: couldn't apply EXIF orientation", e)
-            source
-        }
     }
 
     private data class OutputFormat(

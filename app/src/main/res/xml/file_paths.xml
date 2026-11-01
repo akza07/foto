@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Only the prepared, metadata-free share copies are exported through the
+     FileProvider; nothing else under the app's storage is reachable. -->
+<paths>
+    <cache-path name="share" path="share/" />
+</paths>
