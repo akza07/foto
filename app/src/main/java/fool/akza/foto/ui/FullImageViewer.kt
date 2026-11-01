@@ -4,7 +4,6 @@ import android.app.Activity
 import android.content.Context
 import android.content.ContextWrapper
 import androidx.activity.compose.BackHandler
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.Spring
@@ -12,8 +11,6 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.exponentialDecay
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -27,17 +24,16 @@ import androidx.compose.foundation.gestures.rememberTransformableState
 import androidx.compose.foundation.gestures.transformable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
@@ -45,12 +41,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
-import androidx.compose.material.icons.outlined.Crop
-import androidx.compose.material.icons.outlined.Delete
-import androidx.compose.material.icons.outlined.Edit
-import androidx.compose.material.icons.outlined.Info
-import androidx.compose.material.icons.outlined.Share
-import androidx.compose.material.icons.outlined.Wallpaper
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -64,7 +54,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.AbsoluteAlignment
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.BlurredEdgeTreatment
@@ -95,6 +84,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
@@ -114,26 +104,23 @@ import dev.chrisbanes.haze.hazeSource
 import dev.chrisbanes.haze.rememberHazeState
 import fool.akza.foto.R
 import fool.akza.foto.data.MediaItem
-import fool.akza.foto.data.SelectionActionPlacement
 import fool.akza.foto.ui.theme.AmoledBlack
 import fool.akza.foto.ui.theme.Border
-import fool.akza.foto.ui.theme.DeleteRed
 import fool.akza.foto.ui.theme.Surface as ThemeSurface
-import fool.akza.foto.ui.theme.TextMuted
 import fool.akza.foto.ui.theme.TextPrimary
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlin.math.roundToInt
 
-private val SheetRadius = RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp)
-private val RailShape = RoundedCornerShape(16.dp)
+private val MoreMenuShape = RoundedCornerShape(16.dp)
 
 /**
  * Frosted glass for the viewer's action rail. The blur is deliberately much
  * stronger than the app bars (18dp) so the photo stays recognisable through the
  * controls instead of turning into a dark slab.
  */
-private val ActionSheetHazeStyle = HazeStyle(
+private val MoreMenuHazeStyle = HazeStyle(
     blurRadius = 50.dp,
     tints = listOf(HazeTint(AmoledBlack.copy(alpha = 0.18f))),
 )
@@ -304,11 +291,9 @@ fun FullImageViewer(
     onCrop: (MediaItem) -> Unit,
     onWallpaper: (MediaItem) -> Unit,
     loopVideos: Boolean = false,
-    /** Whether the wheel and action panel offer Share. */
+    /** Whether the wheel offers Share. */
     shareEnabled: Boolean = true,
-    /** Edge the action panel uses: side rail or bottom bar. */
-    actionPlacement: SelectionActionPlacement = SelectionActionPlacement.RIGHT,
-    /** View/play only: no action wheel, action rail, delete, share, info, crop or wallpaper. */
+    /** View/play only: no action wheel, delete, share, info, crop or wallpaper. */
     previewOnly: Boolean = false,
     pendingRemoval: MediaItem? = null,
     /** A file delete has been accepted but has not yet completed. */
@@ -322,8 +307,8 @@ fun FullImageViewer(
     val density = LocalDensity.current
     val haptics = LocalHapticFeedback.current
     val context = LocalContext.current
-    // Shared backdrop source for the frosted action panel. The pager is the
-    // source; the rail/bar samples it through a strong blur when open.
+    // Backdrop source for the "More" card; the pager samples through a strong
+    // blur behind the compact menu.
     val hazeState = rememberHazeState()
 
     // Viewing-attention tracking for Insights. Read-only previews (Trash) are
@@ -416,6 +401,9 @@ fun FullImageViewer(
     var radialPresent by remember { mutableStateOf(false) }
     var radialCenter by remember { mutableStateOf(Offset.Zero) }
     var radialHovered by remember { mutableStateOf<ViewerAction?>(null) }
+    // Low-frequency actions live in a compact card at the wheel's centre.
+    var moreMenuVisible by remember { mutableStateOf(false) }
+    var moreMenuCenter by remember { mutableStateOf(Offset.Zero) }
     // True from the moment the radial opens until its gesture ends, so the page's
     // tap handler can ignore the release that ran an action.
     var radialActive by remember { mutableStateOf(false) }
@@ -486,7 +474,9 @@ fun FullImageViewer(
     // on-screen back arrow. Composed after GalleryScreen's BackHandler, so this
     // one is the most recent and wins while the viewer is open. An open action
     // panel consumes back first.
-    BackHandler { close() }
+    BackHandler {
+        if (moreMenuVisible) moreMenuVisible = false else close()
+    }
 
     val swipeThreshold = with(density) { 56.dp.toPx() }
     val currentIndex = pagerState.settledPage
@@ -629,17 +619,22 @@ fun FullImageViewer(
     // revealed in lockstep with the scale-out rather than popping in after it.
     val p = progress.value
 
-    // Maps a radial-menu choice onto the viewer's action callbacks.
-    // Videos have no Crop sector, so a stale hover on a video page is a no-op.
-    // Wallpaper is deliberately not part of the wheel; it stays in the action
-    // rail/panel.
+    // Maps a radial-menu choice onto the viewer's action callbacks. More opens
+    // the compact card holding Crop/Rename/Wallpaper; videos get Rename as the
+    // fourth sector because they have no Crop/Wallpaper.
     val onRadialAction: (ViewerAction) -> Unit = { action ->
         currentItem?.let { item ->
             when (action) {
                 ViewerAction.Delete -> if (!deleteInProgress) onDelete(item)
                 ViewerAction.Info -> onInfo(item)
                 ViewerAction.Share -> if (shareEnabled) onShare(item)
+                ViewerAction.More -> {
+                    moreMenuCenter = radialCenter
+                    moreMenuVisible = true
+                }
                 ViewerAction.Crop -> if (!item.isVideo) onCrop(item)
+                ViewerAction.Rename -> onRename(item)
+                ViewerAction.Wallpaper -> if (!item.isVideo) onWallpaper(item)
             }
         }
     }
@@ -647,13 +642,14 @@ fun FullImageViewer(
     // adjacent pages share a media type. Read the current callback when the finger
     // lifts so a radial action always applies to the page being viewed now.
     val latestOnRadialAction = rememberUpdatedState(onRadialAction)
-    // Sectors offered by the wheel: videos drop Crop (Delete stays on top),
-    // and Share disappears entirely when the privacy setting disables it.
+    // Four sectors at most: the three most-used actions plus More for images
+    // (Crop/Rename/Wallpaper) or Rename for videos. Share disappears entirely
+    // when the privacy setting disables it.
     val radialActions = remember(currentPageIsVideo, shareEnabled) {
         val actions = if (currentPageIsVideo) {
-            listOf(ViewerAction.Delete, ViewerAction.Info, ViewerAction.Share)
+            listOf(ViewerAction.Delete, ViewerAction.Info, ViewerAction.Share, ViewerAction.Rename)
         } else {
-            ViewerAction.entries
+            listOf(ViewerAction.Delete, ViewerAction.Info, ViewerAction.Share, ViewerAction.More)
         }
         if (shareEnabled) actions else actions.filterNot { it == ViewerAction.Share }
     }
@@ -702,9 +698,10 @@ fun FullImageViewer(
                 multiTouchActive,
                 removing,
                 previewOnly,
+                moreMenuVisible,
             ) {
                 if (!currentPageZoomed && !radialPresent && !leaving &&
-                    !multiTouchActive && !removing
+                    !multiTouchActive && !removing && !moreMenuVisible
                 ) {
                     detectVerticalSwipe(
                         threshold = swipeThreshold,
@@ -724,8 +721,8 @@ fun FullImageViewer(
             // longer owns a long-press of its own, so this detector serves
             // images and videos alike; opening the wheel pauses video so the
             // action applies to a frozen frame (no auto-resume).
-            .pointerInput(leaving, multiTouchActive, removing, previewOnly) {
-                if (previewOnly || leaving || multiTouchActive || removing) {
+            .pointerInput(leaving, multiTouchActive, removing, previewOnly, moreMenuVisible) {
+                if (previewOnly || leaving || multiTouchActive || removing || moreMenuVisible) {
                     return@pointerInput
                 }
                 awaitEachGesture {
@@ -837,7 +834,8 @@ fun FullImageViewer(
                     !multiTouchActive &&
                     !radialPresent &&
                     !removing &&
-                    !deleteInProgress,
+                    !deleteInProgress &&
+                    !moreMenuVisible,
                 // Stable page identity: lets the pager remap a page to its new
                 // index when a delete shrinks the list, instead of flashing the
                 // wrong item during the commit.
@@ -1009,23 +1007,20 @@ fun FullImageViewer(
             )
         }
 
-        // Frosted action chrome: a side rail (or bottom bar) that fades with the
-        // rest of the viewer UI. Tapping the photo hides/shows it with the top
-        // bar and system bars; there is no separate modal to dismiss.
-        ActionPanel(
-            visible = (if (currentPageIsVideo) videoControlsVisible else imageControlsVisible) &&
-                !previewOnly,
-            item = currentItem,
-            placement = actionPlacement,
-            shareEnabled = shareEnabled,
-            hazeState = hazeState,
-            onDelete = { if (!deleteInProgress) currentItem?.let(onDelete) },
-            onShare = { currentItem?.let(onShare) },
-            onInfo = { currentItem?.let(onInfo) },
-            onRename = { currentItem?.let(onRename) },
-            onCrop = { currentItem?.let(onCrop) },
-            onWallpaper = { currentItem?.let(onWallpaper) },
-        )
+        // The wheel's More sector opens this compact card at the wheel centre;
+        // the primary three stay a single radial gesture.
+        if (moreMenuVisible && !previewOnly) {
+            ViewerMoreMenu(
+                center = moreMenuCenter,
+                containerSize = containerSize,
+                hazeState = hazeState,
+                onDismiss = { moreMenuVisible = false },
+                onAction = { action ->
+                    moreMenuVisible = false
+                    onRadialAction(action)
+                },
+            )
+        }
     }
 }
 
@@ -1348,274 +1343,81 @@ private fun ZoomableImage(
     }
 }
 
-@Composable
-private fun ActionPanel(
-    visible: Boolean,
-    item: MediaItem?,
-    placement: SelectionActionPlacement,
-    shareEnabled: Boolean,
-    hazeState: HazeState,
-    onDelete: () -> Unit,
-    onShare: () -> Unit,
-    onInfo: () -> Unit,
-    onRename: () -> Unit,
-    onCrop: () -> Unit,
-    onWallpaper: () -> Unit,
-) {
-    val target = item ?: return
-    val side = if (placement == SelectionActionPlacement.LEFT) {
-        SelectionActionPlacement.LEFT
-    } else {
-        SelectionActionPlacement.RIGHT
-    }
-    BoxWithConstraints(Modifier.fillMaxSize()) {
-        if (placement == SelectionActionPlacement.BOTTOM) {
-            AnimatedVisibility(
-                visible = visible,
-                enter = fadeIn(tween(200)),
-                exit = fadeOut(tween(200)),
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .fillMaxWidth(),
-            ) {
-                BottomActionPanel(
-                    target = target,
-                    shareEnabled = shareEnabled,
-                    hazeState = hazeState,
-                    onDelete = onDelete,
-                    onShare = onShare,
-                    onInfo = onInfo,
-                    onRename = onRename,
-                    onCrop = onCrop,
-                    onWallpaper = onWallpaper,
-                )
-            }
-        } else {
-            // Float the rail at the 3/4 mark rather than hugging the bottom:
-            // its bottom sits a quarter-screen up, leaving the nav area clear and
-            // keeping the actions in the thumb's comfortable lower-right arc.
-            val bottomInset = maxHeight * 0.25f + 12.dp
-            AnimatedVisibility(
-                visible = visible,
-                enter = fadeIn(tween(200)),
-                exit = fadeOut(tween(200)),
-                modifier = Modifier
-                    .align(
-                        // Absolute (not Start/End) so the rail stays on the
-                        // physical side the user picked even under RTL.
-                        if (side == SelectionActionPlacement.LEFT) {
-                            AbsoluteAlignment.BottomLeft
-                        } else {
-                            AbsoluteAlignment.BottomRight
-                        },
-                    )
-                    .padding(horizontal = 12.dp)
-                    .padding(bottom = bottomInset),
-            ) {
-                SideActionRail(
-                    target = target,
-                    shareEnabled = shareEnabled,
-                    hazeState = hazeState,
-                    onDelete = onDelete,
-                    onShare = onShare,
-                    onInfo = onInfo,
-                    onRename = onRename,
-                    onCrop = onCrop,
-                    onWallpaper = onWallpaper,
-                )
-            }
-        }
-    }
-}
+private val MoreMenuActions = listOf(
+    ViewerAction.Crop,
+    ViewerAction.Rename,
+    ViewerAction.Wallpaper,
+)
 
+/**
+ * Compact frosted card for the wheel's More sector. It appears at the wheel
+ * centre (so the thumb is already there), holds the low-frequency actions, and
+ * dims nothing: tapping outside just dismisses it.
+ */
 @Composable
-private fun BottomActionPanel(
-    target: MediaItem,
-    shareEnabled: Boolean,
+private fun ViewerMoreMenu(
+    center: Offset,
+    containerSize: IntSize,
     hazeState: HazeState,
-    onDelete: () -> Unit,
-    onShare: () -> Unit,
-    onInfo: () -> Unit,
-    onRename: () -> Unit,
-    onCrop: () -> Unit,
-    onWallpaper: () -> Unit,
+    onDismiss: () -> Unit,
+    onAction: (ViewerAction) -> Unit,
 ) {
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(SheetRadius)
-            .hazeEffect(state = hazeState, style = ActionSheetHazeStyle)
-            .border(1.dp, Border.copy(alpha = 0.45f), SheetRadius),
-    ) {
+    if (containerSize == IntSize.Zero) return
+    Box(modifier = Modifier.fillMaxSize()) {
+        // Transparent catcher: closes on outside taps and keeps the image tap
+        // from toggling the chrome while the card is open.
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .clickable(
+                    onClick = onDismiss,
+                    indication = null,
+                    interactionSource = null,
+                ),
+        )
         Column(
             modifier = Modifier
-                .fillMaxWidth()
-                .navigationBarsPadding()
-                .padding(top = 12.dp, bottom = 24.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
+                .align(Alignment.Center)
+                .offset {
+                    IntOffset(
+                        (center.x - containerSize.width / 2f).roundToInt(),
+                        (center.y - containerSize.height / 2f).roundToInt(),
+                    )
+                }
+                .width(200.dp)
+                .clip(MoreMenuShape)
+                .hazeEffect(state = hazeState, style = MoreMenuHazeStyle)
+                .border(1.dp, Border.copy(alpha = 0.45f), MoreMenuShape)
+                .pointerInput(Unit) { detectTapGestures { } }
+                .padding(vertical = 6.dp),
         ) {
-            // Drag handle.
-            Box(
-                modifier = Modifier
-                    .size(width = 40.dp, height = 4.dp)
-                    .clip(RoundedCornerShape(2.dp))
-                    .background(TextPrimary.copy(alpha = 0.4f)),
-            )
-            Spacer(Modifier.height(20.dp))
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceEvenly,
-            ) {
-                if (shareEnabled) {
-                    ActionItem(
-                        Icons.Outlined.Share,
-                        stringResource(R.string.action_share),
-                        TextPrimary,
-                        onShare,
-                    )
-                }
-                ActionItem(Icons.Outlined.Info, stringResource(R.string.info_title), TextPrimary, onInfo)
-                ActionItem(Icons.Outlined.Edit, stringResource(R.string.action_rename), TextPrimary, onRename)
-                ActionItem(Icons.Outlined.Delete, stringResource(R.string.action_delete), DeleteRed, onDelete)
-                // Videos have no crop or wallpaper actions.
-                if (!target.isVideo) {
-                    ActionItem(Icons.Outlined.Crop, stringResource(R.string.action_crop), TextPrimary, onCrop)
-                    ActionItem(
-                        Icons.Outlined.Wallpaper,
-                        stringResource(R.string.action_wallpaper),
-                        TextPrimary,
-                        onWallpaper,
-                    )
-                }
+            MoreMenuActions.forEach { action ->
+                MoreMenuRow(action = action, onClick = { onAction(action) })
             }
         }
     }
 }
 
 @Composable
-private fun SideActionRail(
-    target: MediaItem,
-    shareEnabled: Boolean,
-    hazeState: HazeState,
-    onDelete: () -> Unit,
-    onShare: () -> Unit,
-    onInfo: () -> Unit,
-    onRename: () -> Unit,
-    onCrop: () -> Unit,
-    onWallpaper: () -> Unit,
-) {
-    Column(
-        modifier = Modifier
-            .width(SelectionRailWidth)
-            .clip(RailShape)
-            .hazeEffect(state = hazeState, style = ActionSheetHazeStyle)
-            .border(1.dp, Border.copy(alpha = 0.45f), RailShape)
-            .padding(vertical = 6.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(2.dp),
-    ) {
-        // Destructive action at the top: the rail floats in the lower-right, so
-        // the least reachable slot is also the one that needs the most intent.
-        RailAction(
-            Icons.Outlined.Delete,
-            stringResource(R.string.action_delete),
-            DeleteRed,
-            onDelete,
-        )
-        if (shareEnabled) {
-            RailAction(
-                Icons.Outlined.Share,
-                stringResource(R.string.action_share),
-                TextPrimary,
-                onShare,
-            )
-        }
-        RailAction(Icons.Outlined.Info, stringResource(R.string.info_title), TextPrimary, onInfo)
-        RailAction(Icons.Outlined.Edit, stringResource(R.string.action_rename), TextPrimary, onRename)
-        if (!target.isVideo) {
-            RailAction(Icons.Outlined.Crop, stringResource(R.string.action_crop), TextPrimary, onCrop)
-            RailAction(
-                Icons.Outlined.Wallpaper,
-                stringResource(R.string.action_wallpaper),
-                TextPrimary,
-                onWallpaper,
-            )
-        }
-    }
-}
-
-@Composable
-private fun RailAction(
-    icon: ImageVector,
-    label: String,
-    color: Color,
-    onClick: () -> Unit,
-) {
-    Column(
-        horizontalAlignment = Alignment.CenterHorizontally,
+private fun MoreMenuRow(action: ViewerAction, onClick: () -> Unit) {
+    Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(10.dp))
             .clickable(role = Role.Button, onClick = onClick)
-            .padding(horizontal = 4.dp, vertical = 8.dp),
+            .padding(horizontal = 14.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        Box(
-            modifier = Modifier
-                .size(32.dp)
-                .clip(CircleShape)
-                .background(AmoledBlack.copy(alpha = 0.24f)),
-            contentAlignment = Alignment.Center,
-        ) {
-            Icon(
-                imageVector = icon,
-                contentDescription = label,
-                tint = color,
-                modifier = Modifier.size(20.dp),
-            )
-        }
-        Spacer(Modifier.height(3.dp))
-        Text(
-            text = label,
-            color = TextPrimary,
-            fontSize = 11.sp,
-            fontWeight = FontWeight.Medium,
-            maxLines = 1,
-            style = TextStyle(shadow = ActionLabelShadow),
+        Icon(
+            imageVector = action.icon(),
+            contentDescription = null,
+            tint = TextPrimary,
+            modifier = Modifier.size(20.dp),
         )
-    }
-}
-
-@Composable
-private fun ActionItem(
-    icon: ImageVector,
-    label: String,
-    color: Color,
-    onClick: () -> Unit,
-) {
-    Column(
-        horizontalAlignment = Alignment.CenterHorizontally,
-        modifier = Modifier.clickable(role = Role.Button, onClick = onClick),
-    ) {
-        Box(
-            modifier = Modifier
-                .size(54.dp)
-                .clip(RoundedCornerShape(14.dp))
-                .background(AmoledBlack),
-            contentAlignment = Alignment.Center,
-        ) {
-            Icon(
-                icon,
-                contentDescription = label,
-                tint = color,
-                modifier = Modifier.size(26.dp),
-            )
-        }
-        Spacer(Modifier.height(6.dp))
+        Spacer(Modifier.width(12.dp))
         Text(
-            label,
+            text = stringResource(action.labelRes()),
             color = TextPrimary,
-            fontSize = 12.sp,
+            fontSize = 14.sp,
             fontWeight = FontWeight.Medium,
             style = TextStyle(shadow = ActionLabelShadow),
         )

@@ -112,7 +112,7 @@ No custom font family; system default with Material3 defaults. Exact usages:
 ### 3.4 Edge-to-edge & system bars
 
 - `windowBackground` black; status/nav bars transparent; light icons (not dark); content draws behind both.
-- Status-bar icon tint is enforced at the window level in `MainActivity` (light icons regardless of the system light/dark theme, because the app is always black). The full-screen viewer toggles both system bars and its own chrome (top bar and action rail) with a tap. While the bars are hidden, `WindowInsetsGuard` pins the window's status/navigation insets to their pre-hide values, so the platform's hide/show animation cannot reflow the grid, headers or viewer chrome in the middle of the tile-morph transition.
+- Status-bar icon tint is enforced at the window level in `MainActivity` (light icons regardless of the system light/dark theme, because the app is always black). The full-screen viewer toggles both system bars and its own chrome (top bar) with a tap. While the bars are hidden, `WindowInsetsGuard` pins the window's status/navigation insets to their pre-hide values, so the platform's hide/show animation cannot reflow the grid, headers or viewer chrome in the middle of the tile-morph transition.
 - Every screen insets via status-bar top padding and navigation-bar bottom padding. Frosted bars sit in the status zone; grids/lists add top padding to clear them and scroll underneath.
 - Optional 120Hz: when “Prefer 120Hz” is on and hardware supports >60.5Hz, window prefers 120Hz and root votes 120fps via frame-rate hint; applied live, no restart.
 
@@ -172,7 +172,7 @@ No custom font family; system default with Material3 defaults. Exact usages:
 - Enter: scrim fades 180ms; card scales 0.92→1 over 240ms `FastOutSlowIn` + fades 180ms. No exit animation.
 - Back dismisses the dialog first: the shared `AnimatedDialog` owns a `BackHandler` calling the same `onDismiss` as the scrim/Cancel, so the settings/trash screen (or viewer) behind it never consumes the press while a modal is up.
 
-### 4.7 Option dialog (sort/grid/action panel edge)
+### 4.7 Option dialog (sort/grid/selection actions)
 
 - Same scrim/card geometry as confirm (70% scrim, 32dp margins, 16dp corners, 1dp `Border`, 20dp inner, 18sp title + 8dp gap). Enter: same bloom as the confirm dialog (180ms scrim fade, card 0.92→1 scale / 240ms + 180ms fade).
 - Each option: full-width 8dp corners, 8dp horizontal / 12dp vertical padding. Label 15sp (current: `#FAFAFA` SemiBold; others: muted Normal) + current shows 18dp Check `#FAFAFA` (“Selected”).
@@ -329,12 +329,12 @@ Sources: (1) the file name; (2) a local SQLite index (`metadata.db`) holding eac
 - Counter pill: 50dp round `#09090B` no border, “3/12” 13sp Medium white, 14dp horizontal / 8dp vertical padding.
 - Chrome fades 200ms; images auto-hide 3s after show. A tap toggles the whole chrome. Videos follow the video HUD.
 
-### 9.3 Action rail (part of the viewer chrome)
+### 9.3 Viewer actions (radial + More card)
 
-- The action rail is not a modal and has no scrim: it is chrome, shown and hidden with the top bar and system bars when the photo is tapped. It follows Settings → Display → Action panel edge. Left/Right is a floating side rail (right by default); Bottom keeps the full-width bottom bar (also the short-window fallback).
-- **Side rail:** 76dp wide, 16dp corners, 12dp from the side, and its bottom sits at ~3/4 of the screen height (25% bottom inset), leaving the nav area clear and putting the actions in the thumb's comfortable lower-right arc. It is transparent frosted glass: Haze with a 50dp blur and a black 18% tint, clipped to its shape with a 1dp `Border` hairline. Items stack Delete / Share / Info / Rename / Crop / Wallpaper (Crop and Wallpaper omitted on video; Share omitted when media sharing is off). Delete is at the top, away from the thumb. Each item: 32dp black-24% round well with a 20dp icon, 3dp gap, 11sp Medium white label with a black text shadow.
-- **Bottom bar:** full-width, top 16dp corners, nav-bar padding, 12dp top / 24dp bottom, 40×4dp handle, then Share / Info / Rename / Delete / Crop / Wallpaper in one `SpaceEvenly` row. Each item keeps the 54dp black well with a 26dp icon + 12sp label.
-- Both variants fade with the chrome (200ms). Tapping an action runs it; the chrome hides on the next tap like any other viewer UI. System back closes the viewer.
+- The viewer has no persistent action bar or rail. Actions live in the long-press radial, at the finger.
+- Images: four sectors — Delete (top), Info, Share, More. Videos: Delete, Info, Share, Rename. Delete stays at the top away from the thumb; Share sits at the bottom, closest to the thumb. Share is omitted when Settings → Privacy → Allow sharing is off.
+- More opens a compact frosted card at the wheel centre with Crop / Rename / Wallpaper. Haze with a 50dp blur and black 18% tint, 200dp wide, 16dp corners, 1dp `Border` hairline, 20dp icons and 14sp labels. Tapping outside dismisses it; system back closes it before the viewer.
+- Tap toggles the viewer chrome independently; the wheel and More card are not part of the chrome and stay put while it auto-hides.
 
 ### 9.4 Gestures (images)
 
@@ -348,7 +348,7 @@ Sources: (1) the file name; (2) a local SQLite index (`metadata.db`) holding eac
 ### 9.5 Delete / share / info / rename / crop / wallpaper
 
 - Panel Delete (red): video deletes always confirm; other MediaStore items rely on the provider's trash prompt. SAF documents get the in-app confirm because they go to Foto's private trash instead. MediaStore deletes use `MediaStore.createTrashRequest` (no copy); SAF deletes copy bytes into app storage then remove the document. Both show the “Moved to trash” Undo bar (6s) + slide to neighbor (280ms `FastOutSlowIn`; next if exists else prev; last item dismisses). Undo restores from the matching trash and slides back.
-- Share: system chooser with URI grant. Settings → Privacy → Allow sharing can remove every media Share entry point (viewer wheel, action rail and selection bar); turning it off also guards the share launcher itself. By default the photo is first rewritten into `cacheDir/share/` without EXIF/GPS/XMP/PNG text/GIF comments and served through a `FileProvider`; still-photo EXIF rotation is baked into the pixels (large stills are sampled down if a full-resolution decode would exhaust the heap), and videos are shared unchanged. Info: bottom sheet (see §11). Rename: dialog (see §4.8) that keeps the extension; MediaStore goes through a write-consent request when Foto doesn't own the file, SAF renames through its tree grant. Success swaps the viewer item + reloads + “Renamed” toast and re-keys the Insights history; failure shows a toast. Crop: full-screen crop editor (see §9.6). Wallpaper: full-screen picker (see §9.7).
+- Share: system chooser with URI grant. Settings → Privacy → Allow sharing can remove every media Share entry point (viewer wheel and selection bar); turning it off also guards the share launcher itself. By default the photo is first rewritten into `cacheDir/share/` without EXIF/GPS/XMP/PNG text/GIF comments and served through a `FileProvider`; still-photo EXIF rotation is baked into the pixels (large stills are sampled down if a full-resolution decode would exhaust the heap), and videos are shared unchanged. Info: bottom sheet (see §11). Rename: dialog (see §4.8) that keeps the extension; MediaStore goes through a write-consent request when Foto doesn't own the file, SAF renames through its tree grant. Success swaps the viewer item + reloads + “Renamed” toast and re-keys the Insights history; failure shows a toast. Crop: full-screen crop editor (see §9.6). Wallpaper: full-screen picker (see §9.7).
 - Page change updates settled index; list shrink clamps pager; input gated during slide.
 
 ### 9.6 Crop editor
@@ -380,7 +380,7 @@ Sources: (1) the file name; (2) a local SQLite index (`metadata.db`) holding eac
 
 **Summon:** long-press anywhere in viewer (images+videos, host-level). Haptic, video pauses (no auto-resume), wheel blooms at finger (clamped so 132dp+8dp edge stays on screen; centers if screen too small). Sector set frozen at open; crossing page mid-press doesn’t remap. Background photo blurs 16dp×progress.
 
-**Geometry:** outer 132dp, hub 38dp, icons 26dp on 36dp backing (+10dp) at 0.62×outer radius, label column 78dp. Images: 4 sectors (Delete, Info, Share, Crop in order); videos: 3 (Delete, Info, Share, Delete stays top). Wallpaper is deliberately not a sector — it lives only in the action panel (§9). Sector 0 centered top (−90°). Hit: <38dp hub → cancel; >132dp → cancel; else angle → nearest sector.
+**Geometry:** outer 132dp, hub 38dp, icons 26dp on 36dp backing (+10dp) at 0.62×outer radius, label column 78dp. Images: 4 sectors (Delete, Info, Share, More in order); videos: 4 (Delete, Info, Share, Rename). More opens the compact card in §9.3. Sector 0 centered top (−90°). Hit: <38dp hub → cancel; >132dp → cancel; else angle → nearest sector.
 
 **Appearance:** disc radial black 42%→66%, alpha p, spring bloom (1.2 overshoot allowed). Hovered wedge: white 16% (Delete 85% red). Spokes hub→outer white 26% 1dp. Double rims (outer+hub): black 60% 2dp + white 32% 1dp; hub black 50%. Icon backing black 42% (60% selected); tint: Delete red unselected else white; selected white. Label 11sp Medium + black 95% blur-7 shadow. Center `Close` outlined white 95% (0.84×hub). Hint pill below (centerY+outer+20dp, 240dp centered): 50dp round `#09090B` 90% (Delete red 90%), white 18% 1dp border, “Release to {action}” 13sp Medium, 18dp/9dp padding.
 
@@ -433,7 +433,7 @@ Real playback via single ExoPlayer per viewer session (no per-page players). Aud
 
 **Tile visuals:** badge top-start 8dp (z 2) 24dp circle: selected = white + 14dp `#09090B` Check (“Selected”); unselected = black 50% + 1dp white border hollow. Unselected tiles dim black 40%. No ripple in selection.
 
-**Action bar (edge chosen in Settings → Display → Action panel edge, right side by default; the same edge also positions the viewer action rail):** a compact vertical rail hugging the left or right physical edge (RTL does not mirror it), 76dp wide, `#09090B`, 16dp corners and 12dp elevation, 12dp off the edge and above the nav-bar inset. Four actions stacked Delete / Copy / Move / Share, each a full-width 10dp-round clickable with 4dp/8dp padding: 22dp white icon + 3dp gap + 11sp Medium muted label. Taps that land between the actions are swallowed so they cannot toggle a tile hidden behind the rail. Windows shorter than 600dp (landscape phones, short split-screen) keep the original full-width bar instead, since a rail would fill the screen: single row 16dp/4dp `SpaceEvenly`, same action cells, nav-bar padding. The selection count and Close live only in the top header, so the bar stays short and leaves more grid visible.
+**Action bar (edge chosen in Settings → Display → Selection actions, right side by default):** a compact vertical rail hugging the left or right physical edge (RTL does not mirror it), 76dp wide, `#09090B`, 16dp corners and 12dp elevation, 12dp off the edge and above the nav-bar inset. Four actions stacked Delete / Copy / Move / Share, each a full-width 10dp-round clickable with 4dp/8dp padding: 22dp white icon + 3dp gap + 11sp Medium muted label. Taps that land between the actions are swallowed so they cannot toggle a tile hidden behind the rail. Windows shorter than 600dp (landscape phones, short split-screen) keep the original full-width bar instead, since a rail would fill the screen: single row 16dp/4dp `SpaceEvenly`, same action cells, nav-bar padding. The selection count and Close live only in the top header, so the bar stays short and leaves more grid visible.
 
 **Behaviors:** Delete always asks first for a bulk selection: the confirm dialog shows the resolved item count and whether the delete is recoverable, regardless of the “Confirm before deleting” preference, because one mis-tap can remove a whole album. Confirming runs the system trash request for MediaStore items and the private trash for SAF documents → Undo. Single SAF deletes show a blocking “Deleting…” spinner; bulk deletes show the blocking “Deleting items…” progress modal (see §4.5). Pull down on the root Albums grid or an album grid to reload media and previews; the indicator sits below the frosted header and stays at least 300ms. Selection chrome animates: header cross-fades, badges fade+scale in, action bar slides in from its configured edge (up from the bottom, or in from the left/right). Copy/Move → system directory picker (SAF) + busy overlay (“Copying/Moving N items…”) → toasts (“Copied/Moved N items” or partial “Moved X, copied Y”). Share → chooser with grants.
 
@@ -454,7 +454,7 @@ Real playback via single ExoPlayer per viewer session (no per-page players). Aud
    - Toggle “Prefer 120Hz refresh rate” / “Run the display at up to 120Hz on supported devices.” (default on).
    - Action+chevron “Sort order” / “How media and folders are ordered.” trailing current label → dialog Newest/Oldest/Name A–Z/Z–A (default Newest).
    - Action+chevron “Grid size” / “Thumbnail density in the grid.” trailing label → dialog Small (88dp) / Medium (112dp default) / Large (144dp).
-   - Action+chevron “Action panel edge” / “Where the multi-select bar and viewer actions sit, for one-handed reach.” trailing Right side (default) / Left side / Bottom → moves the multi-select bar and viewer action panel to that physical edge; windows shorter than 600dp keep the bottom bar.
+   - Action+chevron “Selection actions” / “Edge the multi-select bar sits on, for one-handed reach.” trailing Right side (default) / Left side / Bottom → moves the multi-select bar to that physical edge; windows shorter than 600dp keep the bottom bar.
 2. **Playback**
    - Toggle “Loop videos” / “Restart a video when it ends.” (default off).
 3. **Behavior**
@@ -464,7 +464,7 @@ Real playback via single ExoPlayer per viewer session (no per-page players). Aud
    - Toggle “Only show selected folders” / ON “Show only media inside the folders you add.” / OFF “Show all media except the folders you add.” (default off).
    - Action+chevron “Manage folders” trailing “None / 1 folder / N folders” → Folders sub-screen.
 5. **Privacy**
-   - Toggle “Allow sharing” / “Show Share actions in the viewer and selection bar. Turn off to prevent accidental sharing of photos and videos.” (default on; off removes Share from the radial wheel, the viewer action rail and the multi-select bar).
+   - Toggle “Allow sharing” / “Show Share actions in the viewer and selection bar. Turn off to prevent accidental sharing of photos and videos.” (default on; off removes Share from the radial wheel and the multi-select bar).
    - Toggle “Remove metadata when sharing photos” / “Shared photos are re-saved without EXIF, GPS, XMP, PNG text or GIF comments. Rotation is kept for still photos; videos are shared unchanged.” (default on; copies live in `cacheDir/share/` and are pruned after 24 h, and rotation is baked into the pixels when a still photo is re-encoded).
    - Toggle “Record viewing time” / “Rank the photos and videos you spend the most time with. Stored on this device.” (default on; off stops new writes, existing history stays).
    - Action “Clear viewing history” subtitle “No viewing history yet” (disabled) or “Remove all recorded viewing time from this device.” trailing item count → destructive confirm (“Clear viewing history?” / “All recorded viewing time will be deleted and Insights will reset. This can’t be undone.”) → wipes the attention table; the Albums tile disappears.
@@ -488,7 +488,7 @@ Same frosted header (“Folders”). Hint 13sp/18sp muted 4dp start: allow-mode 
 Merged list of Android's system trash (MediaStore `QUERY_ARG_MATCH_TRASHED`, API 30+) and Foto's private SAF trash, newest first. System entries also appear in the platform's own trash UI. Same slide/frosted chrome (“Trash” 22sp + back + “Empty” text-button with `DeleteSweep` icon: white when non-empty, muted when empty; while the Empty request is pending 16dp spinner + “Emptying…”).
 
 - Empty: centered “Trash is empty” 14sp muted. Else list 16dp sides, top status+56+8dp, bottom 8dp, 8dp spacing: summary 12sp muted (“N · size”) 4dp start/bottom.
-- Row card 12dp `RaisedSurface` (`#111113`) with a 1dp `Border` stroke (grey accent against AMOLED black), 8dp padding: 52dp thumb 9dp corners (real image thumbnail, or video poster with a small play affordance; glyph sits behind as a fallback; private entries read the app-private copy) + 12dp gap + name 14sp Medium 1 line + size 12sp muted (weight 1) + `Restore` outlined white (“Restore”) → system `createTrashRequest(value=false)` or private restore + reloads + `onChanged`; `Delete` outlined red (“Delete”) → system `createDeleteRequest` or a permanent-delete confirm for private entries + reloads. Tapping the row opens the item in a read-only viewer/player (no action wheel, action rail, delete, share, info or crop), zooming from the row thumbnail.
+- Row card 12dp `RaisedSurface` (`#111113`) with a 1dp `Border` stroke (grey accent against AMOLED black), 8dp padding: 52dp thumb 9dp corners (real image thumbnail, or video poster with a small play affordance; glyph sits behind as a fallback; private entries read the app-private copy) + 12dp gap + name 14sp Medium 1 line + size 12sp muted (weight 1) + `Restore` outlined white (“Restore”) → system `createTrashRequest(value=false)` or private restore + reloads + `onChanged`; `Delete` outlined red (“Delete”) → system `createDeleteRequest` or a permanent-delete confirm for private entries + reloads. Tapping the row opens the item in a read-only viewer/player (no action wheel, delete, share, info or crop), zooming from the row thumbnail.
 - “Empty” → destructive confirm (“Empty trash?” / “Items in the trash will be permanently deleted. This can’t be undone.” / Cancel + Empty red) → system `createDeleteRequest` for system entries and direct removal of private entries → reloads while “Emptying…”. Provider requests are approved in the system dialog; private entries need no prompt.
 
 ---
@@ -534,7 +534,7 @@ Overlay on gallery when permissions granted + unseen; replayable via Settings (n
 - Action chrome: the side rail and bottom bar fade with the rest of the viewer chrome (200ms), in place. There is no scrim and no separate open/close state.
 - Springs: radial open `MediumBouncy/MediumLow`, close `NoBouncy/Medium`, bloom allows 1.2 overshoot; double-tap zoom `NoBouncy/MediumLow`.
 - Search filtering: hint/empty/results crossfade 180ms in / 120ms out; result tiles and month headers fade 180ms in, 140ms out and re-place on a medium-low spring; the “Found in metadata (N)” count fades 160/100ms; the placeholder fades 120ms.
-- Shimmer 1200ms linear infinite; sync slide from top + fade (defaults); settings/folders/trash/search slide from right + fade; viewer chrome and action rail fade in place; toast slide half-height + fade.
+- Shimmer 1200ms linear infinite; sync slide from top + fade (defaults); settings/folders/trash/search slide from right + fade; viewer chrome fades in place; toast slide half-height + fade.
 - Draw-phase transforms (`graphicsLayer`) for deck/viewer/zoom/blur so frames don’t recompose; album blur gated to phase ≥0.98; viewer blur 16dp×radial progress; momentum decay friction 0.6 threshold 0.5; double-tap 1↔3× (pinch 1–5×); swipe threshold 56dp; tap vs long-press via press-timeout + touch-slop.
 
 ---

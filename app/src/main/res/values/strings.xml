@@ -87,8 +87,8 @@
     <string name="grid_large">Large</string>
 
     <!-- Selection action placement -->
-    <string name="display_selection_actions_title">Action panel edge</string>
-    <string name="display_selection_actions_subtitle">Where the multi-select bar and viewer actions sit, for one-handed reach.</string>
+    <string name="display_selection_actions_title">Selection actions</string>
+    <string name="display_selection_actions_subtitle">Edge the multi-select bar sits on, for one-handed reach.</string>
     <string name="selection_placement_right">Right side</string>
     <string name="selection_placement_left">Left side</string>
     <string name="selection_placement_bottom">Bottom</string>
@@ -311,6 +311,7 @@
     <string name="action_copy">Copy</string>
     <string name="action_move">Move</string>
     <string name="action_share">Share</string>
+    <string name="action_more">More</string>
     <string name="action_crop">Crop</string>
     <string name="action_wallpaper">Wallpaper</string>
     <string name="crop_title">Crop</string>
@@ -460,7 +461,7 @@
     <string name="tutorial_viewer_title">View and zoom</string>
     <string name="tutorial_viewer_body">Swipe between photos, double-tap or pinch to zoom, tap to hide or show the controls, and swipe down to close.</string>
     <string name="tutorial_actions_title">Actions in one motion</string>
-    <string name="tutorial_actions_body">Long-press anywhere, slide to Delete, Info, Share or Crop, then release. Tap a photo to hide or show the side action rail.</string>
+    <string name="tutorial_actions_body">Long-press anywhere, slide to Delete, Info, Share or More, then release. More holds Crop, Rename and Wallpaper.</string>
     <string name="tutorial_safety_title">Select and stay safe</string>
     <string name="tutorial_safety_body">Long-press a tile to enter selection mode, then glide your finger across tiles to select many in one motion. Start a new glide on a selected tile to deselect. Delete, copy, move or share them; deletes go to the trash — undo right away, or empty it from Settings.</string>
     <string name="tutorial_skip">Skip</string>

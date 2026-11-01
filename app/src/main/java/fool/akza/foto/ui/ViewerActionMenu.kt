@@ -18,8 +18,11 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Crop
 import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.Info
+import androidx.compose.material.icons.outlined.MoreHoriz
 import androidx.compose.material.icons.outlined.Share
+import androidx.compose.material.icons.outlined.Wallpaper
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -51,23 +54,30 @@ import kotlin.math.cos
 import kotlin.math.roundToInt
 import kotlin.math.sin
 
-/** Actions offered by the viewer's long-press radial menu. Wallpaper is
- * intentionally absent: it lives only in the bottom action sheet. */
-internal enum class ViewerAction { Delete, Info, Share, Crop }
+/** Actions available from the viewer. The primary wheel keeps the three most
+ * used (Delete/Info/Share) plus More; Crop/Rename/Wallpaper live in the More
+ * card so the wheel never exceeds four sectors. */
+internal enum class ViewerAction { Delete, Info, Share, More, Crop, Rename, Wallpaper }
 
-private fun ViewerAction.icon(): ImageVector = when (this) {
+internal fun ViewerAction.icon(): ImageVector = when (this) {
     ViewerAction.Delete -> Icons.Outlined.Delete
     ViewerAction.Info -> Icons.Outlined.Info
     ViewerAction.Share -> Icons.Outlined.Share
+    ViewerAction.More -> Icons.Outlined.MoreHoriz
     ViewerAction.Crop -> Icons.Outlined.Crop
+    ViewerAction.Rename -> Icons.Outlined.Edit
+    ViewerAction.Wallpaper -> Icons.Outlined.Wallpaper
 }
 
 @StringRes
-private fun ViewerAction.labelRes(): Int = when (this) {
+internal fun ViewerAction.labelRes(): Int = when (this) {
     ViewerAction.Delete -> R.string.action_delete
     ViewerAction.Info -> R.string.info_title
     ViewerAction.Share -> R.string.action_share
+    ViewerAction.More -> R.string.action_more
     ViewerAction.Crop -> R.string.action_crop
+    ViewerAction.Rename -> R.string.action_rename
+    ViewerAction.Wallpaper -> R.string.action_wallpaper
 }
 
 private val WheelRadius = 132.dp
@@ -109,7 +119,12 @@ internal fun radialActionAt(
     position: Offset,
     center: Offset,
     density: Density,
-    actions: List<ViewerAction> = ViewerAction.entries,
+    actions: List<ViewerAction> = listOf(
+        ViewerAction.Delete,
+        ViewerAction.Info,
+        ViewerAction.Share,
+        ViewerAction.More,
+    ),
 ): ViewerAction? {
     if (actions.isEmpty()) return null
     val d = position - center
@@ -134,7 +149,12 @@ internal fun ViewerActionWheel(
     containerSize: IntSize,
     density: Density,
     progress: Float,
-    actions: List<ViewerAction> = ViewerAction.entries,
+    actions: List<ViewerAction> = listOf(
+        ViewerAction.Delete,
+        ViewerAction.Info,
+        ViewerAction.Share,
+        ViewerAction.More,
+    ),
     modifier: Modifier = Modifier,
 ) {
     if (containerSize == IntSize.Zero || actions.isEmpty()) return

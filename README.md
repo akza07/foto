@@ -158,18 +158,18 @@ edge-to-edge rendering.
 - **Long-press (images):** a **radial menu** appears at your finger — keep holding
   and slide to Delete / Info / Share / Crop, then release to run it
   (release in the centre to cancel). One gesture, no button to find.
-  Wallpaper is not on the wheel; it stays in the action rail.
+  Wallpaper lives inside the wheel's More card.
 - **Tap the photo:** hides or shows all viewer UI — top bar, frosted side action
   rail and system bars. **Swipe up** shows the UI again when it is hidden.
 - **Swipe down (at 1×):** dismisses the viewer.
 - **Zoomed panning:** 1:1 while dragging, then a low-friction **momentum glide**
   on release, clamped to the image bounds.
-- **Viewer chrome:** tapping the photo toggles the top controls, side action rail and system bars together; the chrome also auto-hides after a few seconds.
+- **Viewer chrome:** tapping the photo toggles the top controls and system bars; the chrome also auto-hides after a few seconds.
 - **Top-left:** back button + counter pill (`3/12`).
-- **Action rail:** Delete (red), Share, Info, Rename, Crop, Wallpaper (Rename
-  works for videos too). It floats on the right at about the 3/4 mark (edge
-  chosen under Settings → Display → Action panel edge), with Delete at the top
-  away from the thumb; choosing Bottom keeps the full-width bottom bar instead.
+- **Viewer actions:** long-press for four sectors — Delete (top), Info, Share,
+  More (bottom is Share, the easiest to reach). More opens a compact frosted
+  card at the wheel's centre with Crop, Rename and Wallpaper. Videos get Delete,
+  Info, Share, Rename instead.
   - **Rename:** edits the file name while keeping the original extension. MediaStore
     files rename through the provider (a one-time system write-consent prompt for
     files Foto doesn't own); SAF documents use their folder grant. The viewer, the
@@ -183,7 +183,7 @@ edge-to-edge rendering.
     bytes into an app-private trash. Both kinds show an **Undo** bar and appear in
     **Settings → Storage → Trash** with restore and permanent delete.
   - **Share:** `ACTION_SEND` chooser with URI grant. Share actions are removed
-    from the viewer wheel and action rail when *Settings →
+    from the viewer wheel when *Settings →
     Privacy → Allow sharing* is off. With *Remove metadata when sharing photos*
     on (the default), each image is rewritten into the app cache without
     EXIF/GPS/XMP/PNG text/GIF comments and handed out through a `FileProvider`;
@@ -251,7 +251,7 @@ edge-to-edge rendering.
   video from the start instead of stopping at the end (`Player.REPEAT_MODE_ONE`).
   Off by default.
 - **Video pages disable the image-only gestures** (user decision): no
-  pinch/double-tap zoom. Tap to show/hide the video HUD and action rail; exit via
+  pinch/double-tap zoom. Tap to show/hide the video HUD; exit via
   the back button, swipe down, or swipe to an adjacent page while paused.
 - Unsupported codecs → clean shadcn error state (no crash).
 
@@ -260,7 +260,7 @@ edge-to-edge rendering.
   the header offers **Select all** and the live count, and a compact floating
   action bar provides **Delete / Copy / Move / Share** across the selection
   (folders expand to their contents). The bar sits on the right side by default
-  so it stays under the thumb one-handed; Settings → Display → Action panel edge
+  so it stays under the thumb one-handed; Settings → Display → Selection actions
   can move it to the left side or back to a full-width bottom bar, and windows
   shorter than 600dp (landscape phones) keep the bottom bar. Copy/Move use the
   system directory picker (SAF). Deleting always shows an in-app confirmation
@@ -303,7 +303,7 @@ edge-to-edge rendering.
     - **Manage folders** → a **Folders** sub-screen (slide transition, its own back
       handling) with the directory list and **Add directory**.
   - **Privacy** — *Allow sharing* (on by default): shows Share in the viewer
-    wheel, action rail and multi-select bar. Turn it off to remove every media
+    wheel and multi-select bar. Turn it off to remove every media
     share entry point. *Remove metadata when sharing photos* (on by default):
     shared photos are re-saved without EXIF, GPS, XMP, PNG text or GIF comments,
     with rotation baked into the pixels (and large photos sampled down if a full
