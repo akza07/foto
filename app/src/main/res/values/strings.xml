@@ -194,7 +194,6 @@
     <string name="info_color_range">Color range</string>
     <string name="info_sample_rate">Sample rate</string>
     <string name="info_audio_bit_depth">Bit depth</string>
-    <string name="info_tracks">Tracks</string>
     <string name="info_media_title">Title</string>
     <string name="info_album_artist">Album artist</string>
     <string name="info_author">Author</string>
