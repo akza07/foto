@@ -60,6 +60,7 @@ import fool.akza.foto.data.AppSettings
 import fool.akza.foto.data.GalleryEvents
 import fool.akza.foto.data.GridSize
 import fool.akza.foto.data.MediaSort
+import fool.akza.foto.data.SelectionActionPlacement
 import fool.akza.foto.data.SettingsRepository
 import fool.akza.foto.data.TrashRepository
 import fool.akza.foto.data.thumbnails.ThumbCache
@@ -157,6 +158,7 @@ private fun SettingsRoot(
     var showClearConfirm by remember { mutableStateOf(false) }
     var showSortDialog by remember { mutableStateOf(false) }
     var showGridDialog by remember { mutableStateOf(false) }
+    var showSelectionPlacementDialog by remember { mutableStateOf(false) }
     // App-private trash summary; null while loading.
     var trashCount by remember { mutableStateOf<Int?>(null) }
     var trashBytes by remember { mutableStateOf(0L) }
@@ -228,6 +230,13 @@ private fun SettingsRoot(
                         subtitle = stringResource(R.string.display_grid_subtitle),
                         trailingText = stringResource(settings.gridSize.labelRes),
                         onClick = { showGridDialog = true },
+                    )
+                    SettingsDivider()
+                    SettingsActionRow(
+                        title = stringResource(R.string.display_selection_actions_title),
+                        subtitle = stringResource(R.string.display_selection_actions_subtitle),
+                        trailingText = stringResource(settings.selectionActionPlacement.labelRes),
+                        onClick = { showSelectionPlacementDialog = true },
                     )
                 }
             }
@@ -408,6 +417,20 @@ private fun SettingsRoot(
                 onSettingsChanged()
             },
             onDismiss = { showSortDialog = false },
+        )
+    }
+
+    if (showSelectionPlacementDialog) {
+        OptionPickerDialog(
+            title = stringResource(R.string.display_selection_actions_title),
+            options = SelectionActionPlacement.entries,
+            current = settings.selectionActionPlacement,
+            labelRes = { it.labelRes },
+            onSelect = { placement ->
+                showSelectionPlacementDialog = false
+                SettingsRepository.setSelectionActionPlacement(placement)
+            },
+            onDismiss = { showSelectionPlacementDialog = false },
         )
     }
 

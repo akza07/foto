@@ -246,8 +246,11 @@ edge-to-edge rendering.
 - Long-press a tile or folder to enter selection mode; taps toggle selection,
   the header offers **Select all** and the live count, and a compact floating
   action bar provides **Delete / Copy / Move / Share** across the selection
-  (folders expand to their contents). Copy/Move use the system directory picker
-  (SAF). Deleting shows a blocking progress modal for bulk private-trash copies.
+  (folders expand to their contents). The bar sits on the right edge by default
+  so it stays under the thumb one-handed; Settings → Display → Selection actions
+  can move it to the left edge or back to a full-width bottom bar. Copy/Move use
+  the system directory picker (SAF). Deleting shows a blocking progress modal
+  for bulk private-trash copies.
 - Keep holding and glide across tiles to sweep them: starting on an unselected
   tile adds every tile you cross, starting on an already selected one removes
   them. One glide is one direction; a fresh glide can go the other way.

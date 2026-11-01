@@ -125,6 +125,7 @@ import fool.akza.foto.data.SystemTrash
 import fool.akza.foto.data.mediaCollectionUri
 import fool.akza.foto.data.MediaSort
 import fool.akza.foto.data.GridSize
+import fool.akza.foto.data.SelectionActionPlacement
 import fool.akza.foto.data.canonicalPath
 import fool.akza.foto.data.buildDirectoryHierarchy
 import fool.akza.foto.data.previewStamp
@@ -150,8 +151,6 @@ import kotlinx.coroutines.withContext
 
 private val TileShape = RoundedCornerShape(12.dp)
 private val GridSpacing = 8.dp
-// Height of the selection action bar so grids can reserve space for it.
-private val ActionBarHeightDp = 68.dp
 
 /** A viewer item removed by a pending delete, with its index for a slide-back Undo. */
 private data class ViewerUndo(val item: MediaItem, val index: Int)
@@ -1135,6 +1134,7 @@ fun GalleryScreen(
             minTileSize = appSettings.gridSize.minTileDp.dp,
             sortOrder = appSettings.sortOrder,
             gridSize = appSettings.gridSize,
+            selectionActionPlacement = appSettings.selectionActionPlacement,
             onSortOrderChange = { SettingsRepository.setSortOrder(it) },
             onGridSizeChange = { SettingsRepository.setGridSize(it) },
             isRefreshing = refreshing,
@@ -1225,6 +1225,7 @@ fun GalleryScreen(
                     onToggleFolder = { if (isTopLevel) toggleSelectFolder(it) },
                     minTileSize = appSettings.gridSize.minTileDp.dp,
                     selection = selection,
+                    selectionActionPlacement = appSettings.selectionActionPlacement,
                     onToggleSelect = { if (isTopLevel) toggleSelect(it) },
                     onSelectAll = { items ->
                         if (isTopLevel) {
@@ -1361,14 +1362,32 @@ fun GalleryScreen(
             )
         }
 
-        // Multi-select action bar + selection mode state.
+        // Multi-select action bar + selection mode state. The placement setting
+        // decides which edge it animates in from: side rails keep the actions
+        // inside a thumb's reach when the phone is held one-handed.
+        val selectionPlacement = appSettings.selectionActionPlacement
         AnimatedVisibility(
             visible = isSelecting,
-            enter = slideInVertically(tween(220)) { it / 2 } + fadeIn(tween(160)),
-            exit = slideOutVertically(tween(160)) { it / 2 } + fadeOut(tween(120)),
-            modifier = Modifier.align(Alignment.BottomCenter),
+            enter = when (selectionPlacement) {
+                SelectionActionPlacement.BOTTOM ->
+                    slideInVertically(tween(220)) { it / 2 } + fadeIn(tween(160))
+                SelectionActionPlacement.LEFT ->
+                    slideInHorizontally(tween(220)) { -it } + fadeIn(tween(160))
+                SelectionActionPlacement.RIGHT ->
+                    slideInHorizontally(tween(220)) { it } + fadeIn(tween(160))
+            },
+            exit = when (selectionPlacement) {
+                SelectionActionPlacement.BOTTOM ->
+                    slideOutVertically(tween(160)) { it / 2 } + fadeOut(tween(120))
+                SelectionActionPlacement.LEFT ->
+                    slideOutHorizontally(tween(160)) { -it } + fadeOut(tween(120))
+                SelectionActionPlacement.RIGHT ->
+                    slideOutHorizontally(tween(160)) { it } + fadeOut(tween(120))
+            },
+            modifier = Modifier.align(selectionPlacement.anchor()),
         ) {
             SelectionActionBar(
+                placement = selectionPlacement,
                 onDelete = {
                     if (selectedCount > 0) {
                         batchDeleteScope.launch {
@@ -1667,6 +1686,7 @@ private fun MainGalleryGrid(
     onSearchClick: () -> Unit,
     minTileSize: Dp,
     selection: SelectionState,
+    selectionActionPlacement: SelectionActionPlacement = SelectionActionPlacement.BOTTOM,
     onToggleSelect: (MediaItem) -> Unit,
     onToggleFolder: (MediaFolder) -> Unit,
     onSelectAll: () -> Unit,
@@ -1869,7 +1889,7 @@ private fun MainGalleryGrid(
                         top = statusBarTop + AppBarHeight + 12.dp,
                         end = 12.dp,
                         bottom = if (selection.active) {
-                            ActionBarHeightDp + 12.dp +
+                            selectionActionPlacement.reservedEndSpace() + 12.dp +
                                 WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
                         } else {
                             12.dp + WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
@@ -1928,6 +1948,7 @@ private fun AlbumGrid(
     items: List<MediaItem>?,
     minTileSize: Dp,
     selection: SelectionState,
+    selectionActionPlacement: SelectionActionPlacement = SelectionActionPlacement.BOTTOM,
     onToggleSelect: (MediaItem) -> Unit,
     onSelectAll: (List<MediaItem>) -> Unit,
     onExitSelection: () -> Unit,
@@ -2090,7 +2111,7 @@ private fun AlbumGrid(
                         top = 56.dp + 12.dp + WindowInsets.statusBars.asPaddingValues().calculateTopPadding(),
                         end = 12.dp,
                         bottom = if (selection.active) {
-                            ActionBarHeightDp + 12.dp +
+                            selectionActionPlacement.reservedEndSpace() + 12.dp +
                                 WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
                         } else {
                             12.dp + WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()

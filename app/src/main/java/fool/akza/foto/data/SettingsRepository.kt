@@ -23,6 +23,16 @@ enum class GridSize(@StringRes val labelRes: Int, val minTileDp: Int) {
     LARGE(R.string.grid_large, 144),
 }
 
+/**
+ * Edge the multi-select actions sit on. Sides keep the actions inside the
+ * thumb's reach in one-handed use; [BOTTOM] is the original full-width bar.
+ */
+enum class SelectionActionPlacement(@StringRes val labelRes: Int) {
+    RIGHT(R.string.selection_placement_right),
+    LEFT(R.string.selection_placement_left),
+    BOTTOM(R.string.selection_placement_bottom),
+}
+
 data class AppSettings(
     val respectNoMedia: Boolean = true,
     val requireExplicit: Boolean = false,
@@ -32,6 +42,7 @@ data class AppSettings(
     val loopVideos: Boolean = false,
     val sortOrder: MediaSort = MediaSort.DATE_NEWEST,
     val gridSize: GridSize = GridSize.MEDIUM,
+    val selectionActionPlacement: SelectionActionPlacement = SelectionActionPlacement.RIGHT,
     /** Whether the first-run tutorial has been completed or skipped. */
     val tutorialSeen: Boolean = false,
 )
@@ -46,6 +57,7 @@ object SettingsRepository {
     private const val KEY_LOOP_VIDEOS = "loop_videos"
     private const val KEY_SORT_ORDER = "sort_order"
     private const val KEY_GRID_SIZE = "grid_size"
+    private const val KEY_SELECTION_ACTION_PLACEMENT = "selection_action_placement"
     private const val KEY_TUTORIAL_SEEN = "tutorial_seen"
 
     private val _settings = MutableStateFlow(AppSettings())
@@ -70,6 +82,12 @@ object SettingsRepository {
             gridSize = runCatching {
                 GridSize.valueOf(prefs.getString(KEY_GRID_SIZE, null) ?: GridSize.MEDIUM.name)
             }.getOrDefault(GridSize.MEDIUM),
+            selectionActionPlacement = runCatching {
+                SelectionActionPlacement.valueOf(
+                    prefs.getString(KEY_SELECTION_ACTION_PLACEMENT, null)
+                        ?: SelectionActionPlacement.RIGHT.name,
+                )
+            }.getOrDefault(SelectionActionPlacement.RIGHT),
             tutorialSeen = prefs.getBoolean(KEY_TUTORIAL_SEEN, false),
         )
     }
@@ -112,6 +130,12 @@ object SettingsRepository {
 
     fun setGridSize(value: GridSize) {
         setString(KEY_GRID_SIZE, value.name) { it.copy(gridSize = value) }
+    }
+
+    fun setSelectionActionPlacement(value: SelectionActionPlacement) {
+        setString(KEY_SELECTION_ACTION_PLACEMENT, value.name) {
+            it.copy(selectionActionPlacement = value)
+        }
     }
 
     fun setTutorialSeen(value: Boolean) {
