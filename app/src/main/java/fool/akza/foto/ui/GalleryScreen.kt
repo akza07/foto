@@ -503,29 +503,50 @@ fun GalleryScreen(
         }
     }
 
-    // Glide selection: adds an item/folder/directory to the current selection
-    // without toggling already-selected entries off (used while dragging), and
-    // ticks the haptics engine once per newly covered tile so the gesture is felt
-    // rather than only seen.
+    // Glide selection. One hold-and-drag is a single direction, decided by the
+    // tile it starts on: starting on an unselected tile adds every covered tile,
+    // starting on an already selected one removes them (so a second glide can
+    // undo the first). Fixing the direction at the start keeps a tile from
+    // flipping back and forth as the finger crosses it. Ticks the haptics engine
+    // whenever the count changes so the glide is felt, not only seen.
     val glideHaptics = LocalHapticFeedback.current
     val glideTick = { before: Int ->
-        if (selection.itemCount > before) {
+        if (selection.itemCount != before) {
             glideHaptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
         }
     }
-    val glideSelectItem = { item: MediaItem ->
+    val glideItem = { item: MediaItem, deselect: Boolean ->
         val before = selection.itemCount
-        selection = if (selection.active) {
+        selection = if (deselect) {
+            if (item in selection.selected) {
+                selection.copy(selected = selection.selected - item)
+            } else {
+                selection
+            }
+        } else if (selection.active) {
             if (item in selection.selected) selection else selection.copy(selected = selection.selected + item)
         } else {
             SelectionState(active = true, selected = listOf(item))
         }
         glideTick(before)
     }
-    val glideSelectFolder = { folder: MediaFolder ->
+    val glideFolder = { folder: MediaFolder, deselect: Boolean ->
         val before = selection.itemCount
         val directory = findDirectory(folder.bucketId)
-        selection = if (selection.active) {
+        selection = if (deselect) {
+            if (selectedFolders.any { it.bucketId == folder.bucketId } ||
+                selectedDirectories.any { it.folder.bucketId == folder.bucketId }
+            ) {
+                selection.copy(
+                    selectedFolders = selectedFolders.filterNot { it.bucketId == folder.bucketId },
+                    selectedDirectories = selectedDirectories.filterNot {
+                        it.folder.bucketId == folder.bucketId
+                    },
+                )
+            } else {
+                selection
+            }
+        } else if (selection.active) {
             if (directory != null) {
                 if (selectedDirectories.any { it.folder.bucketId == folder.bucketId }) selection
                 else selection.copy(selectedDirectories = selectedDirectories + directory)
@@ -1130,8 +1151,8 @@ fun GalleryScreen(
             onExitSelection = clearSelection,
             onTilePositioned = registerTileRect,
             onTileDisposed = unregisterTileRect,
-            onGlideSelectItem = glideSelectItem,
-            onGlideSelectFolder = glideSelectFolder,
+            onGlideItem = glideItem,
+            onGlideFolder = glideFolder,
             // Skip the (expensive) blur while an opaque screen covers the root.
             frostEnabled = (directoryStack.isEmpty() || directoryStack.size == 1 && closing) &&
                 viewerItems == null &&
@@ -1209,9 +1230,9 @@ fun GalleryScreen(
                     onExitSelection = { if (isTopLevel) clearSelection() },
                     onTilePositioned = registerTileRect,
                     onTileDisposed = unregisterTileRect,
-                    onGlideSelectItem = glideSelectItem,
-                    onGlideSelectFolder = glideSelectFolder,
-                    onGlideSelectDirectory = { dir -> glideSelectFolder(dir.folder) },
+                    onGlideItem = glideItem,
+                    onGlideFolder = glideFolder,
+                    onGlideDirectory = { dir, deselect -> glideFolder(dir.folder, deselect) },
                     sortOrder = appSettings.sortOrder,
                     gridSize = appSettings.gridSize,
                     onSortOrderChange = { SettingsRepository.setSortOrder(it) },
@@ -1642,9 +1663,9 @@ private fun MainGalleryGrid(
     onTilePositioned: (Uri, Rect) -> Unit,
     onTileDisposed: (Uri) -> Unit,
     frostEnabled: Boolean = true,
-    onGlideSelectItem: (MediaItem) -> Unit = {},
-    onGlideSelectFolder: (MediaFolder) -> Unit = {},
-    onGlideSelectDirectory: (GalleryDirectory) -> Unit = {},
+    onGlideItem: (MediaItem, Boolean) -> Unit = { _, _ -> },
+    onGlideFolder: (MediaFolder, Boolean) -> Unit = { _, _ -> },
+    onGlideDirectory: (GalleryDirectory, Boolean) -> Unit = { _, _ -> },
     sortOrder: MediaSort = MediaSort.DATE_NEWEST,
     gridSize: GridSize = GridSize.MEDIUM,
     onSortOrderChange: (MediaSort) -> Unit = {},
@@ -1654,27 +1675,54 @@ private fun MainGalleryGrid(
 ) {
     val gridState = rememberLazyGridState()
     val currentContent by rememberUpdatedState(content)
-    val glideSelectItemState by rememberUpdatedState(onGlideSelectItem)
-    val glideSelectFolderState by rememberUpdatedState(onGlideSelectFolder)
+    val glideItemState by rememberUpdatedState(onGlideItem)
+    val glideFolderState by rememberUpdatedState(onGlideFolder)
     // Window-space bounds of every composed tile, keyed the same way as the
     // LazyGrid keys. Hit-testing against real bounds keeps glide selection exact
     // regardless of content padding, scroll offset and grid spacing.
     val tileBounds = remember { mutableMapOf<String, Rect>() }
     val haptics = LocalHapticFeedback.current
     var gridCoordinates by remember { mutableStateOf<LayoutCoordinates?>(null) }
-    val glideAt: (Offset) -> Unit = glideAt@{ position ->
+    // One continuous glide is either a select sweep or a deselect sweep: the
+    // state of the tile under the finger at press time decides which. The
+    // direction is fixed for the whole gesture, so a tile never flips back and
+    // forth as the finger crosses it.
+    val glideDeselectsAt: (Offset) -> Boolean = glideDeselectsAt@{ position ->
+        val key = hitTestTile(gridCoordinates, tileBounds, position) ?: return@glideDeselectsAt false
+        val content = currentContent ?: return@glideDeselectsAt false
+        when {
+            key.startsWith("folder:") -> content.folders
+                .firstOrNull { "folder:${it.bucketId}" == key }
+                ?.let { folder ->
+                    // A folder can sit in either list depending on whether the
+                    // directory was known when it was picked.
+                    selection.selectedFolders.any { it.bucketId == folder.bucketId } ||
+                        selection.selectedDirectories.any {
+                            it.folder.bucketId == folder.bucketId
+                        }
+                }
+                ?: false
+            key.startsWith("item:") -> content.looseItems
+                .firstOrNull { "item:${it.uri}" == key }
+                ?.let { item -> item in selection.selected }
+                ?: false
+            else -> false
+        }
+    }
+    val glideAt: (Offset, Boolean) -> Unit = glideAt@{ position, deselect ->
         val key = hitTestTile(gridCoordinates, tileBounds, position) ?: return@glideAt
         val content = currentContent ?: return@glideAt
         when {
             key.startsWith("folder:") -> content.folders
                 .firstOrNull { "folder:${it.bucketId}" == key }
-                ?.let(glideSelectFolderState)
+                ?.let { glideFolderState(it, deselect) }
             key.startsWith("item:") -> content.looseItems
                 .firstOrNull { "item:${it.uri}" == key }
-                ?.let(glideSelectItemState)
+                ?.let { glideItemState(it, deselect) }
         }
     }
     val glidePosition by rememberUpdatedState(glideAt)
+    val glideDeselects by rememberUpdatedState(glideDeselectsAt)
 
     // The grid fills the whole screen and the header overlays it, so content
     // scrolls underneath the frosted bar (same treatment as the album view).
@@ -1770,13 +1818,17 @@ private fun MainGalleryGrid(
                             // the tile's own click detector: whichever timer fires
                             // first used to win, so gliding was a race. Here the
                             // long press selects the tile under the finger and the
-                            // drag that follows keeps adding tiles until release.
+                            // drag that follows keeps adding (or removing) tiles
+                            // until release.
                             awaitEachGesture {
                                 val down = awaitFirstDown(requireUnconsumed = false)
                                 val longPress =
                                     awaitLongPressOrCancellation(down.id) ?: return@awaitEachGesture
                                 haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                                glidePosition(longPress.position)
+                                // One glide, one direction: pressing an already
+                                // selected tile makes the whole sweep deselect.
+                                val deselect = glideDeselects(longPress.position)
+                                glidePosition(longPress.position, deselect)
                                 // Keep the gesture for the glide by consuming in the
                                 // Initial pass: the grid's own scroll detector runs
                                 // deeper in the tree (Main pass), so without this a
@@ -1797,7 +1849,7 @@ private fun MainGalleryGrid(
                                         break
                                     }
                                     change.consume()
-                                    glidePosition(change.position)
+                                    glidePosition(change.position, deselect)
                                 }
                             }
                         },
@@ -1871,9 +1923,9 @@ private fun AlbumGrid(
     onTilePositioned: (Uri, Rect) -> Unit,
     onTileDisposed: (Uri) -> Unit,
     sortOrder: MediaSort = MediaSort.DATE_NEWEST,
-    onGlideSelectItem: (MediaItem) -> Unit = {},
-    onGlideSelectFolder: (MediaFolder) -> Unit = {},
-    onGlideSelectDirectory: (GalleryDirectory) -> Unit = {},
+    onGlideItem: (MediaItem, Boolean) -> Unit = { _, _ -> },
+    onGlideFolder: (MediaFolder, Boolean) -> Unit = { _, _ -> },
+    onGlideDirectory: (GalleryDirectory, Boolean) -> Unit = { _, _ -> },
     gridSize: GridSize = GridSize.MEDIUM,
     onSortOrderChange: (MediaSort) -> Unit = {},
     onGridSizeChange: (GridSize) -> Unit = {},
@@ -1882,9 +1934,9 @@ private fun AlbumGrid(
 ) {
     val density = LocalDensity.current
     val gridState = rememberLazyGridState()
-    val glideSelectItemState by rememberUpdatedState(onGlideSelectItem)
-    val glideSelectFolderState by rememberUpdatedState(onGlideSelectFolder)
-    val glideSelectDirectoryState by rememberUpdatedState(onGlideSelectDirectory)
+    val glideItemState by rememberUpdatedState(onGlideItem)
+    val glideFolderState by rememberUpdatedState(onGlideFolder)
+    val glideDirectoryState by rememberUpdatedState(onGlideDirectory)
 
     // One shared phase drives every tile: 1f = settled expanded grid, 0f = collapsed
     // into the folder stack. Tiles derive their pose from it, so scrolling/recomposing
@@ -1912,18 +1964,42 @@ private fun AlbumGrid(
     val tileBounds = remember { mutableMapOf<String, Rect>() }
     val haptics = LocalHapticFeedback.current
     var gridCoordinates by remember { mutableStateOf<LayoutCoordinates?>(null) }
-    val glideAt: (Offset) -> Unit = glideAt@{ position ->
+    // See MainGalleryGrid: a glide that starts on an already selected tile
+    // deselects for its whole duration; one that starts on an unselected tile
+    // selects.
+    val glideDeselectsAt: (Offset) -> Boolean = glideDeselectsAt@{ position ->
+        val key = hitTestTile(gridCoordinates, tileBounds, position) ?: return@glideDeselectsAt false
+        when {
+            key.startsWith("directory:") -> childDirectories
+                .firstOrNull { "directory:${it.folder.bucketId}" == key }
+                ?.let { directory ->
+                    selection.selectedDirectories.any {
+                        it.folder.bucketId == directory.folder.bucketId
+                    } || selection.selectedFolders.any {
+                        it.bucketId == directory.folder.bucketId
+                    }
+                }
+                ?: false
+            key.startsWith("album:") -> displayItems
+                .firstOrNull { "album:${it.uri}" == key }
+                ?.let { item -> item in selection.selected }
+                ?: false
+            else -> false
+        }
+    }
+    val glideAt: (Offset, Boolean) -> Unit = glideAt@{ position, deselect ->
         val key = hitTestTile(gridCoordinates, tileBounds, position) ?: return@glideAt
         when {
             key.startsWith("directory:") -> childDirectories
                 .firstOrNull { "directory:${it.folder.bucketId}" == key }
-                ?.let(glideSelectDirectoryState)
+                ?.let { glideDirectoryState(it, deselect) }
             key.startsWith("album:") -> displayItems
                 .firstOrNull { "album:${it.uri}" == key }
-                ?.let(glideSelectItemState)
+                ?.let { glideItemState(it, deselect) }
         }
     }
     val glidePosition by rememberUpdatedState(glideAt)
+    val glideDeselects by rememberUpdatedState(glideDeselectsAt)
 
     Column(
         modifier = Modifier
@@ -1969,13 +2045,15 @@ private fun AlbumGrid(
                             .fillMaxSize()
                             .onGloballyPositioned { gridCoordinates = it }
                         .pointerInput(Unit) {
-                            // See MainGalleryGrid: one owner for long-press + glide.
+                            // See MainGalleryGrid: one owner for long-press + glide,
+                            // with the press-time tile deciding select vs deselect.
                             awaitEachGesture {
                                 val down = awaitFirstDown(requireUnconsumed = false)
                                 val longPress =
                                     awaitLongPressOrCancellation(down.id) ?: return@awaitEachGesture
                                 haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                                glidePosition(longPress.position)
+                                val deselect = glideDeselects(longPress.position)
+                                glidePosition(longPress.position, deselect)
                                 var pointerId = longPress.id
                                 while (true) {
                                     val event = awaitPointerEvent(PointerEventPass.Initial)
@@ -1992,7 +2070,7 @@ private fun AlbumGrid(
                                         break
                                     }
                                     change.consume()
-                                    glidePosition(change.position)
+                                    glidePosition(change.position, deselect)
                                 }
                             }
                         },

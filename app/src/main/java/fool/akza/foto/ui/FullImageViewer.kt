@@ -1,5 +1,8 @@
 package fool.akza.foto.ui
 
+import android.app.Activity
+import android.content.Context
+import android.content.ContextWrapper
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Animatable
@@ -83,6 +86,7 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
@@ -91,6 +95,9 @@ import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.util.lerp
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.compose.LifecycleStartEffect
 import coil3.compose.AsyncImage
 import coil3.request.ImageRequest
@@ -240,8 +247,8 @@ private suspend fun AwaitPointerEventScope.drainUntilUp(pointerId: androidx.comp
  * - Images: double-tap zoom, pinch zoom/pan. While two fingers are down,
  *   single-finger gestures yield to pinch-zoom.
  * - Long-press (images + videos): radial action wheel at the finger;
- *   videos offer Delete/Info/Share (no Crop or Wallpaper). Swipe up: bottom
- *   action sheet.
+ *   videos offer Delete/Info/Share (no Crop); Wallpaper is only in the bottom
+ *   action sheet. Swipe up: bottom action sheet.
  * - Swipe down (at 1x / settled video): dismisses.
  * - Counter pill (top-left): current/total.
  * - Back button (top-left): dismisses.
@@ -403,6 +410,33 @@ fun FullImageViewer(
 
     val currentPageIsVideo = currentItem?.isVideo == true
 
+    // Immersive viewing: hide both system bars while the viewer is open so the
+    // photo/video owns the whole screen, and bring them back on close. Swiping
+    // from an edge still reveals them transiently. Hiding beats tinting the
+    // status-bar icons per photo: a content-aware tint visibly flickers as
+    // pages, pans and overlays cross bright and dark areas.
+    //
+    // The window insets are pinned to their visible values for the same span
+    // (see WindowInsetsGuard): otherwise the platform animates them to zero as
+    // the bars hide, reflowing the grid and this HUD in the middle of the
+    // tile-morph entry/exit, which reads as jank under the transition.
+    val view = LocalView.current
+    val insetsGuard = LocalWindowInsetsGuard.current
+    DisposableEffect(view, insetsGuard) {
+        val window = view.context.findActivity()?.window
+        val controller = window?.let { WindowInsetsControllerCompat(it, view) }
+        insetsGuard?.freeze(ViewCompat.getRootWindowInsets(view))
+        if (controller != null) {
+            controller.systemBarsBehavior =
+                WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            controller.hide(WindowInsetsCompat.Type.systemBars())
+        }
+        onDispose {
+            controller?.show(WindowInsetsCompat.Type.systemBars())
+            insetsGuard?.unfreeze()
+        }
+    }
+
     // Video pages never hold image zoom; image pages never hold video state.
     LaunchedEffect(currentPageIsVideo, currentIndex) {
         if (currentPageIsVideo) {
@@ -503,8 +537,8 @@ fun FullImageViewer(
     val p = progress.value
 
     // Maps a radial-menu choice onto the viewer's action callbacks.
-    // Videos have no Crop or Wallpaper sector, so a stale hover on a video page
-    // is a no-op.
+    // Videos have no Crop sector, so a stale hover on a video page is a no-op.
+    // Wallpaper is deliberately not part of the wheel; it stays in ActionSheet.
     val onRadialAction: (ViewerAction) -> Unit = { action ->
         currentItem?.let { item ->
             when (action) {
@@ -512,7 +546,6 @@ fun FullImageViewer(
                 ViewerAction.Info -> onInfo(item)
                 ViewerAction.Share -> onShare(item)
                 ViewerAction.Crop -> if (!item.isVideo) onCrop(item)
-                ViewerAction.Wallpaper -> if (!item.isVideo) onWallpaper(item)
             }
         }
     }
@@ -520,8 +553,7 @@ fun FullImageViewer(
     // adjacent pages share a media type. Read the current callback when the finger
     // lifts so a radial action always applies to the page being viewed now.
     val latestOnRadialAction = rememberUpdatedState(onRadialAction)
-    // Sectors offered by the wheel: videos drop Crop and Wallpaper (Delete
-    // stays on top).
+    // Sectors offered by the wheel: videos drop Crop (Delete stays on top).
     val radialActions = remember(currentPageIsVideo) {
         if (currentPageIsVideo) {
             listOf(ViewerAction.Delete, ViewerAction.Info, ViewerAction.Share)
@@ -855,7 +887,7 @@ fun FullImageViewer(
             }
         }
 
-        // Long-press radial menu: 5 sectors on images, Delete/Info/Share on video.
+        // Long-press radial menu: 4 sectors on images, Delete/Info/Share on video.
         if (radialPresent && !previewOnly) {
             ViewerActionWheel(
                 center = radialCenter,
@@ -1333,4 +1365,11 @@ private fun ActionItem(
         Spacer(Modifier.height(6.dp))
         Text(label, color = TextPrimary, fontSize = 12.sp, fontWeight = FontWeight.Medium)
     }
+}
+
+/** Unwraps [this] context chain until the hosting [Activity] is found. */
+private tailrec fun Context.findActivity(): Activity? = when (this) {
+    is Activity -> this
+    is ContextWrapper -> baseContext.findActivity()
+    else -> null
 }

@@ -156,12 +156,14 @@ edge-to-edge rendering.
 - **Pinch:** zoom (1–5×) + pan (clamped; panning disabled at 1×).
 - **Two-finger rotation:** rotates the image in the gesture direction.
 - **Long-press (images):** a **radial menu** appears at your finger — keep holding
-  and slide to Delete / Info / Share / Crop / Wallpaper, then release to run it
+  and slide to Delete / Info / Share / Crop, then release to run it
   (release in the centre to cancel). One gesture, no button to find.
+  Wallpaper is not on the wheel; it stays in the bottom drawer.
 - **Swipe up:** opens the bottom action drawer.
 - **Swipe down (at 1×):** dismisses the viewer.
 - **Zoomed panning:** 1:1 while dragging, then a low-friction **momentum glide**
   on release, clamped to the image bounds.
+- **Immersive viewer:** the status and navigation bars are hidden while an image or video is open (swipe from an edge reveals them transiently) and come back when the viewer closes.
 - **Top-left:** back button + counter pill (`3/12`).
 - **Drawer actions:** Delete (red), Share, Info, Crop, Wallpaper.
   - **Delete:** videos always ask first; other items only show the in-app modal
@@ -246,6 +248,9 @@ edge-to-edge rendering.
   action bar provides **Delete / Copy / Move / Share** across the selection
   (folders expand to their contents). Copy/Move use the system directory picker
   (SAF). Deleting shows a blocking progress modal for bulk private-trash copies.
+- Keep holding and glide across tiles to sweep them: starting on an unselected
+  tile adds every tile you cross, starting on an already selected one removes
+  them. One glide is one direction; a fresh glide can go the other way.
   Pull down on the Albums or album grid to reload media and previews when the
   filesystem changed outside the app.
 

@@ -1,8 +1,5 @@
 package fool.akza.foto.ui
 
-import android.app.Activity
-import android.content.Context
-import android.content.ContextWrapper
 import android.graphics.Bitmap
 import androidx.activity.compose.BackHandler
 import androidx.annotation.StringRes
@@ -66,7 +63,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -89,7 +85,6 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
@@ -99,8 +94,6 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.core.view.WindowInsetsCompat
-import androidx.core.view.WindowInsetsControllerCompat
 import fool.akza.foto.R
 import fool.akza.foto.data.ImageCropper
 import fool.akza.foto.data.MediaItem
@@ -581,21 +574,10 @@ private fun FullscreenPreview(
     val image = remember(bitmap) { bitmap.asImageBitmap() }
     BackHandler { onDismiss() }
 
-    // Hide the system bars while previewing, so the wallpaper is all that is
-    // left on screen; they come back when the preview closes.
-    val view = LocalView.current
-    DisposableEffect(view) {
-        val window = view.context.findActivity()?.window
-        val controller = window?.let { WindowInsetsControllerCompat(it, view) }
-        if (controller != null) {
-            controller.systemBarsBehavior =
-                WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-            controller.hide(WindowInsetsCompat.Type.systemBars())
-        }
-        onDispose {
-            controller?.show(WindowInsetsCompat.Type.systemBars())
-        }
-    }
+    // The viewer underneath already runs the app in immersive mode (system bars
+    // hidden) for as long as it is open, so the preview inherits that and must
+    // not touch the bars itself: re-showing them on dismiss would flash them
+    // over the still-open viewer.
 
     Box(
         modifier = Modifier
@@ -628,12 +610,6 @@ private fun FullscreenPreview(
             drawWallpaperCrop(image, bitmap.width, bitmap.height, crop)
         }
     }
-}
-
-private tailrec fun Context.findActivity(): Activity? = when (this) {
-    is Activity -> this
-    is ContextWrapper -> baseContext.findActivity()
-    else -> null
 }
 
 /**

@@ -112,6 +112,7 @@ No custom font family; system default with Material3 defaults. Exact usages:
 ### 3.4 Edge-to-edge & system bars
 
 - `windowBackground` black; status/nav bars transparent; light icons (not dark); content draws behind both.
+- Status-bar icon tint is enforced at the window level in `MainActivity` (light icons regardless of the system light/dark theme, because the app is always black). The full-screen viewer runs immersive: both system bars are hidden while it is open (`BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE`, restored on close) so photos and videos own the whole screen, rather than tinting the icons per photo (a content-aware tint visibly flickered). While the viewer is open, `WindowInsetsGuard` pins the window's status/navigation insets to their pre-hide values, so the platform's hide/show animation cannot reflow the grid, headers or viewer chrome in the middle of the tile-morph transition.
 - Every screen insets via status-bar top padding and navigation-bar bottom padding. Frosted bars sit in the status zone; grids/lists add top padding to clear them and scroll underneath.
 - Optional 120Hz: when “Prefer 120Hz” is on and hardware supports >60.5Hz, window prefers 120Hz and root votes 120fps via frame-rate hint; applied live, no restart.
 
@@ -304,7 +305,7 @@ No custom font family; system default with Material3 defaults. Exact usages:
 
 ### 9.2 Top bar (top-left only; no top-right menu)
 
-- Container: status-bar + 8dp top/start, 8dp spacing row. Behind: full-width 112dp vertical scrim black 62%→transparent, alpha p×controls.
+- Container: status-bar inset + 8dp top/start, 8dp spacing row. The viewer runs immersive (bars hidden), so the inset resolves to 0 and the row sits 8dp from the screen edge; behind it a full-width 112dp vertical scrim black 62%→transparent, alpha p×controls.
 - Back: 40dp circle `#09090B` 8dp shadow, 22dp auto-mirrored `ArrowBack` `#FAFAFA` → animated close (disabled when chrome hidden).
 - Counter pill: 50dp round `#09090B` no border, “3/12” 13sp Medium white, 14dp horizontal / 8dp vertical padding.
 - Chrome fades 200ms; images toggle on single tap, auto-hide 3s after show (unless drawer open); videos follow video HUD.
@@ -313,7 +314,7 @@ No custom font family; system default with Material3 defaults. Exact usages:
 
 - Full black 55% scrim fades in/out independently (tap closes). Sheet bottom-center full-width, top 16dp corners, `#09090B`, nav-bar padding, 12dp top / 24dp bottom.
 - Handle 40×4dp muted-40% centered, 20dp gap, single `SpaceEvenly` row.
-- Items: Share, Info, Delete, Crop, Wallpaper (Crop and Wallpaper omitted on video). Each: 54dp black well 14dp corners with 26dp outlined icon + 6dp gap + 12sp Medium white label. Delete red; others white. Tap closes drawer then runs action. The sheet slides+fades from the bottom; the scrim only fades and never slides.
+- Items: Share, Info, Delete, Crop, Wallpaper (Crop and Wallpaper omitted on video). Wallpaper is sheet-only — it was removed from the long-press wheel as a low-frequency action. Each: 54dp black well 14dp corners with 26dp outlined icon + 6dp gap + 12sp Medium white label. Delete red; others white. Tap closes drawer then runs action. The sheet slides+fades from the bottom; the scrim only fades and never slides.
 
 ### 9.4 Gestures (images)
 
@@ -344,7 +345,7 @@ No custom font family; system default with Material3 defaults. Exact usages:
 
 - Full-screen black surface layered above the viewer (images only). Top bar 56dp: ghost “✕ Cancel” on the left (17dp `Close` + 13sp Medium) and a centred “Wallpaper Editor” 16sp Medium title.
 - Preview: a device-shaped frame (30dp corners, 1dp `Border` hairline) filled by exactly the crop, so the frame *is* the result. It takes the aspect of the screen in the chosen orientation, is fitted into the space above the card, and carries a 26dp hint pill underneath (`Surface` + 1dp `Border`, 13dp `Pinch`, “Pinch to zoom • Drag to reposition” 11sp muted). Only crop guides sit on top: thirds grid (1dp white 20%) and 16dp corner brackets (2dp white 92%) at a 10dp inset — no simulated screen content.
-- Fullscreen preview: the Preview action hides every app element and the system bars and draws the same crop fitted to the window (letterboxed when a landscape crop meets a portrait display); tap or back returns.
+- Fullscreen preview: the Preview action hides every app element and draws the same crop fitted to the window (letterboxed when a landscape crop meets a portrait display); tap or back returns. The system bars are already hidden by the viewer underneath, so the preview inherits the immersive view.
 - Control card: shadcn-style `Surface` panel with a 1dp `Border`, 16dp corners, 12dp padding and 10dp gaps. Row 1 is the Lock / Home target track (`EmptySurface`, 12dp corners, 4dp padding) with two equal 36dp tabs (16dp icon + 6dp + 13sp Medium; selected = `Border` fill + white text, 180ms crossfade, `Role.Tab` inside a selectable group). Row 2 has two 40dp options (`EmptySurface` + 1dp `Border`, 12dp corners): “Aspect: Portrait/Landscape” (17dp `AspectRatio`, toggles orientation and refits) and “Preview” (17dp `Visibility`, opens the fullscreen preview). Failures insert 13sp Medium red above the action.
 - Action: full-width 46dp white **Set wallpaper** (12dp corners, 18dp `CheckCircle` + 14sp SemiBold black); disabled it becomes `EmptySurface` with a `Border` hairline and muted content. While applying, a blocking **Setting wallpaper…** busy overlay; success closes the picker and shows the “Wallpaper set” toast.
 - Gestures: pinch shrinks/enlarges the crop window around the gesture centroid (minimum 8% width) and drag pans the image 1:1, so the crop moves against the finger; the focus is clamped to the frame, so dragging past the edge keeps panning instead of jumping to a bound. The window is always clamped inside the photo and refits on orientation change.
@@ -359,7 +360,7 @@ No custom font family; system default with Material3 defaults. Exact usages:
 
 **Summon:** long-press anywhere in viewer (images+videos, host-level). Haptic, video pauses (no auto-resume), wheel blooms at finger (clamped so 132dp+8dp edge stays on screen; centers if screen too small). Sector set frozen at open; crossing page mid-press doesn’t remap. Background photo blurs 16dp×progress.
 
-**Geometry:** outer 132dp, hub 38dp, icons 26dp on 36dp backing (+10dp) at 0.62×outer radius, label column 78dp. Images: 5 sectors (Delete, Info, Share, Crop, Wallpaper in order); videos: 3 (Delete, Info, Share, Delete stays top). Sector 0 centered top (−90°). Hit: <38dp hub → cancel; >132dp → cancel; else angle → nearest sector.
+**Geometry:** outer 132dp, hub 38dp, icons 26dp on 36dp backing (+10dp) at 0.62×outer radius, label column 78dp. Images: 4 sectors (Delete, Info, Share, Crop in order); videos: 3 (Delete, Info, Share, Delete stays top). Wallpaper is deliberately not a sector — it lives only in the bottom action sheet (§9). Sector 0 centered top (−90°). Hit: <38dp hub → cancel; >132dp → cancel; else angle → nearest sector.
 
 **Appearance:** disc radial black 42%→66%, alpha p, spring bloom (1.2 overshoot allowed). Hovered wedge: white 16% (Delete 85% red). Spokes hub→outer white 26% 1dp. Double rims (outer+hub): black 60% 2dp + white 32% 1dp; hub black 50%. Icon backing black 42% (60% selected); tint: Delete red unselected else white; selected white. Label 11sp Medium + black 95% blur-7 shadow. Center `Close` outlined white 95% (0.84×hub). Hint pill below (centerY+outer+20dp, 240dp centered): 50dp round `#09090B` 90% (Delete red 90%), white 18% 1dp border, “Release to {action}” 13sp Medium, 18dp/9dp padding.
 
@@ -400,7 +401,7 @@ Real playback via single ExoPlayer per viewer session (no per-page players). Aud
 
 **Enter:** long-press tile/folder (haptic) or toggle. Taps toggle; header offers Select all; bottom bar acts across selection (folders expand to contents).
 
-**Glide:** keep the finger down after the long-press and drag across tiles — each newly covered tile joins the selection with a light haptic tick. Lifting ends the gesture; another pass needs a fresh long-press. Hit-testing uses the measured window bounds of each composed tile, so padding, scroll and spacing can't shift the target.
+**Glide:** keep the finger down after the long-press and drag across tiles. The tile under the finger at press time fixes the direction for the whole gesture: starting on an unselected tile makes it a select sweep (each covered tile joins the selection), starting on an already selected tile makes it a deselect sweep (each covered one leaves). A light haptic ticks on every change. Lifting ends the gesture; another pass needs a fresh long-press and can go the other way. Hit-testing uses the measured window bounds of each composed tile, so padding, scroll and spacing can't shift the target.
 
 **Header count:** shows the number of *media items* the selection resolves to (an album/parent contributes its whole count), so it matches what Delete/Copy/Move/Share act on.
 
@@ -473,8 +474,8 @@ Overlay on gallery when permissions granted + unseen; replayable via Settings (a
 1. “Welcome to Foto” / “A fast, AMOLED-first gallery for the photos and videos already on your device.” — 3×3 tiles (`Border` 9dp; one video tile 13dp Play).
 2. “Find your photos” / “Open an album to see everything inside, or tap the search icon to find a file by name.” — mock pill search (12×96dp `Border` + 20dp Search) over 2×3 grid.
 3. “View and zoom” / “Swipe between photos, double-tap or pinch to zoom, and swipe down to close.” — portrait rect (`Border` 16dp 62%×74%) + 52dp ring (2dp white) + 8dp dot + 28dp `KeyboardArrowDown` muted.
-4. “Actions in one motion” / “Long-press anywhere, slide to Delete, Info, Share, Crop or Wallpaper, then release to run it.” — 180dp radial (black-35% disc, `Border` rings/spokes) + 5 icons 72°×54dp (Delete red, others white 22dp/26dp boxes) + center Close 20dp + finger dot (16dp ring 2dp white offset 70dp@30°).
-5. “Select and stay safe” / “Long-press a tile to enter selection mode, then glide your finger across tiles to select many in one motion. Delete, copy, move or share them; deletes go to the trash — undo right away, or empty it from Settings.” — 2×3 grid (3 checked: 16dp white circle + 11dp black Check) + bottom Delete(red)/Copy/Move/Share 20dp + floating Undo pill (white 50dp, bottom 16dp, 11sp black “Moved to trash  ·  Undo” 14dp/7dp).
+4. “Actions in one motion” / “Long-press anywhere, slide to Delete, Info, Share or Crop, then release to run it.” — 180dp radial (black-35% disc, `Border` rings/spokes) + 4 icons 90°×54dp (Delete red, others white 22dp/26dp boxes) + center Close 20dp + finger dot (16dp ring 2dp white offset 70dp@30°).
+5. “Select and stay safe” / “Long-press a tile to enter selection mode, then glide your finger across tiles to select many in one motion. Start a new glide on a selected tile to deselect. Delete, copy, move or share them; deletes go to the trash — undo right away, or empty it from Settings.” — 2×3 grid (3 checked: 16dp white circle + 11dp black Check) + bottom Delete(red)/Copy/Move/Share 20dp + floating Undo pill (white 50dp, bottom 16dp, 11sp black “Moved to trash  ·  Undo” 14dp/7dp).
 
 ---
 
