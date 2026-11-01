@@ -121,10 +121,11 @@ private fun SearchHit(
     onTilePositioned: (Uri, Rect) -> Unit,
     onTileDisposed: (Uri) -> Unit,
 ) {
-    Box {
+    // The animation modifier has to sit on the lazy item's root, otherwise
+    // LazyGrid has no parent data to animate and filtering snaps.
+    Box(modifier = modifier) {
         ImageTile(
             item = item,
-            modifier = modifier,
             onTilePositioned = onTilePositioned,
             onTileDisposed = onTileDisposed,
             onClick = { rect ->

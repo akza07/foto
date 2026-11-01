@@ -37,6 +37,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.animation.core.tween
 import androidx.compose.ui.unit.sp
 import fool.akza.foto.R
 import fool.akza.foto.data.MediaInfo
@@ -148,26 +149,31 @@ internal fun InfoSheet(item: MediaItem, onClose: () -> Unit) {
                     }
 
                     sections.forEachIndexed { index, section ->
-                        val collapsible = section.group == MetadataGroup.PNG_TEXT &&
-                            section.fields.size > PngTextPreviewRows
+                        // PNG keywords can be long (comments, XMP, licenses), so
+                        // the block stays behind a single "View more" row until
+                        // the reader asks for it.
+                        val collapsible = section.group == MetadataGroup.PNG_TEXT
                         val collapsed = collapsible && !expandedPngText
-                        val fields = if (collapsed) {
-                            section.fields.take(PngTextPreviewRows)
-                        } else {
-                            section.fields
-                        }
+                        val fields = if (collapsed) emptyList() else section.fields
                         item(key = "section-$index") {
                             SectionHeader(stringResource(section.group.titleRes))
                         }
                         itemsIndexed(fields, key = { row, _ -> "row-$index-$row" }) { _, field ->
-                            InfoRow(labelText(field.label), valueText(field.value))
+                            InfoRow(
+                                label = labelText(field.label),
+                                value = valueText(field.value),
+                                modifier = Modifier.animateItem(
+                                    fadeInSpec = tween(180),
+                                    fadeOutSpec = tween(140),
+                                ),
+                            )
                         }
                         if (collapsible) {
                             item(key = "more-$index") {
                                 MoreRow(
                                     label = if (collapsed) {
                                         stringResource(R.string.info_view_more) +
-                                            " (${section.fields.size - fields.size})"
+                                            " (${section.fields.size})"
                                     } else {
                                         stringResource(R.string.info_view_less)
                                     },
@@ -233,9 +239,6 @@ private fun SectionHeader(title: String, first: Boolean = false) {
     )
 }
 
-/** Rows of PNG text shown before the "View more" row. */
-private const val PngTextPreviewRows = 3
-
 /** Trailing, tappable row that expands or collapses a long metadata block. */
 @Composable
 private fun MoreRow(label: String, onClick: () -> Unit) {
@@ -278,9 +281,13 @@ private fun valueText(value: MetadataValue): String = when (value) {
  * never truncates the value.
  */
 @Composable
-private fun InfoRow(label: String, value: String) {
+private fun InfoRow(
+    label: String,
+    value: String,
+    modifier: Modifier = Modifier,
+) {
     Row(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .padding(vertical = 5.dp),
     ) {
