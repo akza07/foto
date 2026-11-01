@@ -67,25 +67,21 @@ object MetadataIndexer {
                 currentCoroutineContext().ensureActive()
                 try {
                     val info = MediaRepository.loadInfo(context, item)
-                    if (info != null) {
-                        MetadataStore.upsert(
-                            context,
-                            item,
-                            MetadataStore.buildSearchText(context::getString, item, info),
-                            keys.getValue(item.uri.toString()),
-                        )
-                        indexed++
+                    // Unreadable (locked, denied SAF grant, corrupt) files still
+                    // record their name so they stay findable and are not
+                    // re-opened on every pass; a real change updates the stamp.
+                    val words = if (info != null) {
+                        MetadataStore.buildSearchWords(context::getString, item, info)
                     } else {
-                        // Unreadable (locked, denied SAF grant, corrupt): remember
-                        // that we tried, so every later pass doesn't re-open it.
-                        // A real change to the file changes its stamp and retries.
-                        MetadataStore.upsert(
-                            context,
-                            item,
-                            MetadataStore.buildItemText(item),
-                            keys.getValue(item.uri.toString()),
-                        )
+                        MetadataStore.buildItemWords(item)
                     }
+                    MetadataStore.upsert(
+                        context,
+                        item,
+                        words,
+                        keys.getValue(item.uri.toString()),
+                    )
+                    if (info != null) indexed++
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Exception) {

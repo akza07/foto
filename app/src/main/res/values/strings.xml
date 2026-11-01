@@ -107,7 +107,7 @@
     <!-- Search -->
     <string name="search_placeholder">Search names and metadata</string>
     <string name="search_clear">Clear</string>
-    <string name="search_hint">Searches file names and the metadata stored in your photos and videos — camera, lens, exposure, dates, place, and PNG text. Image contents and text inside the picture are not searched.</string>
+    <string name="search_hint">Searches file names and the metadata stored in your photos and videos — camera, lens, exposure, dates, place, and PNG text. Word order is free and small typos still match. Image contents and text inside the picture are not searched.</string>
     <string name="search_scope">Matches file names and metadata across your whole library</string>
     <string name="search_metadata_header">Found in metadata (%1$d)</string>
     <string name="search_metadata_badge">Metadata</string>

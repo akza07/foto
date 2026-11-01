@@ -16,29 +16,50 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
- * Local, searchable mirror of the metadata each file carries.
+ * Local, searchable index of the metadata each file carries.
  *
- * Reading EXIF is far too slow to repeat on every keystroke, so the flattened
- * text of one item is written here once (see [MetadataIndexer]) and search runs
- * a single indexed-free `LIKE` over it. Nothing leaves the device: this is the
- * same metadata the info sheet shows, stored so it can be queried by name,
- * camera, date, place or PNG keyword.
+ * Reading EXIF is far too slow to repeat on every keystroke, so each file's
+ * metadata is reduced to a set of words once (see [MetadataIndexer]) and stored
+ * here. Search is then token based and forgiving: any word order, partial words
+ * and small typos match (see `FuzzyMatch.kt`), which is what people expect from
+ * a search box rather than "the whole query must appear as one substring".
  *
- * Rows are keyed by URI and stamped with the same `lastModified:size` identity
- * the thumbnail cache uses, so an edited or replaced file is re-indexed while
- * untouched files cost one stamp read.
+ * Three tables:
+ * - `metadata_entry` — one row per file: what it is and the stamp that says
+ *   whether the words are current.
+ * - `metadata_word` — the words that file contributes. Primary key order
+ *   `(word, uri)` makes "which files have a word starting with `can`" a range
+ *   scan.
+ * - `metadata_lexicon` — the distinct words, so a typo fallback can score a few
+ *   thousand short strings instead of every row in the index.
+ *
+ * Nothing leaves the device: this is the same metadata the info sheet shows.
  */
 object MetadataStore {
 
     private const val DB_NAME = "metadata.db"
-    private const val DB_VERSION = 1
-    private const val TABLE = "metadata_entry"
+    private const val DB_VERSION = 2
+    private const val ENTRY = "metadata_entry"
+    private const val WORD = "metadata_word"
+    private const val LEXICON = "metadata_lexicon"
 
-    /** Upper bound on one row's searchable text; comments can be enormous. */
-    private const val MaxSearchTextLength = 8 * 1024
+    /** Words kept per file; the tail of a very chatty EXIF block is not worth it. */
+    private const val MaxWordsPerFile = 96
 
-    /** Upper bound on search hits, so a one-letter query can't return everything. */
-    private const val MaxSearchHits = 2000
+    /** One token longer than this is a blob, not a word. */
+    private const val MaxTokenLength = 64
+
+    /** Query tokens considered; a 40-word "query" is someone leaning on a key. */
+    private const val MaxQueryTokens = 6
+
+    /** Words a single query token may expand to (prefix or typo matches). */
+    private const val MaxWordsPerToken = 400
+
+    /** Lexicon entries scored for a typo fallback. */
+    private const val MaxLexiconScan = 50_000
+
+    /** URIs a single word lookup may return before we stop collecting. */
+    private const val MaxHits = 5_000
 
     @Volatile private var helper: Helper? = null
 
@@ -55,11 +76,11 @@ object MetadataStore {
         }
     }
 
-    /** Indexed stamps (`lastModified:size`) keyed by URI. */
+    /** Indexed stamps keyed by URI. */
     suspend fun stamps(context: Context): Map<String, String> = withContext(Dispatchers.IO) {
         runCatching {
             helper(context).readableDatabase.query(
-                TABLE,
+                ENTRY,
                 arrayOf("uri", "stamp"),
                 null,
                 null,
@@ -68,9 +89,7 @@ object MetadataStore {
                 null,
             ).use { cursor ->
                 buildMap {
-                    while (cursor.moveToNext()) {
-                        put(cursor.getString(0), cursor.getString(1))
-                    }
+                    while (cursor.moveToNext()) put(cursor.getString(0), cursor.getString(1))
                 }
             }
         }.onFailure {
@@ -78,54 +97,135 @@ object MetadataStore {
         }.getOrDefault(emptyMap())
     }
 
-    /** Writes (or replaces) the searchable text of [item]. */
-    suspend fun upsert(context: Context, item: MediaItem, text: String, stamp: String) =
-        withContext(Dispatchers.IO) {
-            runCatching {
-                val values = ContentValues().apply {
-                    put("uri", item.uri.toString())
-                    put("display_name", item.displayName)
-                    put("bucket_name", item.bucketName)
-                    put("mime_type", item.mimeType)
-                    put("stamp", stamp)
-                    put("search_text", normalizeForSearch(text).take(MaxSearchTextLength))
-                    put("indexed_at", System.currentTimeMillis())
-                }
-                helper(context).writableDatabase.insertWithOnConflict(
-                    TABLE,
+    /** Replaces the words of [item]. */
+    suspend fun upsert(
+        context: Context,
+        item: MediaItem,
+        words: List<String>,
+        stamp: String,
+    ) = withContext(Dispatchers.IO) {
+        runCatching {
+            val db = helper(context).writableDatabase
+            val uri = item.uri.toString()
+            db.beginTransaction()
+            try {
+                db.insertWithOnConflict(
+                    ENTRY,
                     null,
-                    values,
+                    ContentValues().apply {
+                        put("uri", uri)
+                        put("display_name", item.displayName)
+                        put("bucket_name", item.bucketName)
+                        put("mime_type", item.mimeType)
+                        put("stamp", stamp)
+                        put("indexed_at", System.currentTimeMillis())
+                    },
                     SQLiteDatabase.CONFLICT_REPLACE,
                 )
-            }.onFailure {
-                AppLog.w("metadata: write failed for ${item.uri}", it)
-            }
-        }
-
-    /** URIs whose indexed metadata contains [query]. */
-    suspend fun search(context: Context, query: String): Set<String> =
-        withContext(Dispatchers.IO) {
-            val needle = normalizeForSearch(query)
-            if (needle.isEmpty()) return@withContext emptySet()
-            runCatching {
-                helper(context).readableDatabase.query(
-                    TABLE,
-                    arrayOf("uri"),
-                    "search_text LIKE ? ESCAPE '\\'",
-                    arrayOf(likePattern(needle)),
-                    null,
-                    null,
-                    null,
-                    MaxSearchHits.toString(),
-                ).use { cursor ->
-                    buildSet {
-                        while (cursor.moveToNext()) add(cursor.getString(0))
-                    }
+                db.delete(WORD, "uri = ?", arrayOf(uri))
+                val insertWord = db.compileStatement(
+                    "INSERT OR IGNORE INTO $WORD(word, uri) VALUES(?, ?)",
+                )
+                val insertLexicon = db.compileStatement(
+                    "INSERT OR IGNORE INTO $LEXICON(word) VALUES(?)",
+                )
+                words.forEach { word ->
+                    insertWord.bindString(1, word)
+                    insertWord.bindString(2, uri)
+                    insertWord.executeInsert()
+                    insertLexicon.bindString(1, word)
+                    insertLexicon.executeInsert()
                 }
+                db.setTransactionSuccessful()
+            } finally {
+                db.endTransaction()
+            }
+        }.onFailure {
+            AppLog.w("metadata: write failed for ${item.uri}", it)
+        }
+    }
+
+    /**
+     * URIs matching [rawQuery]. Every query token must match, but each may match
+     * a different word — order doesn't matter, prefixes count, and small typos
+     * are forgiven.
+     */
+    suspend fun search(context: Context, rawQuery: String): Set<String> =
+        withContext(Dispatchers.IO) {
+            val tokens = tokenizeForSearch(rawQuery).take(MaxQueryTokens)
+            if (tokens.isEmpty()) return@withContext emptySet()
+            runCatching {
+                val db = helper(context).readableDatabase
+                var matches: Set<String>? = null
+                for (token in tokens) {
+                    val words = wordsWithPrefix(db, token).ifEmpty { wordsWithinEdits(db, token) }
+                    val uris = urisForWords(db, words)
+                    if (uris.isEmpty()) return@runCatching emptySet()
+                    matches = matches?.intersect(uris) ?: uris
+                    if (matches.isEmpty()) return@runCatching emptySet()
+                }
+                matches.orEmpty().take(MaxHits).toSet()
             }.onFailure {
                 AppLog.w("metadata: search failed", it)
             }.getOrDefault(emptySet())
         }
+
+    /** Distinct indexed words that start with [token]. */
+    private fun wordsWithPrefix(db: SQLiteDatabase, token: String): List<String> =
+        db.rawQuery(
+            "SELECT word FROM $LEXICON WHERE word >= ? AND word < ? LIMIT $MaxWordsPerToken",
+            arrayOf(token, token + '\uFFFF'),
+        ).use { cursor ->
+            buildList {
+                while (cursor.moveToNext()) add(cursor.getString(0))
+            }
+        }
+
+    /**
+     * Typo fallback: score the lexicon's words of a plausible length. This only
+     * runs when the prefix scan found nothing, which is exactly the "I mistyped
+     * it" case.
+     */
+    private fun wordsWithinEdits(db: SQLiteDatabase, token: String): List<String> {
+        val budget = maxEditsFor(token)
+        if (budget == 0) return emptyList()
+        // Literals, not bound arguments: rawQuery binds everything as TEXT, and
+        // SQLite compares a TEXT '7' as greater than any INTEGER, which would
+        // make `length(word) BETWEEN '5' AND '7'` always false.
+        val minLength = token.length - budget
+        val maxLength = token.length + budget
+        return db.rawQuery(
+            "SELECT word FROM $LEXICON WHERE length(word) BETWEEN $minLength AND $maxLength " +
+                "LIMIT $MaxLexiconScan",
+            null,
+        ).use { cursor ->
+            buildList {
+                while (cursor.moveToNext()) {
+                    val word = cursor.getString(0)
+                    if (matchToken(token, word) == TokenMatch.FUZZY) {
+                        add(word)
+                        if (size >= MaxWordsPerToken) break
+                    }
+                }
+            }
+        }
+    }
+
+    private fun urisForWords(db: SQLiteDatabase, words: List<String>): Set<String> {
+        if (words.isEmpty()) return emptySet()
+        val out = HashSet<String>()
+        for (chunk in words.chunked(400)) {
+            val placeholders = chunk.joinToString(",") { "?" }
+            db.rawQuery(
+                "SELECT DISTINCT uri FROM $WORD WHERE word IN ($placeholders) LIMIT $MaxHits",
+                chunk.toTypedArray(),
+            ).use { cursor ->
+                while (cursor.moveToNext()) out += cursor.getString(0)
+                if (out.size >= MaxHits) break
+            }
+        }
+        return out
+    }
 
     /**
      * Throws the whole index away and asks for a new pass. Used when something
@@ -135,8 +235,18 @@ object MetadataStore {
     fun invalidate(context: Context) {
         val app = context.applicationContext
         scope.launch {
-            runCatching { helper(app).writableDatabase.delete(TABLE, null, null) }
-                .onSuccess { _version.update { it + 1 } }
+            runCatching {
+                val db = helper(app).writableDatabase
+                db.beginTransaction()
+                try {
+                    db.delete(ENTRY, null, null)
+                    db.delete(WORD, null, null)
+                    db.delete(LEXICON, null, null)
+                    db.setTransactionSuccessful()
+                } finally {
+                    db.endTransaction()
+                }
+            }.onSuccess { _version.update { it + 1 } }
                 .onFailure { AppLog.w("metadata: invalidate failed", it) }
         }
     }
@@ -145,51 +255,63 @@ object MetadataStore {
     suspend fun prune(context: Context, keep: Collection<String>) = withContext(Dispatchers.IO) {
         runCatching {
             val db = helper(context).writableDatabase
-            val indexed = db.query(TABLE, arrayOf("uri"), null, null, null, null, null)
+            val indexed = db.query(ENTRY, arrayOf("uri"), null, null, null, null, null)
                 .use { cursor ->
                     buildSet {
                         while (cursor.moveToNext()) add(cursor.getString(0))
                     }
                 }
-            val stale = indexed - keep.toSet()
-            stale.chunked(400).forEach { chunk ->
+            (indexed - keep.toSet()).chunked(400).forEach { chunk ->
                 val placeholders = chunk.joinToString(",") { "?" }
-                db.delete(TABLE, "uri IN ($placeholders)", chunk.toTypedArray())
+                db.delete(ENTRY, "uri IN ($placeholders)", chunk.toTypedArray())
+                db.delete(WORD, "uri IN ($placeholders)", chunk.toTypedArray())
             }
+            // Words orphaned by the deletes above must not keep matching.
+            db.execSQL(
+                "DELETE FROM $LEXICON WHERE NOT EXISTS " +
+                    "(SELECT 1 FROM $WORD WHERE $WORD.word = $LEXICON.word)",
+            )
         }.onFailure {
             AppLog.w("metadata: prune failed", it)
         }
     }
 
     /**
-     * Flattens one item's metadata into the text that search matches against.
-     * Labels are resolved through [label], so the stored text uses the same
-     * wording the info sheet shows ("Camera model", "Exposure time", …).
+     * The words that make [item] findable: its name, album and path, its MIME
+     * type, and every metadata label and value the info sheet shows.
      */
-    internal fun buildSearchText(
+    internal fun buildSearchWords(
         label: (Int) -> String,
         item: MediaItem,
         info: MediaInfo,
-    ): String = buildString {
-        appendLine(buildItemText(item))
-        info.name.takeIf { it != item.displayName }?.let { appendLine(it) }
-        (info.mimeType ?: item.mimeType)?.let { appendLine(it) }
-        appendLine(flattenSections(label, info.metadata))
-    }.trim()
+    ): List<String> {
+        val words = LinkedHashSet(buildItemWords(item))
+        val extra = LinkedHashSet<String>()
+        tokenizeForSearch(info.name.takeIf { it != item.displayName }.orEmpty()).forEach { extra += it }
+        tokenizeForSearch(info.mimeType ?: item.mimeType.orEmpty()).forEach { extra += it }
+        metadataWords(label, info.metadata).forEach { extra += it }
+        words += extra.take(MaxWordsPerFile - words.size).filter { it.length <= MaxTokenLength }
+        return words.take(MaxWordsPerFile)
+    }
 
-    /** The name/album/path a file can be found by even when its metadata can't be read. */
-    internal fun buildItemText(item: MediaItem): String = buildString {
-        item.displayName?.let { appendLine(it) }
-        item.bucketName.takeIf { it.isNotBlank() }?.let { appendLine(it) }
-        item.relativePath?.takeIf { it.isNotBlank() }?.let { appendLine(it) }
-        item.mimeType?.let { appendLine(it) }
-    }.trim()
+    /** The name/album/path/type a file is findable by even if it can't be read. */
+    internal fun buildItemWords(item: MediaItem): List<String> {
+        val words = LinkedHashSet<String>()
+        listOfNotNull(item.displayName, item.bucketName, item.relativePath, item.mimeType)
+            .forEach { text ->
+                tokenizeForSearch(text)
+                    .filter { it.length <= MaxTokenLength }
+                    .forEach { words += it }
+            }
+        return words.take(MaxWordsPerFile)
+    }
 
-    /** `label: value` lines for every metadata field, in display order. */
-    internal fun flattenSections(
+    /** The words a metadata block contributes, in display order. */
+    internal fun metadataWords(
         label: (Int) -> String,
         sections: List<MetadataSection>,
-    ): String = buildString {
+    ): List<String> {
+        val words = LinkedHashSet<String>()
         sections.forEach { section ->
             section.fields.forEach { field ->
                 val fieldLabel = when (val l = field.label) {
@@ -200,44 +322,42 @@ object MetadataStore {
                     is MetadataValue.Text -> v.text
                     is MetadataValue.Res -> label(v.id)
                 }
-                appendLine("$fieldLabel: $value")
+                tokenizeForSearch(fieldLabel).forEach { words += it }
+                tokenizeForSearch(value).forEach { words += it }
             }
         }
-    }.trim()
-
-    /**
-     * Lowercases and turns punctuation into single spaces, so a query matches the
-     * way a person types it: "ISO 400" finds `ISO: 400`, "37 46" finds
-     * `37° 46' 29.6" N`, and "canon eos" finds `Camera model: Canon EOS R6`.
-     */
-    internal fun normalizeForSearch(text: String): String =
-        text.lowercase().replace(SearchNoise, " ").trim()
-
-    /** Everything that isn't a letter or digit is a separator for search. */
-    private val SearchNoise = Regex("[^\\p{L}\\p{N}]+")
-
-    /** Escapes `%` and `_` so a literal query can't turn into a wildcard. */
-    internal fun likePattern(query: String): String {
-        val escaped = query
-            .replace("\\", "\\\\")
-            .replace("%", "\\%")
-            .replace("_", "\\_")
-        return "%$escaped%"
+        return words.toList()
     }
 
     private class Helper(context: Context) : SQLiteOpenHelper(context, DB_NAME, null, DB_VERSION) {
         override fun onCreate(db: SQLiteDatabase) {
             db.execSQL(
                 """
-                CREATE TABLE $TABLE (
+                CREATE TABLE $ENTRY (
                     uri TEXT PRIMARY KEY NOT NULL,
                     display_name TEXT,
                     bucket_name TEXT,
                     mime_type TEXT,
                     stamp TEXT NOT NULL,
-                    search_text TEXT NOT NULL,
                     indexed_at INTEGER NOT NULL
                 )
+                """.trimIndent(),
+            )
+            db.execSQL(
+                """
+                CREATE TABLE $WORD (
+                    word TEXT NOT NULL,
+                    uri TEXT NOT NULL,
+                    PRIMARY KEY (word, uri)
+                ) WITHOUT ROWID
+                """.trimIndent(),
+            )
+            db.execSQL("CREATE INDEX idx_metadata_word_uri ON $WORD(uri)")
+            db.execSQL(
+                """
+                CREATE TABLE $LEXICON (
+                    word TEXT PRIMARY KEY NOT NULL
+                ) WITHOUT ROWID
                 """.trimIndent(),
             )
         }
@@ -245,7 +365,9 @@ object MetadataStore {
         override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
             // The index is derived from the files themselves, so dropping and
             // rebuilding it on a schema change is correct and cheap.
-            db.execSQL("DROP TABLE IF EXISTS $TABLE")
+            db.execSQL("DROP TABLE IF EXISTS $ENTRY")
+            db.execSQL("DROP TABLE IF EXISTS $WORD")
+            db.execSQL("DROP TABLE IF EXISTS $LEXICON")
             onCreate(db)
         }
     }

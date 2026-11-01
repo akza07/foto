@@ -56,6 +56,8 @@ import androidx.compose.ui.unit.sp
 import fool.akza.foto.R
 import fool.akza.foto.data.MediaItem
 import fool.akza.foto.data.MetadataStore
+import fool.akza.foto.data.matchesAllTokens
+import fool.akza.foto.data.tokenizeForSearch
 import fool.akza.foto.ui.theme.AmoledBlack
 import fool.akza.foto.ui.theme.TextMuted
 import fool.akza.foto.ui.theme.TextPrimary
@@ -160,11 +162,17 @@ fun SearchScreen(
     }
 
     val trimmedQuery = query.trim()
-    val nameResults = remember(items, trimmedQuery) {
-        if (trimmedQuery.isEmpty()) {
+    val queryTokens = remember(trimmedQuery) { tokenizeForSearch(trimmedQuery) }
+    val nameResults = remember(items, queryTokens) {
+        if (queryTokens.isEmpty()) {
             emptyList()
         } else {
-            items.filter { it.displayName?.contains(trimmedQuery, ignoreCase = true) == true }
+            // Same forgiving rules as the metadata index: any word order,
+            // prefixes and small typos, so "lighthosue" still finds
+            // "Lighthouse-at-dusk.png".
+            items.filter { item ->
+                item.displayName?.let { matchesAllTokens(queryTokens, tokenizeForSearch(it)) } == true
+            }
         }
     }
     val metadataOnlyResults = remember(items, metadataHits, nameResults) {

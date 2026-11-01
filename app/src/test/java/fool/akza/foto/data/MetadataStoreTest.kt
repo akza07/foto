@@ -1,6 +1,7 @@
 package fool.akza.foto.data
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -19,8 +20,8 @@ class MetadataStoreTest {
     private val label: (Int) -> String = { labels[it] ?: "unknown" }
 
     @Test
-    fun `sections flatten to labeled lines`() {
-        val text = MetadataStore.flattenSections(
+    fun `sections contribute labeled words`() {
+        val words = MetadataStore.metadataWords(
             label,
             listOf(
                 MetadataSection(
@@ -51,30 +52,34 @@ class MetadataStoreTest {
                 ),
             ),
         )
-        val lines = text.lines()
-        assertEquals("Camera model: Canon EOS R6", lines[0])
-        assertEquals("Lens Model: RF24-70mm F2.8 L IS USM", lines[1])
-        assertEquals("Exposure time: 1/250 s", lines[2])
-        // Enumerated values are stored under their human wording, not the id.
-        assertEquals("Camera model: Rotated 90° clockwise", lines[3])
+        // Labels and values are both searchable, and enumerated values are
+        // indexed under their human wording rather than a resource id.
+        assertTrue(words.containsAll(listOf("camera", "model", "canon", "eos", "r6")))
+        assertTrue(words.containsAll(listOf("lens", "rf24", "70mm", "f2")))
+        assertTrue(words.containsAll(listOf("exposure", "time", "1", "250", "s")))
+        assertTrue(words.containsAll(listOf("rotated", "90", "clockwise")))
+        // Display order is preserved, so the per-file cap keeps the top of the
+        // sheet rather than an arbitrary tail.
+        assertEquals("camera", words.first())
     }
 
     @Test
-    fun `queries match labels and values however punctuation is typed`() {
-        val text = MetadataStore.normalizeForSearch(
-            "Camera model: Canon EOS R6\nISO: 400\nLatitude: 37° 46' 29.6\" N\nComment (zTXt): hello",
-        )
-        assertTrue(text.contains("iso 400"))
-        assertTrue(text.contains("canon eos r6"))
-        assertTrue(text.contains("37 46 29 6 n"))
-        assertTrue(text.contains("comment ztxt"))
-        assertEquals("iso 400", MetadataStore.normalizeForSearch("  ISO:   400 "))
-    }
-
-    @Test
-    fun `like patterns escape wildcards`() {
-        assertEquals("%50\\%\\_off%", MetadataStore.likePattern("50%_off"))
-        assertEquals("%a\\\\b%", MetadataStore.likePattern("a\\b"))
-        assertTrue(MetadataStore.likePattern("canon").startsWith("%"))
+    fun `metadata words are matched the way a person types them`() {
+        val words = MetadataStore.metadataWords(label, listOf(
+            MetadataSection(
+                MetadataGroup.TAGS,
+                listOf(
+                    MetadataField(MetadataLabel.Res(1), MetadataValue.Text("Canon EOS R6")),
+                    MetadataField(MetadataLabel.Tag("ISO"), MetadataValue.Text("400")),
+                    MetadataField(MetadataLabel.Res(1), MetadataValue.Text("37° 46' 29.6\" N")),
+                ),
+            ),
+        ))
+        assertTrue(matchesAllTokens(tokenizeForSearch("canon eos"), words))
+        assertTrue(matchesAllTokens(tokenizeForSearch("iso 400"), words))
+        assertTrue(matchesAllTokens(tokenizeForSearch("eos canon"), words))
+        assertTrue(matchesAllTokens(tokenizeForSearch("canonn"), words))
+        assertTrue(matchesAllTokens(tokenizeForSearch("46 37"), words))
+        assertFalse(matchesAllTokens(tokenizeForSearch("nikon"), words))
     }
 }
