@@ -26,7 +26,9 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.IntrinsicSize
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -94,7 +96,6 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.layout.boundsInWindow
@@ -145,6 +146,7 @@ import fool.akza.foto.data.previewStamp
 import fool.akza.foto.data.thumbnails.ThumbCache
 import fool.akza.foto.ui.theme.AmoledBlack
 import fool.akza.foto.ui.theme.Border
+import fool.akza.foto.ui.theme.EmptySurface
 import fool.akza.foto.ui.theme.Surface as SurfaceColor
 import fool.akza.foto.ui.theme.TextMuted
 import fool.akza.foto.ui.theme.TextPrimary
@@ -1768,36 +1770,62 @@ private fun RootTabsHeader(
         modifier = modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        RootTab.entries.forEach { entry ->
-            val selected = entry == tab
-            Column(
+        val haptics = LocalHapticFeedback.current
+        val segmentWidth = 76.dp
+        val indicatorOffset by animateDpAsState(
+            targetValue = if (tab == RootTab.PHOTOS) 0.dp else segmentWidth,
+            animationSpec = tween(240, easing = FastOutSlowInEasing),
+            label = "rootTabIndicator",
+        )
+        Box(
+            modifier = Modifier
+                .clip(RoundedCornerShape(12.dp))
+                .background(SurfaceColor)
+                .border(1.dp, Border, RoundedCornerShape(12.dp))
+                .padding(3.dp),
+        ) {
+            Box(
                 modifier = Modifier
-                    // Wrap the label so the underline spans only the tab text
-                    // and the second tab/actions keep their space in the row.
-                    .width(IntrinsicSize.Max)
+                    .offset(x = indicatorOffset)
+                    .width(segmentWidth)
+                    .height(28.dp)
                     .clip(RoundedCornerShape(8.dp))
-                    .selectable(selected = selected, role = Role.Tab) { onTabChange(entry) }
-                    .padding(horizontal = 6.dp, vertical = 2.dp),
-            ) {
-                Text(
-                    text = stringResource(
-                        if (entry == RootTab.PHOTOS) R.string.photos_title else R.string.albums,
-                    ),
-                    color = if (selected) TextPrimary else TextMuted,
-                    fontSize = 24.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    letterSpacing = (-0.5).sp,
-                    maxLines = 1,
-                )
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(2.dp)
-                        .clip(RoundedCornerShape(1.dp))
-                        .background(if (selected) TextPrimary else Color.Transparent),
-                )
+                    .background(EmptySurface)
+                    .border(1.dp, Border, RoundedCornerShape(8.dp)),
+            )
+            Row {
+                RootTab.entries.forEach { entry ->
+                    val selected = entry == tab
+                    val textColor by animateColorAsState(
+                        targetValue = if (selected) TextPrimary else TextMuted,
+                        animationSpec = tween(180),
+                        label = "rootTabText",
+                    )
+                    Box(
+                        modifier = Modifier
+                            .width(segmentWidth)
+                            .height(28.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .selectable(selected = selected, role = Role.Tab) {
+                                if (entry != tab) {
+                                    haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                    onTabChange(entry)
+                                }
+                            },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            text = stringResource(
+                                if (entry == RootTab.PHOTOS) R.string.photos_title else R.string.albums,
+                            ),
+                            color = textColor,
+                            fontSize = 13.sp,
+                            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
+                            maxLines = 1,
+                        )
+                    }
+                }
             }
-            Spacer(Modifier.width(12.dp))
         }
         Spacer(Modifier.weight(1f))
         FilterMenuButton(
@@ -2201,6 +2229,17 @@ private fun MainGalleryGrid(
         ) {
             val current = content
             val statusBarTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
+            AnimatedContent(
+                targetState = tab,
+                transitionSpec = {
+                    (fadeIn(tween(220)) +
+                        slideInHorizontally(tween(260, easing = FastOutSlowInEasing)) {
+                            if (targetState == RootTab.PHOTOS) -it / 12 else it / 12
+                        }) togetherWith fadeOut(tween(140))
+                },
+                modifier = Modifier.fillMaxSize(),
+                label = "rootTabContent",
+            ) { targetTab ->
             when {
                 current == null -> {
                     Box(
@@ -2213,7 +2252,7 @@ private fun MainGalleryGrid(
                         )
                     }
                 }
-                tab == RootTab.PHOTOS -> {
+                targetTab == RootTab.PHOTOS -> {
                     val timelineItems = remember(current.allItems, sortOrder) {
                         current.allItems.sortedWith(itemComparator(sortOrder))
                     }
@@ -2369,6 +2408,7 @@ private fun MainGalleryGrid(
                         )
                     }
                 }
+            }
             }
         }
     }
