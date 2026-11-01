@@ -44,6 +44,46 @@ import fool.akza.foto.ui.theme.TextMuted
 import fool.akza.foto.ui.theme.TextPrimary
 
 /**
+ * Shared modal entrance used by every dialog: the dimming scrim fades in while
+ * the caller's card blooms in with a small scale+fade, so a modal never pops in
+ * a single frame. Tapping the scrim (or anywhere outside the card's own
+ * controls) dismisses. The card itself is responsible for its 32dp side margin.
+ */
+@Composable
+internal fun AnimatedDialog(
+    onDismiss: () -> Unit,
+    content: @Composable () -> Unit,
+) {
+    // Same scale+fade language as the wheel, so a confirm following a radial
+    // action reads as a continuation rather than a pop-up.
+    var entered by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) { entered = true }
+    Box(modifier = Modifier.fillMaxSize()) {
+        AnimatedVisibility(
+            visible = entered,
+            enter = fadeIn(tween(180)),
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(AmoledBlack.copy(alpha = 0.7f))
+                    .clickable(onClick = onDismiss, indication = null, interactionSource = null),
+            )
+        }
+        AnimatedVisibility(
+            visible = entered,
+            modifier = Modifier.align(Alignment.Center),
+            enter = scaleIn(
+                initialScale = 0.92f,
+                animationSpec = tween(240, easing = FastOutSlowInEasing),
+            ) + fadeIn(tween(180)),
+        ) {
+            content()
+        }
+    }
+}
+
+/**
  * Shared shadcn-style confirmation modal. Used for delete (single and batch) and
  * clear-cache, which previously had three near-identical implementations.
  * When [destructive] the confirm button is red; otherwise it is the primary
@@ -58,37 +98,16 @@ internal fun ConfirmDialog(
     onConfirm: () -> Unit,
     onDismiss: () -> Unit,
 ) {
-    // Bloom in with the same scale+fade language as the wheel, so a confirm
-    // following a radial action reads as a continuation rather than a pop-up.
-    var entered by remember { mutableStateOf(false) }
-    LaunchedEffect(Unit) { entered = true }
-    AnimatedVisibility(
-        visible = entered,
-        enter = fadeIn(tween(180)),
-    ) {
-        Box(
+    AnimatedDialog(onDismiss = onDismiss) {
+        Surface(
             modifier = Modifier
-                .fillMaxSize()
-                .background(AmoledBlack.copy(alpha = 0.7f))
-                .clickable(onClick = onDismiss, indication = null, interactionSource = null),
-            contentAlignment = Alignment.Center,
+                .fillMaxWidth()
+                .padding(horizontal = 32.dp),
+            shape = RoundedCornerShape(16.dp),
+            color = ThemeSurface,
+            border = BorderStroke(1.dp, Border),
+            shadowElevation = 0.dp,
         ) {
-            AnimatedVisibility(
-                visible = entered,
-                enter = scaleIn(
-                    initialScale = 0.92f,
-                    animationSpec = tween(240, easing = FastOutSlowInEasing),
-                ) + fadeIn(tween(180)),
-            ) {
-                Surface(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 32.dp),
-                    shape = RoundedCornerShape(16.dp),
-                    color = ThemeSurface,
-                    border = BorderStroke(1.dp, Border),
-                    shadowElevation = 0.dp,
-                ) {
             Column(modifier = Modifier.padding(24.dp)) {
                 Text(
                     text = title,
@@ -163,12 +182,10 @@ internal fun ConfirmDialog(
                                 fontSize = 14.sp,
                                 fontWeight = FontWeight.SemiBold,
                             )
-                        } // Confirm button Box
-                    } // Confirm button Surface
-                } // Button Row
-            } // Content Column
-                } // Card Surface
-            } // Card scale-in
-        } // Scrim Box
-    } // Outer fade-in
+                        }
+                    }
+                }
+            }
+        }
+    }
 }

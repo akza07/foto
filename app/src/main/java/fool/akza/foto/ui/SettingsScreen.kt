@@ -60,6 +60,7 @@ import fool.akza.foto.data.AppSettings
 import fool.akza.foto.data.GalleryEvents
 import fool.akza.foto.data.GridSize
 import fool.akza.foto.data.MediaSort
+import fool.akza.foto.data.SelectionActionPlacement
 import fool.akza.foto.data.SettingsRepository
 import fool.akza.foto.data.attention.AttentionRepository
 import fool.akza.foto.data.TrashRepository
@@ -162,6 +163,7 @@ private fun SettingsRoot(
     val attentionVersion by AttentionRepository.version.collectAsState()
     var showSortDialog by remember { mutableStateOf(false) }
     var showGridDialog by remember { mutableStateOf(false) }
+    var showSelectionPlacementDialog by remember { mutableStateOf(false) }
     // App-private trash summary; null while loading.
     var trashCount by remember { mutableStateOf<Int?>(null) }
     var trashBytes by remember { mutableStateOf(0L) }
@@ -237,6 +239,13 @@ private fun SettingsRoot(
                         subtitle = stringResource(R.string.display_grid_subtitle),
                         trailingText = stringResource(settings.gridSize.labelRes),
                         onClick = { showGridDialog = true },
+                    )
+                    SettingsDivider()
+                    SettingsActionRow(
+                        title = stringResource(R.string.display_selection_actions_title),
+                        subtitle = stringResource(R.string.display_selection_actions_subtitle),
+                        trailingText = stringResource(settings.selectionActionPlacement.labelRes),
+                        onClick = { showSelectionPlacementDialog = true },
                     )
                 }
             }
@@ -465,6 +474,20 @@ private fun SettingsRoot(
         )
     }
 
+    if (showSelectionPlacementDialog) {
+        OptionPickerDialog(
+            title = stringResource(R.string.display_selection_actions_title),
+            options = SelectionActionPlacement.entries,
+            current = settings.selectionActionPlacement,
+            labelRes = { it.labelRes },
+            onSelect = { placement ->
+                showSelectionPlacementDialog = false
+                SettingsRepository.setSelectionActionPlacement(placement)
+            },
+            onDismiss = { showSelectionPlacementDialog = false },
+        )
+    }
+
     if (showGridDialog) {
         OptionPickerDialog(
             title = stringResource(R.string.display_grid_title),
@@ -480,7 +503,7 @@ private fun SettingsRoot(
     }
 }
 
-/** Simple single-choice dialog reused by the sort-order and grid-size rows. */
+/** Simple single-choice dialog reused by the sort/grid/selection-placement rows. */
 @Composable
 private fun <T> OptionPickerDialog(
     title: String,
@@ -490,13 +513,7 @@ private fun <T> OptionPickerDialog(
     onSelect: (T) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(AmoledBlack.copy(alpha = 0.7f))
-            .clickable(onClick = onDismiss, indication = null, interactionSource = null),
-        contentAlignment = Alignment.Center,
-    ) {
+    AnimatedDialog(onDismiss = onDismiss) {
         Surface(
             modifier = Modifier
                 .fillMaxWidth()

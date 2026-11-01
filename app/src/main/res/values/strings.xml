@@ -75,6 +75,13 @@
     <string name="grid_medium">Medium</string>
     <string name="grid_large">Large</string>
 
+    <!-- Selection action placement -->
+    <string name="display_selection_actions_title">Selection actions</string>
+    <string name="display_selection_actions_subtitle">Edge the multi-select bar sits on, for one-handed reach.</string>
+    <string name="selection_placement_right">Right side</string>
+    <string name="selection_placement_left">Left side</string>
+    <string name="selection_placement_bottom">Bottom</string>
+
     <!-- Folders sub-screen -->
     <string name="folders_title">Folders</string>
     <string name="folders_allow_hint">Only media inside these folders is shown.</string>
