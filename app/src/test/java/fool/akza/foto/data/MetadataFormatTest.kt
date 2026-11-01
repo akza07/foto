@@ -1,5 +1,6 @@
 package fool.akza.foto.data
 
+import androidx.exifinterface.media.ExifInterface
 import fool.akza.foto.R
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -173,6 +174,20 @@ class MetadataFormatTest {
     }
 
     @Test
+    fun `container dates drop the quicktime placeholder`() {
+        assertEquals("Feb 14, 2026, 6:31 PM", formatContainerDate("2026:02:14 18:31:07"))
+        assertNull(formatContainerDate("19040101T000000.000Z"))
+        assertNull(formatContainerDate(null))
+    }
+
+    @Test
+    fun `year keeps only the year when a full stamp is given`() {
+        assertEquals("2026", formatYear("2026:02:14 18:31:07"))
+        assertEquals("1999", formatYear("1999"))
+        assertNull(formatYear("  "))
+    }
+
+    @Test
     fun `tag names are humanized for display`() {
         assertEquals("ISO Speed Ratings", humanizeExifTag("ISOSpeedRatings"))
         assertEquals("XP Title", humanizeExifTag("XPTitle"))
@@ -217,6 +232,18 @@ class MetadataFormatTest {
         assertEquals(R.string.info_flash_fired, flashLabelRes(0x19))
         assertEquals(R.string.info_flash_unavailable, flashLabelRes(0x20))
         assertNull(flashLabelRes(-1))
+    }
+
+    @Test
+    fun `tail tags get wording when they are enumerations`() {
+        assertEquals(R.string.info_normal, exifTagValueRes(ExifInterface.TAG_CONTRAST, "0"))
+        assertEquals(R.string.info_high_saturation, exifTagValueRes(ExifInterface.TAG_SATURATION, "2"))
+        assertEquals(R.string.info_soft, exifTagValueRes(ExifInterface.TAG_SHARPNESS, "1"))
+        assertEquals(R.string.info_daylight, exifTagValueRes(ExifInterface.TAG_LIGHT_SOURCE, "1"))
+        assertEquals(R.string.info_unknown, exifTagValueRes(ExifInterface.TAG_LIGHT_SOURCE, "0"))
+        assertNull(exifTagValueRes(ExifInterface.TAG_LIGHT_SOURCE, "42"))
+        assertNull(exifTagValueRes(ExifInterface.TAG_USER_COMMENT, "hello"))
+        assertNull(exifTagValueRes(ExifInterface.TAG_APERTURE_VALUE, "37/10"))
     }
 
     @Test

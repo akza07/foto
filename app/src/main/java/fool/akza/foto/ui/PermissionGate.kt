@@ -117,6 +117,16 @@ fun PermissionGate(
                 onOpenUriHandled = onOpenUriHandled,
             )
             val settings by SettingsRepository.settings.collectAsState()
+            LaunchedEffect(settings.tutorialSeen, settings.photoLocationAsked) {
+                val missing = ContextCompat.checkSelfPermission(
+                    context,
+                    android.Manifest.permission.ACCESS_MEDIA_LOCATION,
+                ) != PackageManager.PERMISSION_GRANTED
+                if (settings.tutorialSeen && missing && !settings.photoLocationAsked) {
+                    SettingsRepository.setPhotoLocationAsked(true)
+                    photoLocationLauncher.launch(android.Manifest.permission.ACCESS_MEDIA_LOCATION)
+                }
+            }
             // Fade the walkthrough over the gallery (and back out when completed)
             // so replaying it from Settings is not a hard full-screen cut.
             AnimatedVisibility(

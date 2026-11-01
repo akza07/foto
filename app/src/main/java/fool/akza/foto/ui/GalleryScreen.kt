@@ -120,6 +120,7 @@ import fool.akza.foto.R
 import fool.akza.foto.data.MediaFolder
 import fool.akza.foto.data.MediaItem
 import fool.akza.foto.data.MediaRepository
+import fool.akza.foto.data.MetadataIndexer
 import fool.akza.foto.data.RenameResult
 import fool.akza.foto.data.PrivateTrash
 import fool.akza.foto.data.SettingsRepository
@@ -435,6 +436,10 @@ fun GalleryScreen(
             .distinctBy { it.uri }
         allItems = loaded
         ThumbCache.enqueueAllIfMissing(loaded.take(CACHE_WARM_CAP))
+
+        // Keep the metadata search index in step with the library. Incremental
+        // and throttled: only files whose stamp changed are read.
+        MetadataIndexer.sync(context, loaded)
     }
 
     val closeFolder = {

@@ -18,6 +18,7 @@ enum class MetadataGroup(@StringRes val titleRes: Int) {
     EXPOSURE(R.string.info_section_exposure),
     LOCATION(R.string.info_section_location),
     TAGS(R.string.info_section_tags),
+    PNG_TEXT(R.string.info_section_png_text),
     OTHER(R.string.info_section_other),
 }
 
@@ -62,6 +63,18 @@ internal class SectionDraft(private val group: MetadataGroup) {
     fun res(@StringRes label: Int, @StringRes value: Int?) {
         if (value == null) return
         fields += MetadataField(MetadataLabel.Res(label), MetadataValue.Res(value))
+    }
+
+    /** Free-form row: the label is printed exactly as given (PNG keywords). */
+    fun entry(label: String, value: String?) {
+        val clean = value?.trim()?.takeIf { it.isNotEmpty() } ?: return
+        fields += MetadataField(MetadataLabel.Tag(label), MetadataValue.Text(clean))
+    }
+
+    /** Verbatim tag row whose value is an enumerated string resource. */
+    fun tagRes(tag: String, @StringRes value: Int?) {
+        if (value == null) return
+        fields += MetadataField(MetadataLabel.Tag(humanizeExifTag(tag)), MetadataValue.Res(value))
     }
 
     /** Verbatim tag row, shown under its humanized EXIF name. */

@@ -105,11 +105,13 @@
     <string name="permission_open_settings">Open settings</string>
 
     <!-- Search -->
-    <string name="search_placeholder">Search file names</string>
+    <string name="search_placeholder">Search names and metadata</string>
     <string name="search_clear">Clear</string>
-    <string name="search_hint">Searches file names across all photos and videos. Image contents and text are not searched.</string>
-    <string name="search_scope">Matches file names across your whole library</string>
-    <string name="search_no_results">No file names match this search</string>
+    <string name="search_hint">Searches file names and the metadata stored in your photos and videos — camera, lens, exposure, dates, place, and PNG text. Image contents and text inside the picture are not searched.</string>
+    <string name="search_scope">Matches file names and metadata across your whole library</string>
+    <string name="search_metadata_header">Found in metadata (%1$d)</string>
+    <string name="search_metadata_badge">Metadata</string>
+    <string name="search_no_results">No file names or metadata match this search</string>
     <string name="search_unknown_date">Unknown date</string>
 
     <!-- Info sheet -->
@@ -140,6 +142,9 @@
     <string name="info_section_location">Location</string>
     <string name="info_section_tags">Tags</string>
     <string name="info_section_other">All metadata</string>
+    <string name="info_section_png_text">PNG text</string>
+    <string name="info_view_more">View more</string>
+    <string name="info_view_less">Show less</string>
 
     <!-- Info sheet: field labels -->
     <string name="info_orientation">Orientation</string>
@@ -203,6 +208,35 @@
     <string name="info_total_tracks">Total tracks</string>
     <string name="info_compilation">Compilation</string>
     <string name="info_location">Location</string>
+
+    <!-- Info sheet: enumerated values -->
+    <string name="info_normal">Normal</string>
+    <string name="info_low">Low</string>
+    <string name="info_high">High</string>
+    <string name="info_soft">Soft</string>
+    <string name="info_hard">Hard</string>
+    <string name="info_low_saturation">Low saturation</string>
+    <string name="info_high_saturation">High saturation</string>
+    <string name="info_none">None</string>
+    <string name="info_normal_process">Normal process</string>
+    <string name="info_custom_process">Custom process</string>
+    <string name="info_unknown">Unknown</string>
+    <string name="info_low_gain_up">Low gain up</string>
+    <string name="info_high_gain_up">High gain up</string>
+    <string name="info_low_gain_down">Low gain down</string>
+    <string name="info_high_gain_down">High gain down</string>
+    <string name="info_macro">Macro</string>
+    <string name="info_distance_close">Close</string>
+    <string name="info_distant">Distant</string>
+    <string name="info_daylight">Daylight</string>
+    <string name="info_fluorescent">Fluorescent</string>
+    <string name="info_tungsten">Tungsten</string>
+    <string name="info_light_flash">Flash</string>
+    <string name="info_fine_weather">Fine weather</string>
+    <string name="info_cloudy">Cloudy</string>
+    <string name="info_shade">Shade</string>
+    <string name="info_other">Other</string>
+    <string name="info_directly_photographed">Directly photographed</string>
 
     <!-- Info sheet: orientation -->
     <string name="info_orientation_normal">Normal</string>
@@ -404,7 +438,7 @@
     <string name="tutorial_welcome_title">Welcome to Foto</string>
     <string name="tutorial_welcome_body">A fast, AMOLED-first gallery for the photos and videos already on your device.</string>
     <string name="tutorial_browse_title">Find your photos</string>
-    <string name="tutorial_browse_body">Open an album to see everything inside, or tap the search icon to find a file by name.</string>
+    <string name="tutorial_browse_body">Open an album to see everything inside, or tap the search icon to find a photo by name, camera, date or place.</string>
     <string name="tutorial_viewer_title">View and zoom</string>
     <string name="tutorial_viewer_body">Swipe between photos, double-tap or pinch to zoom, and swipe down to close.</string>
     <string name="tutorial_actions_title">Actions in one motion</string>

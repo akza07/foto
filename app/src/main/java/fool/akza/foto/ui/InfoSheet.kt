@@ -43,6 +43,7 @@ import fool.akza.foto.R
 import fool.akza.foto.data.MediaInfo
 import fool.akza.foto.data.MediaItem
 import fool.akza.foto.data.MediaRepository
+import fool.akza.foto.data.MetadataGroup
 import fool.akza.foto.data.MetadataLabel
 import fool.akza.foto.data.MetadataValue
 import fool.akza.foto.ui.theme.AmoledBlack
@@ -61,6 +62,9 @@ import fool.akza.foto.ui.theme.TextPrimary
 internal fun InfoSheet(item: MediaItem, onClose: () -> Unit) {
     val context = LocalContext.current
     var info by remember(item) { mutableStateOf<MediaInfo?>(null) }
+    // PNG text chunks can be long (comments, XMP, license blobs); keep the
+    // block readable until the reader asks for the rest.
+    var expandedPngText by remember(item) { mutableStateOf(false) }
 
     // Back closes the sheet, not the viewer underneath it.
     BackHandler { onClose() }
@@ -147,11 +151,32 @@ internal fun InfoSheet(item: MediaItem, onClose: () -> Unit) {
                     }
 
                     sections.forEachIndexed { index, section ->
+                        val collapsible = section.group == MetadataGroup.PNG_TEXT &&
+                            section.fields.size > PngTextPreviewRows
+                        val collapsed = collapsible && !expandedPngText
+                        val fields = if (collapsed) {
+                            section.fields.take(PngTextPreviewRows)
+                        } else {
+                            section.fields
+                        }
                         item(key = "section-$index") {
                             SectionHeader(stringResource(section.group.titleRes))
                         }
-                        itemsIndexed(section.fields, key = { row, _ -> "row-$index-$row" }) { _, field ->
+                        itemsIndexed(fields, key = { row, _ -> "row-$index-$row" }) { _, field ->
                             InfoRow(labelText(field.label), valueText(field.value))
+                        }
+                        if (collapsible) {
+                            item(key = "more-$index") {
+                                MoreRow(
+                                    label = if (collapsed) {
+                                        stringResource(R.string.info_view_more) +
+                                            " (${section.fields.size - fields.size})"
+                                    } else {
+                                        stringResource(R.string.info_view_less)
+                                    },
+                                    onClick = { expandedPngText = !expandedPngText },
+                                )
+                            }
                         }
                     }
 
@@ -208,6 +233,25 @@ private fun SectionHeader(title: String, first: Boolean = false) {
         fontWeight = FontWeight.SemiBold,
         letterSpacing = 0.8.sp,
         modifier = Modifier.padding(top = if (first) 6.dp else 18.dp, bottom = 2.dp),
+    )
+}
+
+/** Rows of PNG text shown before the "View more" row. */
+private const val PngTextPreviewRows = 3
+
+/** Trailing, tappable row that expands or collapses a long metadata block. */
+@Composable
+private fun MoreRow(label: String, onClick: () -> Unit) {
+    Text(
+        text = label,
+        color = TextPrimary,
+        fontSize = 14.sp,
+        fontWeight = FontWeight.Medium,
+        textAlign = TextAlign.End,
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(vertical = 8.dp),
     )
 }
 

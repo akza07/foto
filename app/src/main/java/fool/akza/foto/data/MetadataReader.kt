@@ -27,8 +27,13 @@ import fool.akza.foto.R
  */
 internal object MetadataReader {
 
-    fun read(context: Context, uri: Uri, isVideo: Boolean): List<MetadataSection> = try {
-        if (isVideo) videoSections(context, uri) else imageSections(context, uri)
+    fun read(
+        context: Context,
+        uri: Uri,
+        isVideo: Boolean,
+        mimeType: String?,
+    ): List<MetadataSection> = try {
+        if (isVideo) videoSections(context, uri) else imageSections(context, uri, mimeType)
     } catch (e: Exception) {
         AppLog.w("metadata read failed for $uri", e)
         emptyList()
@@ -36,10 +41,24 @@ internal object MetadataReader {
 
     // ---- Images ----------------------------------------------------------
 
-    private fun imageSections(context: Context, uri: Uri): List<MetadataSection> {
+    private fun imageSections(
+        context: Context,
+        uri: Uri,
+        mimeType: String?,
+    ): List<MetadataSection> {
         val exif = context.contentResolver.openInputStream(originalUri(context, uri))
-            ?.use { ExifInterface(it) } ?: return emptyList()
-        return exifSections(exif)
+            ?.use { ExifInterface(it) }
+        val sections = exif?.let(::exifSections).orEmpty().toMutableList()
+        // PNG keeps its descriptive metadata in textual chunks rather than in
+        // the EXIF dictionary, so it gets its own block.
+        if (mimeType?.endsWith("png", ignoreCase = true) == true) {
+            val pngText = SectionDraft(MetadataGroup.PNG_TEXT)
+            context.contentResolver.openInputStream(originalUri(context, uri))?.use { stream ->
+                PngText.addSection(stream, pngText)
+            }
+            pngText.toSection()?.let(sections::add)
+        }
+        return sections
     }
 
     /**
@@ -218,7 +237,8 @@ internal object MetadataReader {
             val value = exif.getAttribute(tag)?.trim()?.takeIf { it.isNotEmpty() } ?: return@forEach
             // Skip blobs (XMP, maker notes, thumbnails) that would flood the sheet.
             if (value.length > MaxVerbatimValueLength) return@forEach
-            other.tag(tag, value)
+            val enumLabel = exifTagValueRes(tag, value)
+            if (enumLabel != null) other.tagRes(tag, enumLabel) else other.tag(tag, value)
         }
         other.toSection()?.let(sections::add)
 
@@ -267,7 +287,6 @@ internal object MetadataReader {
                 R.string.info_frames,
                 meta(MediaMetadataRetriever.METADATA_KEY_VIDEO_FRAME_COUNT),
             )
-            video.text(R.string.info_type, meta(MediaMetadataRetriever.METADATA_KEY_MIMETYPE))
             video.res(
                 R.string.info_has_video,
                 yesNo(meta(MediaMetadataRetriever.METADATA_KEY_HAS_VIDEO)),
@@ -303,9 +322,6 @@ internal object MetadataReader {
                     ?.takeIf { it > 0 }
                     ?.let { audio.text(R.string.info_audio_bit_depth, "$it bits") }
             }
-            meta(MediaMetadataRetriever.METADATA_KEY_NUM_TRACKS)
-                ?.takeIf { it.toIntOrNull()?.let { tracks -> tracks > 0 } == true }
-                ?.let { audio.text(R.string.info_tracks, it) }
             audio.toSection()?.let(sections::add)
 
             val tags = SectionDraft(MetadataGroup.TAGS)
@@ -319,8 +335,8 @@ internal object MetadataReader {
             tags.text(R.string.info_author, meta(MediaMetadataRetriever.METADATA_KEY_AUTHOR))
             tags.text(R.string.info_composer, meta(MediaMetadataRetriever.METADATA_KEY_COMPOSER))
             tags.text(R.string.info_writer, meta(MediaMetadataRetriever.METADATA_KEY_WRITER))
-            tags.text(R.string.info_date, formatExifDateTime(meta(MediaMetadataRetriever.METADATA_KEY_DATE)))
-            tags.text(R.string.info_year, meta(MediaMetadataRetriever.METADATA_KEY_YEAR))
+            tags.text(R.string.info_date, formatContainerDate(meta(MediaMetadataRetriever.METADATA_KEY_DATE)))
+            tags.text(R.string.info_year, formatYear(meta(MediaMetadataRetriever.METADATA_KEY_YEAR)))
             tags.text(R.string.info_genre, meta(MediaMetadataRetriever.METADATA_KEY_GENRE))
             tags.text(
                 R.string.info_track,

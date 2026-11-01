@@ -513,7 +513,14 @@ object MediaRepository {
         withContext(Dispatchers.IO) {
             try {
                 val base = loadBaseInfo(context, item)
-                base?.copy(metadata = MetadataReader.read(context, item.uri, item.isVideo))
+                base?.copy(
+                    metadata = MetadataReader.read(
+                        context,
+                        item.uri,
+                        item.isVideo,
+                        base.mimeType ?: item.mimeType,
+                    ),
+                )
             } catch (e: Exception) {
                 null
             }

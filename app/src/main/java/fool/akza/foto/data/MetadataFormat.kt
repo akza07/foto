@@ -1,6 +1,7 @@
 package fool.akza.foto.data
 
 import androidx.annotation.StringRes
+import androidx.exifinterface.media.ExifInterface
 import fool.akza.foto.R
 import java.text.SimpleDateFormat
 import java.util.Locale
@@ -182,6 +183,27 @@ private fun parseDate(text: String, pattern: String): java.util.Date? = try {
     null
 }
 
+/**
+ * Container date tag. QuickTime-based containers report the 1904 epoch
+ * placeholder (`19040101T000000.000Z`) when the file has no real date, which
+ * would read as a capture date from 1904; drop those instead.
+ */
+internal fun formatContainerDate(raw: String?): String? {
+    val text = raw?.trim().orEmpty()
+    if (text.isEmpty() || text.startsWith("1904")) return null
+    return formatExifDateTime(text)
+}
+
+/**
+ * Year tag. Some containers put the full timestamp in the year field, so keep
+ * the first plausible four-digit year instead of printing the whole stamp.
+ */
+internal fun formatYear(raw: String?): String? {
+    val text = raw?.trim().orEmpty()
+    if (text.isEmpty()) return null
+    return Regex("(19|20|21)\\d{2}").find(text)?.value ?: text
+}
+
 /** `ISOSpeedRatings` → `ISO Speed Ratings`, `XPTitle` → `XP Title`. */
 internal fun humanizeExifTag(tag: String): String {
     val out = StringBuilder(tag.length + 6)
@@ -278,6 +300,70 @@ internal fun flashLabelRes(flash: Int): Int? = when {
     flash and 0x20 != 0 -> R.string.info_flash_unavailable
     flash and 0x1 != 0 -> R.string.info_flash_fired
     else -> R.string.info_flash_not_fired
+}
+
+/**
+ * Human wording for the enumerated tags that only reach the info sheet through
+ * its verbatim tail (they have no dedicated row). Values that aren't listed
+ * here stay numeric — better a raw number than a wrong label.
+ */
+@StringRes
+internal fun exifTagValueRes(tag: String, raw: String): Int? {
+    val value = raw.trim().toIntOrNull() ?: return null
+    return when (tag) {
+        ExifInterface.TAG_CONTRAST -> when (value) {
+            0 -> R.string.info_normal
+            1 -> R.string.info_low
+            2 -> R.string.info_high
+            else -> null
+        }
+        ExifInterface.TAG_SATURATION -> when (value) {
+            0 -> R.string.info_normal
+            1 -> R.string.info_low_saturation
+            2 -> R.string.info_high_saturation
+            else -> null
+        }
+        ExifInterface.TAG_SHARPNESS -> when (value) {
+            0 -> R.string.info_normal
+            1 -> R.string.info_soft
+            2 -> R.string.info_hard
+            else -> null
+        }
+        ExifInterface.TAG_CUSTOM_RENDERED -> when (value) {
+            0 -> R.string.info_normal_process
+            1 -> R.string.info_custom_process
+            else -> null
+        }
+        ExifInterface.TAG_GAIN_CONTROL -> when (value) {
+            0 -> R.string.info_none
+            1 -> R.string.info_low_gain_up
+            2 -> R.string.info_high_gain_up
+            3 -> R.string.info_low_gain_down
+            4 -> R.string.info_high_gain_down
+            else -> null
+        }
+        ExifInterface.TAG_SUBJECT_DISTANCE_RANGE -> when (value) {
+            0 -> R.string.info_unknown
+            1 -> R.string.info_macro
+            2 -> R.string.info_distance_close
+            3 -> R.string.info_distant
+            else -> null
+        }
+        ExifInterface.TAG_LIGHT_SOURCE -> when (value) {
+            0 -> R.string.info_unknown
+            1 -> R.string.info_daylight
+            2 -> R.string.info_fluorescent
+            3 -> R.string.info_tungsten
+            4 -> R.string.info_light_flash
+            9 -> R.string.info_fine_weather
+            10 -> R.string.info_cloudy
+            11 -> R.string.info_shade
+            255 -> R.string.info_other
+            else -> null
+        }
+        ExifInterface.TAG_SCENE_TYPE -> if (value == 1) R.string.info_directly_photographed else null
+        else -> null
+    }
 }
 
 /** EXIF ColorSpace: 1 = sRGB, 0xFFFF = uncalibrated. */
