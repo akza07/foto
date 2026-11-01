@@ -33,6 +33,30 @@ Then perform `cp apk-output/foto-arm64-android16-release.apk /media/XYZ/Diffusio
 
 - **App identity**: application ID `fool.akza.foto`, launcher name `Foto`.
 
+### Branch-safe artifacts (parallel sessions)
+
+The two canonical paths above are owned by the **main** branch. A parallel
+feature/experiment branch must never write them: doing so silently replaces the
+main-branch APK (and its diffusion copy), so the next install runs the wrong
+code.
+
+- Detect the branch with `git branch --show-current`. On `main` (or `master`),
+  use the canonical names exactly as above.
+- On any other branch, write a branch-tagged artifact instead:
+  `apk-output/foto-<branch-slug>-<versionName>-arm64-android16-release.apk`
+  (slug: lowercase, non-alphanumerics → `-`; detached HEAD → short SHA). If the
+  build needs to reach the device, copy it to the diffusion folder under the
+  **same branch-tagged name** — never the canonical name.
+- Leave `apk-output/foto-arm64-android16-release.apk` and
+  `/media/XYZ/DiffusionArt/foto-arm64-android16-release.apk` untouched from
+  feature branches. The fixed diffusion name is the release channel for `main`;
+  a branch build can still be installed manually from its tagged path.
+- Always state the exact artifact path in the completion summary, so it is clear
+  which build the user is installing.
+- Device testing is shared too: a parallel branch session must not uninstall,
+  clear data of, install a differently-signed build over, or drive the emulator
+  another session is using. Use a separate AVD/worktree or coordinate first.
+
 ## Versioning
 
 Versioning is **date-based**: every release APK that ships changes is stamped
