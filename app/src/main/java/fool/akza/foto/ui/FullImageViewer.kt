@@ -263,8 +263,6 @@ fun FullImageViewer(
     initialIndex: Int,
     sourceRect: Rect,
     onDismiss: () -> Unit,
-    /** Fired once when the exit animation starts, before the grid is revealed. */
-    onClosing: () -> Unit = {},
     onPageChanged: (Int) -> Unit,
     onDelete: (MediaItem) -> Unit,
     onShare: (MediaItem) -> Unit,
@@ -405,12 +403,14 @@ fun FullImageViewer(
         imageControlsVisible = false
     }
 
-    fun toggleImageControls() {
-        if (imageControlsVisible) {
-            hideImageControls()
-        } else {
-            showImageControls()
-        }
+    // System bars start visible: hiding them during the entry morph made the
+    // status bar slide away mid-zoom, which read as a glitch. A tap on the photo
+    // now owns the immersive toggle instead.
+    var systemBarsHidden by remember { mutableStateOf(false) }
+    val toggleImmersive = {
+        val show = systemBarsHidden
+        systemBarsHidden = !show
+        if (show) showImageControls() else hideImageControls()
     }
 
     // True while the current video page is actively playing. While playing,
@@ -424,10 +424,6 @@ fun FullImageViewer(
 
     val close = {
         if (!leaving) {
-            // Let the gallery turn its frosted header back on before the viewer
-            // starts shrinking, otherwise the header is revealed unblurred and
-            // snaps to blur only after the animation ends.
-            onClosing()
             // Stop counting before the exit animation, so the shrink back to the
             // tile is not mistaken for viewing time.
             attention?.setLeaving(true)
@@ -463,29 +459,29 @@ fun FullImageViewer(
         attention?.setPlaying(videoPlaying)
     }
 
-    // Immersive viewing: hide both system bars while the viewer is open so the
-    // photo/video owns the whole screen, and bring them back on close. Swiping
-    // from an edge still reveals them transiently. Hiding beats tinting the
-    // status-bar icons per photo: a content-aware tint visibly flickers as
-    // pages, pans and overlays cross bright and dark areas.
-    //
-    // The window insets are pinned to their visible values for the same span
-    // (see WindowInsetsGuard): otherwise the platform animates them to zero as
-    // the bars hide, reflowing the grid and this HUD in the middle of the
-    // tile-morph entry/exit, which reads as jank under the transition.
+    // System bars: visible on open, then toggled explicitly by the user. The
+    // insets guard is only frozen while the bars are hidden, so the grid does
+    // not reflow mid-morph but the entry starts in a completely stable layout.
     val view = LocalView.current
     val insetsGuard = LocalWindowInsetsGuard.current
-    DisposableEffect(view, insetsGuard) {
-        val window = view.context.findActivity()?.window
-        val controller = window?.let { WindowInsetsControllerCompat(it, view) }
-        insetsGuard?.freeze(ViewCompat.getRootWindowInsets(view))
-        if (controller != null) {
-            controller.systemBarsBehavior =
-                WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-            controller.hide(WindowInsetsCompat.Type.systemBars())
-        }
+    val window = remember(view) { view.context.findActivity()?.window }
+    val barsController = remember(window, view) {
+        window?.let { WindowInsetsControllerCompat(it, view) }
+    }
+    DisposableEffect(view, barsController) {
+        barsController?.systemBarsBehavior =
+            WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
         onDispose {
-            controller?.show(WindowInsetsCompat.Type.systemBars())
+            barsController?.show(WindowInsetsCompat.Type.systemBars())
+            insetsGuard?.unfreeze()
+        }
+    }
+    LaunchedEffect(systemBarsHidden, barsController) {
+        if (systemBarsHidden) {
+            insetsGuard?.freeze(ViewCompat.getRootWindowInsets(view))
+            barsController?.hide(WindowInsetsCompat.Type.systemBars())
+        } else {
+            barsController?.show(WindowInsetsCompat.Type.systemBars())
             insetsGuard?.unfreeze()
         }
     }
@@ -852,7 +848,7 @@ fun FullImageViewer(
                         sourceRect = transitionRect,
                         onZoomedChange = { zoomed -> currentPageZoomed = zoomed },
                         // Skip the release that resolved a long-press radial action.
-                        onTap = { if (!radialActive) toggleImageControls() },
+                        onTap = { if (!radialActive) toggleImmersive() },
                         multiTouchActive = multiTouchActive,
                         // Live entry/exit progress so the page morphs the grid tile's
                         // square crop into the full-resolution image and back on

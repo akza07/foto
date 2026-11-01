@@ -317,10 +317,6 @@ fun GalleryScreen(
     var viewerIndex by remember { mutableStateOf(0) }
     var viewerSourceRect by remember { mutableStateOf(Rect.Zero) }
     var viewerOpenerUri by remember { mutableStateOf<Uri?>(null) }
-    // True from the moment the viewer starts its exit animation until it is
-    // removed. Lets the root header turn its blur back on before the viewer
-    // reveals it, instead of flipping from transparent to blurred at the end.
-    var viewerClosing by remember { mutableStateOf(false) }
     // Item awaiting the viewer's delete slide-out. While set, viewerItems still
     // contains it so the pager can animate to the neighbor; the actual list
     // mutation happens in commitViewerRemoval once the slide ends.
@@ -542,7 +538,6 @@ fun GalleryScreen(
         viewerItems = null
         viewerSourceRect = Rect.Zero
         viewerOpenerUri = null
-        viewerClosing = false
         pendingViewerRemoval = null
     }
 
@@ -551,7 +546,6 @@ fun GalleryScreen(
         viewerIndex = index
         viewerSourceRect = rect
         viewerOpenerUri = list.getOrNull(index)?.uri
-        viewerClosing = false
         pendingViewerRemoval = null
     }
 
@@ -1362,11 +1356,10 @@ fun GalleryScreen(
             onTileDisposed = unregisterTileRect,
             onGlideItem = glideItem,
             onGlideFolder = glideFolder,
-            // Skip the (expensive) blur while an opaque screen covers the root,
-            // but keep it on through the viewer's exit so the revealed header is
-            // already blurred rather than snapping to blur after the animation.
+            // Keep the root header frosted for the viewer's whole lifetime. It is
+            // hidden behind the opaque viewer, but keeping the haze warm means the
+            // entry and exit never reveal a transparent-then-blurred header.
             frostEnabled = (directoryStack.isEmpty() || directoryStack.size == 1 && closing) &&
-                (viewerItems == null || viewerClosing) &&
                 !showSettings && !showSearch && !showInsights,
         )
 
@@ -1502,11 +1495,7 @@ fun GalleryScreen(
                 onRemovalAnimationEnd = commitViewerRemoval,
                 restoreUri = viewerRestoreUri,
                 onRestored = { viewerRestoreUri = null },
-                onDismiss = {
-                    viewerClosing = false
-                    closeViewer()
-                },
-                onClosing = { viewerClosing = true },
+                onDismiss = closeViewer,
                 onPageChanged = { viewerIndex = it },
                 onDelete = {
                     // Ignore further deletes while a slide-out is already pending.
