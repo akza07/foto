@@ -38,6 +38,7 @@
     <string name="storage_nothing_cached">Nothing cached</string>
     <string name="storage_clear_index_title">Clear search index</string>
     <string name="storage_index_empty">Nothing indexed</string>
+    <string name="work_progress_summary">%1$s · %2$d/%3$d</string>
     <string name="storage_index_summary">%1$d files · %2$s on this device</string>
     <string name="clear_index_confirm_title">Clear search index?</string>
     <string name="clear_index_confirm_message">The words stored for search are deleted and the database is compacted. Your files are untouched, and the index is rebuilt from them the next time your library loads.</string>
@@ -355,7 +356,7 @@
     <string name="action_undo">Undo</string>
     <string name="caching_previews">Caching previews</string>
     <string name="indexing_metadata">Indexing metadata</string>
-    <string name="indexing_metadata_chip">Indexing metadata, %1$d of %2$d files done. Tap to see progress.</string>
+    <string name="work_chip_description">%1$s, %2$d of %3$d files done. Tap to see progress.</string>
     <string name="search_indexing_notice">Still indexing metadata — %1$d of %2$d files left. Results update automatically.</string>
     <string name="search_no_results_indexing">No matches yet — %1$d files are still being indexed. Results will appear here automatically.</string>
     <string name="caching_progress_count">%1$d/%2$d</string>

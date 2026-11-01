@@ -60,6 +60,7 @@ import fool.akza.foto.data.AppSettings
 import fool.akza.foto.data.GalleryEvents
 import fool.akza.foto.data.GridSize
 import fool.akza.foto.data.MediaSort
+import fool.akza.foto.data.MetadataIndexer
 import fool.akza.foto.data.MetadataStore
 import fool.akza.foto.data.SelectionActionPlacement
 import fool.akza.foto.data.SettingsRepository
@@ -167,6 +168,10 @@ private fun SettingsRoot(
     // Recorded visits, shown as the clear-history summary; null while loading.
     var historySessions by remember { mutableStateOf<Int?>(null) }
     val attentionVersion by AttentionRepository.version.collectAsState()
+    // Live work: the storage rows double as the place to see that a pass is
+    // running, since this is where its cost is reported.
+    val previews by ThumbCache.progress.collectAsState()
+    val indexing by MetadataIndexer.progress.collectAsState()
     var showSortDialog by remember { mutableStateOf(false) }
     var showGridDialog by remember { mutableStateOf(false) }
     var showSelectionPlacementDialog by remember { mutableStateOf(false) }
@@ -202,6 +207,24 @@ private fun SettingsRoot(
             }
         }
         refreshTrash()
+    }
+
+    // The numbers above are costs, so they should follow the passes: each row
+    // re-reads its own figure the moment *its* pass ends, even while the other one
+    // is still running, instead of keeping what was true when Settings opened.
+    LaunchedEffect(previews.isIndexing) {
+        if (!previews.isIndexing) {
+            cacheBytes = with(Dispatchers.IO) { ThumbCache.totalCacheBytes() }
+        }
+    }
+
+    LaunchedEffect(indexing.isIndexing) {
+        if (!indexing.isIndexing) {
+            indexFiles = with(Dispatchers.IO) {
+                indexBytes = MetadataStore.diskBytes(context)
+                MetadataStore.count(context)
+            }
+        }
     }
 
     LaunchedEffect(attentionVersion) {
@@ -360,13 +383,19 @@ private fun SettingsRoot(
                         title = stringResource(R.string.storage_clear_cache_title),
                         subtitle = when {
                             clearing -> stringResource(R.string.storage_clearing)
+                            previews.isIndexing -> stringResource(
+                                R.string.work_progress_summary,
+                                stringResource(R.string.caching_previews),
+                                previews.done,
+                                previews.total,
+                            )
                             cacheBytes == null -> stringResource(R.string.storage_calculating)
                             cacheBytes == 0L -> stringResource(R.string.storage_nothing_cached)
                             else -> formatCacheSize(cacheBytes!!)
                         },
                         enabled = !clearing && (cacheBytes ?: 0L) > 0L,
                         showChevron = !clearing,
-                        loading = clearing,
+                        loading = clearing || previews.isIndexing,
                         onClick = { showClearConfirm = true },
                     )
                     SettingsDivider()
@@ -374,6 +403,12 @@ private fun SettingsRoot(
                         title = stringResource(R.string.storage_clear_index_title),
                         subtitle = when {
                             clearingIndex -> stringResource(R.string.storage_clearing)
+                            indexing.isIndexing -> stringResource(
+                                R.string.work_progress_summary,
+                                stringResource(R.string.indexing_metadata),
+                                indexing.done,
+                                indexing.total,
+                            )
                             indexFiles == null -> stringResource(R.string.storage_calculating)
                             indexFiles == 0 -> stringResource(R.string.storage_index_empty)
                             else -> stringResource(
@@ -384,7 +419,7 @@ private fun SettingsRoot(
                         },
                         enabled = !clearingIndex && (indexFiles ?: 0) > 0,
                         showChevron = !clearingIndex,
-                        loading = clearingIndex,
+                        loading = clearingIndex || indexing.isIndexing,
                         onClick = { showClearIndexConfirm = true },
                     )
                     SettingsDivider()

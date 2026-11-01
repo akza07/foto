@@ -1,17 +1,24 @@
 package fool.akza.foto.ui
 
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
@@ -48,6 +55,7 @@ import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.lerp
@@ -67,10 +75,13 @@ private val BarShape = RoundedCornerShape(50)
 private val ChipSize = 40.dp
 private val ChipEndInset = 12.dp
 
-/** Distance below the status bar shared by both phases. */
+/** Distance below the status bar shared by every row. */
 private val IndicatorTopInset = 64.dp
 
-/** How long the full pill stays up before it steps aside to a chip. */
+/** Gap between two passes running at the same time. */
+private val StackGap = 8.dp
+
+/** How long a row stays expanded before it steps aside to a chip. */
 private const val CollapseDelayMs = 2_500L
 
 /** Duration of the pill → chip morph (and its reverse). */
@@ -89,15 +100,19 @@ private const val CompletedHoldMs = 1_600L
 private const val CompletedGraceMs = 300L
 
 /**
- * Background work indicator for the albums screen, shared by preview caching and
- * metadata indexing (which runs after it and feeds search).
+ * Background work indicators for the albums screen: one row per pass, preview
+ * caching and metadata indexing (which feeds search).
  *
  * Both can run for a while, and a permanent banner in the middle of the screen
- * turns into noise. The full pill therefore shows up when work starts — so the
- * user sees *why* a search or a cover may still be filling in — and then steps
- * aside to a small spinner chip against the end edge, where it stays until the
- * work is done. Tapping the chip brings the label and count back; tapping the
- * label tucks it away again.
+ * turns into noise. Each row therefore behaves the same way: the full pill shows
+ * up when its pass starts — so the user sees *why* a search or a cover may still
+ * be filling in — then steps aside to a small spinner chip against the end edge,
+ * holds a check when the pass finishes, and fades. Tapping a chip brings the
+ * label and count back; tapping the label tucks it away again.
+ *
+ * The rows stack: previews on top, indexing below it with [StackGap] between, and
+ * both disappear on their own timer as they finish, so the stack shrinks from the
+ * top instead of everything rearranging at once.
  *
  * The collapse is a single morph rather than a swap: one value drives the
  * surface's width, height, corner radius and horizontal travel, so the pill
@@ -111,14 +126,48 @@ private const val CompletedGraceMs = 300L
 fun BackgroundWorkIndicator(modifier: Modifier = Modifier) {
     val thumbs by ThumbCache.progress.collectAsState()
     val metadata by MetadataIndexer.progress.collectAsState()
-    // Previews gate what the grid can draw, so they own the indicator while they
-    // run; metadata indexing takes over the same spot afterwards.
-    val previews = thumbs.isIndexing
-    val active = previews || metadata.isIndexing
-    val done = if (previews) thumbs.done else metadata.done
-    val total = if (previews) thumbs.total else metadata.total
-    val label = if (previews) R.string.caching_previews else R.string.indexing_metadata
 
+    BoxWithConstraints(
+        modifier = modifier
+            .fillMaxSize()
+            .statusBarsPadding()
+            .padding(top = IndicatorTopInset),
+    ) {
+        val rowWidth = maxWidth
+        Column(Modifier.fillMaxWidth()) {
+            // Order follows the work: previews gate what the grid can draw, so
+            // they own the first slot; indexing joins underneath them.
+            PassRow(
+                label = R.string.caching_previews,
+                done = thumbs.done,
+                total = thumbs.total,
+                active = thumbs.isIndexing,
+                availableWidth = rowWidth,
+            )
+            PassRow(
+                label = R.string.indexing_metadata,
+                done = metadata.done,
+                total = metadata.total,
+                active = metadata.isIndexing,
+                availableWidth = rowWidth,
+            )
+        }
+    }
+}
+
+/**
+ * One pass: a pill that morphs into a chip, holds a check when it finishes, and
+ * takes itself out of the stack after that. Its own timer, so two passes running
+ * at once collapse and finish independently.
+ */
+@Composable
+private fun PassRow(
+    label: Int,
+    done: Int,
+    total: Int,
+    active: Boolean,
+    availableWidth: Dp,
+) {
     // Expanded at the start of a pass, then collapsed to the side. Re-expanding
     // by hand keeps it open: that is an explicit request to see progress.
     var expanded by remember { mutableStateOf(true) }
@@ -127,17 +176,6 @@ fun BackgroundWorkIndicator(modifier: Modifier = Modifier) {
     // "gave up halfway" must not look the same.
     var finished by remember { mutableStateOf(false) }
     var everRan by remember { mutableStateOf(false) }
-    // Both stores keep their final counts published after a pass ends, so the
-    // check state can report exactly what finished. The phase is remembered so
-    // "Caching previews" is not relabelled as indexing once both are done.
-    var lastLabel by remember { mutableStateOf(R.string.caching_previews) }
-    if (active) lastLabel = label
-    val shownLabel = if (active) label else lastLabel
-    val shown = if (shownLabel == R.string.caching_previews) {
-        PassSnapshot(shownLabel, thumbs.done, thumbs.total)
-    } else {
-        PassSnapshot(shownLabel, metadata.done, metadata.total)
-    }
     // 0 = full pill, 1 = collapsed chip. One value for every animated property
     // keeps position, size and content in step, so nothing can jump.
     val morph = remember { Animatable(0f) }
@@ -177,125 +215,122 @@ fun BackgroundWorkIndicator(modifier: Modifier = Modifier) {
     val appear by animateFloatAsState(
         targetValue = if (visible) 1f else 0f,
         animationSpec = tween(if (visible) AppearDurationMs else DisappearDurationMs),
-        label = "indicator-appear",
+        label = "pass-appear",
     )
+    val density = LocalDensity.current
+    val progress = morph.value
+    val pillWidth = with(density) { pillSize.width.toDp() }
+    val pillHeight = with(density) { pillSize.height.toDp() }
+    val width = lerp(pillWidth, ChipSize, progress)
+    val height = lerp(pillHeight, ChipSize, progress)
+    // The pill is centred, the chip hugs the end edge; interpolating the left
+    // edge moves the surface from one anchor to the other.
+    val start = lerp((availableWidth - pillWidth) / 2, availableWidth - ChipEndInset - ChipSize, progress)
+    // The label clears out before the surface reaches chip size, and the glyph
+    // only arrives in the second half, so text never competes with the glyph.
+    val pillAlpha = (1f - progress / 0.6f).coerceIn(0f, 1f)
+    val glyphAlpha = ((progress - 0.45f) / 0.55f).coerceIn(0f, 1f)
+    val glyphScale = 0.7f + 0.3f * glyphAlpha
+    // While collapsed only the glyph is left, so the label's semantics would be a
+    // second, stale readout: clear them and let the chip description speak.
+    val rowSemantics = if (expanded) Modifier else Modifier.clearAndSetSemantics { }
+    val chipDescription = if (expanded) {
+        null
+    } else {
+        stringResource(R.string.work_chip_description, stringResource(label), done, total)
+    }
 
-    // Keep composing through the exit fade, then drop the tree so the (now
-    // invisible) surface stops swallowing taps meant for the grid.
-    if (!visible && appear == 0f) return
-
-    BoxWithConstraints(
-        modifier = modifier
-            .fillMaxSize()
-            .statusBarsPadding()
-            .padding(top = IndicatorTopInset),
+    // The stack owns the vertical space: a row that is not running shrinks to
+    // nothing, so the rows below it move up instead of leaving a hole.
+    AnimatedVisibility(
+        visible = visible,
+        enter = fadeIn(tween(AppearDurationMs)) +
+            expandVertically(tween(AppearDurationMs), expandFrom = Alignment.Top),
+        exit = fadeOut(tween(DisappearDurationMs)) +
+            shrinkVertically(tween(DisappearDurationMs), shrinkTowards = Alignment.Top),
     ) {
-        val progress = morph.value
-        val density = LocalDensity.current
-        val pillWidth = with(density) { pillSize.width.toDp() }
-        val pillHeight = with(density) { pillSize.height.toDp() }
-        val width = lerp(pillWidth, ChipSize, progress)
-        val height = lerp(pillHeight, ChipSize, progress)
-        // The pill is centred, the chip hugs the end edge; interpolating the left
-        // edge moves the surface from one anchor to the other.
-        val start = lerp((maxWidth - pillWidth) / 2, maxWidth - ChipEndInset - ChipSize, progress)
-        // The label clears out before the surface reaches chip size, and the glyph
-        // only arrives in the second half, so text never competes with the glyph.
-        val pillAlpha = (1f - progress / 0.6f).coerceIn(0f, 1f)
-        val glyphAlpha = ((progress - 0.45f) / 0.55f).coerceIn(0f, 1f)
-        val glyphScale = 0.7f + 0.3f * glyphAlpha
-        // While collapsed only the glyph is left, so the label's semantics would
-        // be a second, stale readout: clear them and let the chip description speak.
-        val rowSemantics = if (expanded) Modifier else Modifier.clearAndSetSemantics { }
-        val chipDescription = if (expanded) {
-            null
-        } else {
-            stringResource(
-                R.string.indexing_metadata_chip,
-                shown.done.coerceAtMost(shown.total),
-                shown.total,
-            )
-        }
-
-        Surface(
+        Box(
             modifier = Modifier
-                .offset(x = start)
-                .width(width)
-                .height(height)
-                .graphicsLayer {
-                    alpha = appear
-                    translationY = -(1f - appear) * 24.dp.toPx()
-                }
-                .shadow(12.dp, BarShape)
-                .clip(BarShape)
-                .clickable {
-                    userOpened = true
-                    expanded = !expanded
-                }
-                .semantics {
-                    chipDescription?.let { contentDescription = it }
-                },
-            shape = BarShape,
-            color = ThemeSurface,
-            border = BorderStroke(1.dp, Border),
-            shadowElevation = 0.dp,
+                .fillMaxWidth()
+                .padding(bottom = StackGap),
         ) {
-            Box(Modifier.fillMaxSize()) {
-                // Measured unbounded: the row keeps its full-pill width while the
-                // surface shrinks around it, so the label is cropped, not rewrapped.
-                Row(
-                    modifier = Modifier
-                        .then(rowSemantics)
-                        .fillMaxSize()
-                        .wrapContentSize(Alignment.Center, unbounded = true)
-                        .onSizeChanged { pillSize = it }
-                        .alpha(pillAlpha)
-                        .padding(horizontal = 16.dp, vertical = 9.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.Start,
-                ) {
-                    if (finished) CheckGlyph() else if (done < total) ProgressGlyph() else SyncGlyph()
-                    Spacer(Modifier.width(10.dp))
-                    Text(
-                        text = stringResource(shown.label),
-                        color = TextPrimary,
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.Medium,
-                    )
-                    Spacer(Modifier.width(8.dp))
-                    Text(
-                        text = stringResource(
-                            R.string.caching_progress_count,
-                            shown.done,
-                            shown.total,
-                        ),
-                        color = TextMuted,
-                        fontSize = 12.sp,
-                    )
-                }
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .wrapContentSize(Alignment.Center, unbounded = true)
-                        .alpha(glyphAlpha)
-                        .graphicsLayer {
-                            scaleX = glyphScale
-                            scaleY = glyphScale
-                        },
-                ) {
-                    when {
-                        finished -> CheckGlyph(size = 18)
-                        done < total -> ProgressGlyph(size = 18)
-                        else -> SyncGlyph(size = 18)
+            Surface(
+                modifier = Modifier
+                    .offset(x = start)
+                    .width(width)
+                    .height(height)
+                    .graphicsLayer { translationY = -(1f - appear) * 16.dp.toPx() }
+                    .shadow(12.dp, BarShape)
+                    .clip(BarShape)
+                    .clickable {
+                        userOpened = true
+                        expanded = !expanded
+                    }
+                    .semantics {
+                        chipDescription?.let { contentDescription = it }
+                    },
+                shape = BarShape,
+                color = ThemeSurface,
+                border = BorderStroke(1.dp, Border),
+                shadowElevation = 0.dp,
+            ) {
+                Box(Modifier.fillMaxSize()) {
+                    // Measured unbounded: the row keeps its full-pill width while
+                    // the surface shrinks around it, so the label is cropped, not
+                    // rewrapped.
+                    Row(
+                        modifier = Modifier
+                            .then(rowSemantics)
+                            .fillMaxSize()
+                            .wrapContentSize(Alignment.Center, unbounded = true)
+                            .onSizeChanged { pillSize = it }
+                            .alpha(pillAlpha)
+                            .padding(horizontal = 16.dp, vertical = 9.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Start,
+                    ) {
+                        if (finished) {
+                            CheckGlyph()
+                        } else if (done < total) {
+                            ProgressGlyph()
+                        } else {
+                            SyncGlyph()
+                        }
+                        Spacer(Modifier.width(10.dp))
+                        Text(
+                            text = stringResource(label),
+                            color = TextPrimary,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Medium,
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            text = stringResource(R.string.caching_progress_count, done, total),
+                            color = TextMuted,
+                            fontSize = 12.sp,
+                        )
+                    }
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .wrapContentSize(Alignment.Center, unbounded = true)
+                            .alpha(glyphAlpha)
+                            .graphicsLayer {
+                                scaleX = glyphScale
+                                scaleY = glyphScale
+                            },
+                    ) {
+                        when {
+                            finished -> CheckGlyph(size = 18)
+                            done < total -> ProgressGlyph(size = 18)
+                            else -> SyncGlyph(size = 18)
+                        }
                     }
                 }
             }
         }
     }
 }
-
-/** What the indicator is showing: which pass, and how far it got. */
-private data class PassSnapshot(val label: Int, val done: Int, val total: Int)
 
 @Composable
 private fun CheckGlyph(size: Int = 15) {

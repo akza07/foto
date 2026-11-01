@@ -268,7 +268,7 @@ object MetadataIndexer {
                 batch.clear()
             }
             val now = System.currentTimeMillis()
-            if (done == total || now - publishedAt >= ProgressPublishMs) {
+            if (now - publishedAt >= ProgressPublishMs) {
                 publishedAt = now
                 _progress.value = Progress(total = total, done = done)
             }
@@ -278,8 +278,10 @@ object MetadataIndexer {
             writeMs += commit(context, batch)
             transactions++
         }
-        // The final step is what tells the pill the pass completed rather than
-        // stopped, so it is published even when nothing else was.
+        // Published after the last commit, because this is what tells the pill the
+        // pass completed rather than stopped — announcing it while the final batch
+        // was still unwritten made readers (Settings, an open search) see a
+        // half-written index at the moment they were told it was done.
         _progress.value = Progress(total = total, done = done)
         _generation.update { it + 1 }
         return WriteStats(writeMs, transactions)
