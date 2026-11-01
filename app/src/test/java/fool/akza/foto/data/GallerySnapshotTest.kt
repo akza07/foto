@@ -82,6 +82,12 @@ class GallerySnapshotTest {
     }
 
     @Test
+    fun `timeline preview lines decode like loose items`() {
+        val encoded = GallerySnapshot.encodeItem(record()).replaceFirst("I\t", "R\t")
+        assertEquals(record(), GallerySnapshot.decodeItem(encoded))
+    }
+
+    @Test
     fun `corrupt lines are ignored instead of throwing`() {
         assertNull(GallerySnapshot.decodeFolder("F\tonly-two"))
         assertNull(GallerySnapshot.decodeItem("I\t1\t"))

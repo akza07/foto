@@ -35,7 +35,16 @@ object GallerySnapshot {
 
     private const val FOLDER = "F"
     private const val ITEM = "I"
+    private const val RECENT = "R"
     private const val SEP = '\t'
+
+    /**
+     * How many items of the Photos timeline are stored for the first paint. The
+     * timeline is the default tab, so it has to show something immediately; a few
+     * screens' worth is enough, and the rest appends below once the scan lands
+     * (which never reflows what is already on screen).
+     */
+    private const val MaxRecentItems = 150
 
     /** The previous albums grid, or null on first run / after a format change. */
     suspend fun read(context: Context): GalleryContent? = withContext(Dispatchers.IO) {
@@ -44,6 +53,7 @@ object GallerySnapshot {
         try {
             val folders = ArrayList<MediaFolder>()
             val loose = ArrayList<MediaItem>()
+            val recent = ArrayList<MediaItem>()
             file.bufferedReader().use { reader ->
                 if (reader.readLine() != VERSION) return@withContext null
                 while (true) {
@@ -51,14 +61,17 @@ object GallerySnapshot {
                     when (line.substringBefore(SEP)) {
                         FOLDER -> decodeFolder(line)?.toFolder()?.let(folders::add)
                         ITEM -> decodeItem(line)?.toItem()?.let(loose::add)
+                        RECENT -> decodeItem(line)?.toItem()?.let(recent::add)
                     }
                 }
             }
-            if (folders.isEmpty() && loose.isEmpty()) return@withContext null
+            if (folders.isEmpty() && loose.isEmpty() && recent.isEmpty()) return@withContext null
             GalleryContent(
                 folders = folders,
                 looseItems = loose,
-                allItems = emptyList(),
+                // Enough of the Photos timeline to fill the first screen; it is
+                // extended in place when the real scan returns.
+                allItems = (recent + loose).distinctBy { it.uri },
                 provisional = true,
             )
         } catch (e: Exception) {
@@ -82,6 +95,11 @@ object GallerySnapshot {
                 }
                 content.looseItems.forEach { item ->
                     out.write(encodeItem(item.toRecord()))
+                    out.write("\n")
+                }
+                // The first screen of the timeline, in the current sort order.
+                content.allItems.take(MaxRecentItems).forEach { item ->
+                    out.write("$RECENT$SEP" + encodeItem(item.toRecord()).removePrefix("$ITEM$SEP"))
                     out.write("\n")
                 }
             }
@@ -239,8 +257,12 @@ object GallerySnapshot {
         )
     }
 
-    internal fun decodeItem(line: String): ItemRecord? =
-        decodeItemBody(line.removePrefix("$ITEM$SEP"))
+    internal fun decodeItem(line: String): ItemRecord? {
+        // Lines carry a one-letter tag ("I" for loose files, "R" for the timeline
+        // preview); strip whichever it is before decoding the fields.
+        val body = if (line.length > 1 && line[1] == SEP) line.substring(2) else line
+        return decodeItemBody(body)
+    }
 
     private fun decodeItemBody(body: String): ItemRecord? {
         val parts = body.split(SEP)

@@ -234,7 +234,7 @@ No custom font family; system default with Material3 defaults. Exact usages:
 
 ## 6. Albums Grid (Home)
 
-**Launch:** a returning launch paints the **last album grid from disk first** — folders, counts, dates and cover items only, written after every successful scan (`gallery_snapshot.tsv`, ~10–20 KB, parsed in about 15 ms) — and the live MediaStore scan replaces it a few hundred milliseconds later without re-flowing the tiles. The full-screen spinner is therefore only seen on a first run, when the snapshot is missing/corrupt, or when the library was emptied. The same snapshot is what keeps folder counts and covers identical between the provisional and final content; it is not a full item list, so search and nested-folder navigation fill in when the scan lands.
+**Launch:** a returning launch paints the **last gallery from disk first** — the album grid (folders, counts, dates, cover items) plus the first 150 items of the Photos timeline, written after every successful scan (`gallery_snapshot.tsv`, a few tens of KB, parsed in about 15 ms) — and the live MediaStore scan replaces it a few hundred milliseconds later without re-flowing what is on screen (timeline items only ever append below). The full-screen spinner is therefore only seen on a first run, when the snapshot is missing/corrupt, or when the library was emptied. The same snapshot is what keeps folder counts and covers identical between the provisional and final content; it is not a full item list, so search and nested-folder navigation fill in when the scan lands.
 
 ### 6.1 Header
 
