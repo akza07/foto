@@ -94,6 +94,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -211,6 +212,14 @@ fun GalleryScreen(
     val rootView = LocalView.current
     SettingsRepository.init(context)
     val appSettings by SettingsRepository.settings.collectAsState()
+    // Side rails need a tall window: on a landscape phone the rail and the end
+    // space it reserves would fill the grid, so short windows fall back to the
+    // original full-width bar regardless of the stored preference.
+    val windowHeightDp = LocalConfiguration.current.screenHeightDp.dp
+    val selectionPlacement = appSettings.selectionActionPlacement.takeIf { placement ->
+        placement == SelectionActionPlacement.BOTTOM ||
+            windowHeightDp >= SelectionRailMinWindowHeight
+    } ?: SelectionActionPlacement.BOTTOM
     var content by remember { mutableStateOf<GalleryContent?>(null) }
     var refreshing by remember { mutableStateOf(false) }
     var openFolder by remember { mutableStateOf<MediaFolder?>(null) }
@@ -1134,7 +1143,7 @@ fun GalleryScreen(
             minTileSize = appSettings.gridSize.minTileDp.dp,
             sortOrder = appSettings.sortOrder,
             gridSize = appSettings.gridSize,
-            selectionActionPlacement = appSettings.selectionActionPlacement,
+            selectionActionPlacement = selectionPlacement,
             onSortOrderChange = { SettingsRepository.setSortOrder(it) },
             onGridSizeChange = { SettingsRepository.setGridSize(it) },
             isRefreshing = refreshing,
@@ -1225,7 +1234,7 @@ fun GalleryScreen(
                     onToggleFolder = { if (isTopLevel) toggleSelectFolder(it) },
                     minTileSize = appSettings.gridSize.minTileDp.dp,
                     selection = selection,
-                    selectionActionPlacement = appSettings.selectionActionPlacement,
+                    selectionActionPlacement = selectionPlacement,
                     onToggleSelect = { if (isTopLevel) toggleSelect(it) },
                     onSelectAll = { items ->
                         if (isTopLevel) {
@@ -1365,7 +1374,6 @@ fun GalleryScreen(
         // Multi-select action bar + selection mode state. The placement setting
         // decides which edge it animates in from: side rails keep the actions
         // inside a thumb's reach when the phone is held one-handed.
-        val selectionPlacement = appSettings.selectionActionPlacement
         AnimatedVisibility(
             visible = isSelecting,
             enter = when (selectionPlacement) {

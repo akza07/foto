@@ -106,7 +106,7 @@ No custom font family; system default with Material3 defaults. Exact usages:
 - Drawer handle: 40×4dp, 2dp corners, `#A1A1AA` at 40%.
 - Buttons in dialogs: 10dp corners, 44dp tall; CTA tutorial: 12dp corners, 50dp tall; drawer icon wells: 14dp corners, 54dp box.
 - Grid: adaptive columns (`Small` min 88dp / `Medium` 112dp default / `Large` 144dp), 8dp horizontal+vertical spacing, 12dp side padding, top = status-bar + 56dp bar + 12dp, bottom = 12dp + nav-bar (or 68dp bottom bar / 288dp side rail + 12dp + nav-bar in selection).
-- Selection action bar: bottom placement is ~56dp of visible content + nav-bar inset; the default side placement is a 76dp-wide rail (four stacked actions, ~288dp tall) against the chosen edge, 12dp off the edge and above the nav-bar inset. Grids reserve the bar's height + 12dp + nav-bar while selecting so the last row clears it.
+- Selection action bar: bottom placement is ~56dp of visible content + nav-bar inset; the default side placement is a 76dp-wide rail (four stacked actions) against the chosen physical edge, 12dp off the edge and above the nav-bar inset. Windows shorter than 600dp (landscape phones) fall back to the bottom bar. Grids reserve the bar's height (68dp bottom / up to 288dp for the rail, sized to cover large font scales) + 12dp + nav-bar while selecting so the last row clears it.
 - Headers: 56dp tall + status-bar padding; header horizontal padding 20dp (Albums), 4dp (album/search/settings/folders/trash inner row) + 8dp start inset for viewer top bar.
 
 ### 3.4 Edge-to-edge & system bars
@@ -248,7 +248,7 @@ No custom font family; system default with Material3 defaults. Exact usages:
 - Loading (`null`): centered white spinner.
 - Empty library: centered “No media found” 14sp muted, inside a scrollable `LazyColumn` so pull-to-refresh still works.
 - Pull-to-refresh: drag down anywhere at the top; indicator sits below the frosted header (see §4.11).
-- Deletes animate reflow + a 180ms fade; grid bottom reserves 68dp when the compact selection bar is visible so the last row clears it.
+- Deletes animate reflow + a 180ms fade; grid bottom reserves 68dp for the bottom bar, or up to 288dp for a side rail, while the selection bar is visible so the last row clears it.
 
 ---
 
@@ -407,7 +407,7 @@ Real playback via single ExoPlayer per viewer session (no per-page players). Aud
 
 **Tile visuals:** badge top-start 8dp (z 2) 24dp circle: selected = white + 14dp `#09090B` Check (“Selected”); unselected = black 50% + 1dp white border hollow. Unselected tiles dim black 40%. No ripple in selection.
 
-**Action bar (edge chosen in Settings → Display → Selection actions, right side by default):** a compact vertical rail hugging the left or right edge, 76dp wide, `#09090B`, 16dp corners and 12dp elevation, 12dp off the edge and above the nav-bar inset. Four actions stacked Delete / Copy / Move / Share, each a full-width 10dp-round clickable with 4dp/8dp padding: 22dp white icon + 3dp gap + 11sp Medium muted label. Taps that land between the actions are swallowed so they cannot toggle a tile hidden behind the rail. The `Bottom` option keeps the original full-width bar: single row 16dp/4dp `SpaceEvenly`, same action cells, nav-bar padding. The selection count and Close live only in the top header, so the bar stays short and leaves more grid visible.
+**Action bar (edge chosen in Settings → Display → Selection actions, right side by default):** a compact vertical rail hugging the left or right physical edge (RTL does not mirror it), 76dp wide, `#09090B`, 16dp corners and 12dp elevation, 12dp off the edge and above the nav-bar inset. Four actions stacked Delete / Copy / Move / Share, each a full-width 10dp-round clickable with 4dp/8dp padding: 22dp white icon + 3dp gap + 11sp Medium muted label. Taps that land between the actions are swallowed so they cannot toggle a tile hidden behind the rail. Windows shorter than 600dp (landscape phones, short split-screen) keep the original full-width bar instead, since a rail would fill the screen: single row 16dp/4dp `SpaceEvenly`, same action cells, nav-bar padding. The selection count and Close live only in the top header, so the bar stays short and leaves more grid visible.
 
 **Behaviors:** Delete → system trash request for MediaStore items, private trash for SAF documents (in-app confirm for the latter) → Undo. Single SAF deletes show a blocking “Deleting…” spinner; bulk deletes show the blocking “Deleting items…” progress modal (see §4.5). Pull down on the root Albums grid or an album grid to reload media and previews; the indicator sits below the frosted header and stays at least 300ms. Selection chrome animates: header cross-fades, badges fade+scale in, action bar slides in from its configured edge (up from the bottom, or in from the left/right). Copy/Move → system directory picker (SAF) + busy overlay (“Copying/Moving N items…”) → toasts (“Copied/Moved N items” or partial “Moved X, copied Y”). Share → chooser with grants.
 

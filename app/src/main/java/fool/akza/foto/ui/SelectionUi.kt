@@ -27,6 +27,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.AbsoluteAlignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -76,19 +77,29 @@ val SelectionState.itemCount: Int
 internal val SelectionBottomBarHeight = 68.dp
 
 /**
- * Height of the side rail (four stacked actions + padding), measured including
- * the label line box. Grids reserve it at the end of the list.
+ * Height of the side rail (four stacked actions + padding). Generous on purpose:
+ * the label line box grows with the font scale, and the grids reserve this much
+ * at the end of the list so the last row always scrolls clear of the rail.
  */
 internal val SelectionRailHeight = 288.dp
 
 /** Width of the side rail. Kept narrow so it covers as little grid as possible. */
 internal val SelectionRailWidth = 76.dp
 
+/**
+ * Minimum window height for the side rail. On a landscape phone a ~288dp rail
+ * would fill the screen and its reserved end space would leave almost no grid,
+ * so short windows keep the original bottom bar.
+ */
+internal val SelectionRailMinWindowHeight = 600.dp
+
 /** Where the selection bar is anchored for a given placement. */
 internal fun SelectionActionPlacement.anchor(): Alignment = when (this) {
     SelectionActionPlacement.BOTTOM -> Alignment.BottomCenter
-    SelectionActionPlacement.LEFT -> Alignment.BottomStart
-    SelectionActionPlacement.RIGHT -> Alignment.BottomEnd
+    // Absolute (not Start/End) so the rail stays on the physical side the user
+    // picked, and slides in from that side, even under an RTL layout.
+    SelectionActionPlacement.LEFT -> AbsoluteAlignment.BottomLeft
+    SelectionActionPlacement.RIGHT -> AbsoluteAlignment.BottomRight
 }
 
 /**
