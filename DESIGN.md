@@ -197,7 +197,7 @@ No custom font family; system default with Material3 defaults. Exact usages:
 - Tapping a chip brings its full pill back (and keeps it up); tapping a full pill tucks it away again. A chip's accessibility label is “<label>, N of M files done. Tap to see progress.”; while collapsed the (invisible) pill row's semantics are cleared so a screen reader hears only the chip.
 - Both phases disappear when the work is done (fade over 140ms), and the next pass starts expanded again after fading in from 24dp above (260ms).
 - **The count moves continuously and the end is stated:** progress is published at most every 100ms (time-based, not every 25 files), so the count climbs instead of jumping; and a finished pass holds for 1.6s with a white `Check` glyph and its final `done/total` before fading — both rows independently, so one can hold a check while the other still spins. The final publish happens after the last write transaction, so “done” never arrives while the index is still half-written. A pass that ends must not look like a pass that gave up: both stores keep their last counts published, so the check reports exactly what completed. No percentage is shown: the total can grow while discovery is running, so a percentage would jump backwards; the count is the only progress readout.
-- Suppressed while the search screen is open: that screen reports the same work inline (see §8).
+- Suppressed while the search screen is open (that screen reports the same work inline, see §8) and while Settings is open (its Storage rows report it, see §6), so the pill never floats over a screen that already says the same thing.
 
 ### 4.11 Pull-to-refresh
 

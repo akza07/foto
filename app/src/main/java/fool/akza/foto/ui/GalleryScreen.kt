@@ -1756,9 +1756,9 @@ fun GalleryScreen(
 
         // Background-work indicator, positioned once at the root so it covers
         // both the Albums grid and the open album grid. The search screen reports
-        // the same work inline (with its own notice), so the indicator stays out
-        // of its way.
-        if (!showSearch) {
+        // the same work inline (with its own notice) and Settings reports it in
+        // its Storage rows, so the pill stays out of the way of both.
+        if (!showSearch && !showSettings) {
             BackgroundWorkIndicator(modifier = Modifier.fillMaxSize())
         }
     }
