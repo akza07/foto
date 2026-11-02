@@ -316,7 +316,11 @@ fun GalleryScreen(
         placement == SelectionActionPlacement.BOTTOM ||
             windowHeightDp >= SelectionRailMinWindowHeight
     } ?: SelectionActionPlacement.BOTTOM
-    var content by remember { mutableStateOf<GalleryContent?>(null) }
+    // Seeded with the snapshot prefetched in `MainActivity` (the disk read
+    // started before this composition), so a returning launch paints the last
+    // library on the very first frame; the effect below is only the fallback for
+    // a first run / a prefetch that has not landed yet.
+    var content by remember { mutableStateOf(GallerySnapshot.prefetched()) }
     var refreshing by remember { mutableStateOf(false) }
     var openFolder by remember { mutableStateOf<MediaFolder?>(null) }
     var directoryStack by remember { mutableStateOf<List<DirectoryLevel>>(emptyList()) }
@@ -505,7 +509,10 @@ fun GalleryScreen(
         )
         GallerySnapshot.write(
             context,
-            GalleryContent(
+            // `copy` keeps the timeline items the scan just returned: without
+            // them the next launch would start the default Photos tab empty and
+            // only fill in once MediaStore answers.
+            loaded.copy(
                 folders = levels.directories.map { it.folder },
                 looseItems = levels.rootItems,
             ),
@@ -518,9 +525,10 @@ fun GalleryScreen(
         }
     }
 
-    // Paint the last album grid immediately: a returning launch should not wait
-    // for MediaStore to answer before showing albums whose previews are already
-    // cached on disk. The real load below replaces this snapshot moments later.
+    // Paint the last gallery immediately (when the prefetch above did not land
+    // before the first composition): a returning launch should not wait for
+    // MediaStore to answer before showing albums and photos whose previews are
+    // already cached on disk. The real load replaces this snapshot moments later.
     LaunchedEffect(Unit) {
         if (content == null) {
             GallerySnapshot.read(context)?.let { cached ->
@@ -2148,6 +2156,43 @@ private fun TimelineGrid(
     }
 }
 
+/**
+ * The launch/refresh placeholder shown while the library has nothing to paint
+ * yet. Shared by the timeline, the albums grid and the "nothing loaded" case so
+ * every empty-but-loading state looks the same.
+ */
+@Composable
+private fun GalleryLoading() {
+    Box(
+        modifier = Modifier.fillMaxSize(),
+        contentAlignment = Alignment.Center,
+    ) {
+        CircularProgressIndicator(
+            modifier = Modifier.align(Alignment.Center),
+            color = TextPrimary,
+        )
+    }
+}
+
+/** Centered "no media" label for a library that really is empty. */
+@Composable
+private fun NoMediaMessage() {
+    LazyColumn(modifier = Modifier.fillMaxSize()) {
+        item {
+            Box(
+                modifier = Modifier.fillParentMaxSize(),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text = stringResource(R.string.no_media_found),
+                    color = TextMuted,
+                    fontSize = 14.sp,
+                )
+            }
+        }
+    }
+}
+
 @Composable
 private fun MainGalleryGrid(
     content: GalleryContent?,
@@ -2299,38 +2344,13 @@ private fun MainGalleryGrid(
                 label = "rootTabContent",
             ) { targetTab ->
             when {
-                current == null -> {
-                    Box(
-                        modifier = Modifier.fillMaxSize(),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.align(Alignment.Center),
-                            color = TextPrimary,
-                        )
-                    }
-                }
+                current == null -> GalleryLoading()
                 targetTab == RootTab.PHOTOS -> {
                     val timelineItems = remember(current.allItems, sortOrder) {
                         current.allItems.sortedWith(itemComparator(sortOrder))
                     }
-                    if (timelineItems.isEmpty()) {
-                        LazyColumn(modifier = Modifier.fillMaxSize()) {
-                            item {
-                                Box(
-                                    modifier = Modifier.fillParentMaxSize(),
-                                    contentAlignment = Alignment.Center,
-                                ) {
-                                    Text(
-                                        text = stringResource(R.string.no_media_found),
-                                        color = TextMuted,
-                                        fontSize = 14.sp,
-                                    )
-                                }
-                            }
-                        }
-                    } else {
-                        TimelineGrid(
+                    when {
+                        timelineItems.isNotEmpty() -> TimelineGrid(
                             items = timelineItems,
                             selection = selection,
                             selectionActionPlacement = selectionActionPlacement,
@@ -2343,24 +2363,16 @@ private fun MainGalleryGrid(
                             onTilePositioned = onTilePositioned,
                             onTileDisposed = onTileDisposed,
                         )
+                        // A snapshot written before the timeline preview existed
+                        // (or whose preview was dropped) has no Photos items yet
+                        // while the scan is still running: show the spinner
+                        // rather than claiming the library is empty.
+                        current.provisional -> GalleryLoading()
+                        else -> NoMediaMessage()
                     }
                 }
-                current.folders.isEmpty() && current.looseItems.isEmpty() -> {
-                    LazyColumn(modifier = Modifier.fillMaxSize()) {
-                        item {
-                            Box(
-                                modifier = Modifier.fillParentMaxSize(),
-                                contentAlignment = Alignment.Center,
-                            ) {
-                                Text(
-                                    text = stringResource(R.string.no_media_found),
-                                    color = TextMuted,
-                                    fontSize = 14.sp,
-                                )
-                            }
-                        }
-                    }
-                }
+                current.folders.isEmpty() && current.looseItems.isEmpty() ->
+                    if (current.provisional) GalleryLoading() else NoMediaMessage()
                 else -> {
                     LazyVerticalGrid(
                         state = gridState,

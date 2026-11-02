@@ -20,6 +20,7 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import fool.akza.foto.data.GalleryEvents
+import fool.akza.foto.data.GallerySnapshot
 import fool.akza.foto.data.SettingsRepository
 import fool.akza.foto.data.thumbnails.SyncCoordinator
 import fool.akza.foto.data.thumbnails.ThumbCache
@@ -28,7 +29,12 @@ import fool.akza.foto.ui.LocalWindowInsetsGuard
 import fool.akza.foto.ui.PermissionGate
 import fool.akza.foto.ui.WindowInsetsGuard
 import fool.akza.foto.ui.theme.FotoTheme
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
     private lateinit var syncCoordinator: SyncCoordinator
@@ -38,6 +44,9 @@ class MainActivity : ComponentActivity() {
 
     /** A media Uri handed to us by another app (VIEW/SEND), consumed by the UI. */
     private val pendingOpenUri = MutableStateFlow<Uri?>(null)
+
+    /** Off-main-thread scope for the launch snapshot prefetch. */
+    private val snapshotScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -63,6 +72,11 @@ class MainActivity : ComponentActivity() {
         // Set up the Coil image-loader-backed thumbnail cache before any Compose
         // code runs so the first gallery frame can already hit it.
         ThumbCache.init(this)
+
+        // Start reading the last gallery off disk before the composition is
+        // built, so the gallery's first frame can already show it instead of a
+        // spinner. The read is a few tens of KB of tab-separated records.
+        snapshotScope.launch { GallerySnapshot.prefetch(this@MainActivity) }
 
         // Media handed over by another app at launch.
         pendingOpenUri.value = extractOpenUri(intent)
@@ -127,6 +141,7 @@ class MainActivity : ComponentActivity() {
         if (::syncCoordinator.isInitialized) {
             syncCoordinator.stop(this)
         }
+        snapshotScope.cancel()
         ThumbCache.shutdown()
         super.onDestroy()
     }

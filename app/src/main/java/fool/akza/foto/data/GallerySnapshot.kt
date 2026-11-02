@@ -46,6 +46,26 @@ object GallerySnapshot {
      */
     private const val MaxRecentItems = 150
 
+    /**
+     * The snapshot read before the first composition, so the gallery's initial
+     * state is already populated instead of flashing the spinner for the frame
+     * or two the disk read takes. Process-scoped and written once at launch.
+     */
+    @Volatile private var prefetchedContent: GalleryContent? = null
+
+    /**
+     * Reads the snapshot off the main thread ahead of [GalleryScreen]'s first
+     * composition (called from `MainActivity.onCreate`). Safe to call more than
+     * once — the first result wins, and a missing file simply leaves it null.
+     */
+    suspend fun prefetch(context: Context) {
+        if (prefetchedContent != null) return
+        prefetchedContent = read(context)
+    }
+
+    /** The [prefetch]ed snapshot, or null when it has not finished (or failed). */
+    fun prefetched(): GalleryContent? = prefetchedContent
+
     /** The previous albums grid, or null on first run / after a format change. */
     suspend fun read(context: Context): GalleryContent? = withContext(Dispatchers.IO) {
         val file = file(context)
@@ -80,30 +100,40 @@ object GallerySnapshot {
         }
     }
 
-    /** Writes the albums grid; best effort, never throws into the caller. */
+    /** Writes the albums grid and timeline preview; best effort, never throws. */
     suspend fun write(context: Context, content: GalleryContent) = withContext(Dispatchers.IO) {
-        if (content.folders.isEmpty() && content.looseItems.isEmpty()) return@withContext
+        if (content.folders.isEmpty() && content.looseItems.isEmpty() &&
+            content.allItems.isEmpty()
+        ) {
+            return@withContext
+        }
+        // The Photos timeline is the default tab, so a snapshot without its
+        // items would start the next launch on "No media found". The caller is
+        // supposed to pass the loaded content through (`copy`), timeline
+        // included; log it so a future caller that drops it is not silent.
+        if (content.allItems.isEmpty() && content.folders.isNotEmpty()) {
+            AppLog.w("snapshot: written without timeline items; Photos would start empty")
+        }
         try {
             val file = file(context)
-            val tmp = File(file.parentFile, "${file.name}.tmp")
-            tmp.bufferedWriter().use { out ->
-                out.write(VERSION)
-                out.write("\n")
-                content.folders.forEach { folder ->
-                    out.write(encodeFolder(folder.toRecord()))
-                    out.write("\n")
-                }
-                content.looseItems.forEach { item ->
-                    out.write(encodeItem(item.toRecord()))
-                    out.write("\n")
-                }
+            val text = encodeContent(
+                folders = content.folders.map { it.toRecord() },
+                loose = content.looseItems.map { it.toRecord() },
                 // The first screen of the timeline, in the current sort order.
-                content.allItems.take(MaxRecentItems).forEach { item ->
-                    out.write("$RECENT$SEP" + encodeItem(item.toRecord()).removePrefix("$ITEM$SEP"))
-                    out.write("\n")
-                }
+                timeline = content.allItems.take(MaxRecentItems).map { it.toRecord() },
+            )
+            val tmp = File(file.parentFile, "${file.name}.tmp")
+            tmp.bufferedWriter().use { out -> out.write(text) }
+            if (!tmp.renameTo(file)) {
+                tmp.delete()
+            } else {
+                // Keep the in-process copy in step with the file, so a rotation
+                // (a fresh composition in a live process) paints the newest grid
+                // instead of the one this process started with.
+                prefetchedContent = content.copy(
+                    allItems = content.allItems.take(MaxRecentItems),
+                )
             }
-            if (!tmp.renameTo(file)) tmp.delete()
         } catch (e: Exception) {
             AppLog.w("snapshot: write failed", e)
         }
@@ -218,6 +248,22 @@ object GallerySnapshot {
             append(encodeItemBody(cover).escape())
             append(',')
         }
+    }
+
+    /**
+     * The whole snapshot document: a version line, then one line per album,
+     * loose file and timeline preview item. Pure so the format (and the fact
+     * that the Photos timeline is part of it) is unit testable.
+     */
+    internal fun encodeContent(
+        folders: List<FolderRecord>,
+        loose: List<ItemRecord>,
+        timeline: List<ItemRecord> = emptyList(),
+    ): String = buildString {
+        append(VERSION).append('\n')
+        folders.forEach { append(encodeFolder(it)).append('\n') }
+        loose.forEach { append(encodeItem(it)).append('\n') }
+        timeline.forEach { append(RECENT).append(SEP).append(encodeItemBody(it)).append('\n') }
     }
 
     internal fun encodeItem(item: ItemRecord): String = "$ITEM$SEP" + encodeItemBody(item)

@@ -87,6 +87,25 @@ class GallerySnapshotTest {
         assertEquals(record(), GallerySnapshot.decodeItem(encoded))
     }
 
+    /**
+     * The documented snapshot includes the Photos timeline. It once did not: the
+     * writer was never handed the item list, so every launch started the default
+     * tab empty until MediaStore answered.
+     */
+    @Test
+    fun `written snapshot carries the Photos timeline`() {
+        val recent = record("recent.jpg", "content://media/external/images/media/9")
+        val text = GallerySnapshot.encodeContent(
+            folders = listOf(folder()),
+            loose = emptyList(),
+            timeline = listOf(recent),
+        )
+        assertEquals("1", text.lines().first())
+        assertTrue(text.lines().any { it.startsWith("F\t") })
+        val timelineLine = text.lines().first { it.startsWith("R\t") }
+        assertEquals(recent, GallerySnapshot.decodeItem(timelineLine))
+    }
+
     @Test
     fun `corrupt lines are ignored instead of throwing`() {
         assertNull(GallerySnapshot.decodeFolder("F\tonly-two"))
