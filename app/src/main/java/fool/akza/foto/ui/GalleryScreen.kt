@@ -27,7 +27,6 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -50,6 +49,8 @@ import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.foundation.selection.toggleable
@@ -95,7 +96,6 @@ import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.input.pointer.PointerEventPass
-import androidx.compose.ui.input.pointer.PointerInputScope
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
@@ -181,56 +181,6 @@ import java.util.Locale
 
 private val TileShape = RoundedCornerShape(12.dp)
 private val GridSpacing = 8.dp
-
-/** Horizontal travel that switches the root tab (Photos ↔ Albums). */
-private val TabSwipeThreshold = 56.dp
-
-/**
- * Tracks a single-finger horizontal drag and fires [onSwipeLeft] / [onSwipeRight]
- * once it travels past [threshold] px. It only observes: nothing is consumed, so
- * the grid keeps its vertical scroll and tiles keep their taps and glides.
- *
- * Past touch slop the gesture must be at least twice as horizontal as it is
- * vertical — a diagonal or vertical scroll is left entirely alone — and a second
- * finger abandons the drag, so a pinch or a glide can never switch tabs.
- */
-private suspend fun PointerInputScope.detectHorizontalSwipe(
-    threshold: Float,
-    onSwipeLeft: () -> Unit,
-    onSwipeRight: () -> Unit,
-) {
-    val touchSlop = viewConfiguration.touchSlop
-    awaitEachGesture {
-        val down = awaitFirstDown(
-            requireUnconsumed = false,
-            pass = PointerEventPass.Initial,
-        )
-        var totalDx = 0f
-        var totalDy = 0f
-        var axisDecided = false
-        while (true) {
-            val event = awaitPointerEvent(PointerEventPass.Initial)
-            if (event.changes.count { it.pressed } >= 2) return@awaitEachGesture
-            val drag = event.changes.firstOrNull { it.id == down.id } ?: return@awaitEachGesture
-            totalDx += drag.position.x - drag.previousPosition.x
-            totalDy += drag.position.y - drag.previousPosition.y
-
-            if (!axisDecided && kotlin.math.hypot(totalDx, totalDy) > touchSlop) {
-                if (kotlin.math.abs(totalDx) < kotlin.math.abs(totalDy) * 2f) {
-                    return@awaitEachGesture
-                }
-                axisDecided = true
-            }
-            if (axisDecided && kotlin.math.abs(totalDx) >= threshold) {
-                if (totalDx < 0f) onSwipeLeft() else onSwipeRight()
-                // One tab change per gesture; awaitEachGesture waits for the
-                // pointers to lift before the next gesture can start.
-                return@awaitEachGesture
-            }
-            if (!drag.pressed) return@awaitEachGesture
-        }
-    }
-}
 
 /** A viewer item removed by a pending delete, with its index for a slide-back Undo. */
 private data class ViewerUndo(val item: MediaItem, val index: Int)
@@ -1875,6 +1825,8 @@ private fun SelectionHeader(
 private fun RootTabsHeader(
     tab: RootTab,
     onTabChange: (RootTab) -> Unit,
+    /** Live pager position between the tabs, 0 = Photos, 1 = Albums. */
+    tabFraction: Float = if (tab == RootTab.PHOTOS) 0f else 1f,
     sortOrder: MediaSort,
     gridSize: GridSize,
     onSortOrderChange: (MediaSort) -> Unit,
@@ -1890,11 +1842,9 @@ private fun RootTabsHeader(
         val haptics = LocalHapticFeedback.current
         val segmentWidth = 76.dp
         val photosSelected = tab == RootTab.PHOTOS
-        val indicatorOffset by animateDpAsState(
-            targetValue = if (photosSelected) 0.dp else segmentWidth,
-            animationSpec = tween(240, easing = FastOutSlowInEasing),
-            label = "rootTabIndicator",
-        )
+        // Driven by the pager offset, not by a tween: while a swipe is in flight
+        // the pill sits between the two labels, 1:1 with the finger.
+        val indicatorOffset = segmentWidth * tabFraction
         Box(
             modifier = Modifier
                 .clip(RoundedCornerShape(12.dp))
@@ -2283,6 +2233,26 @@ private fun MainGalleryGrid(
 ) {
     val gridState = rememberLazyGridState()
     val timelineGridState = rememberLazyGridState()
+    // Root tabs as a pager: a swipe moves the neighbour in 1:1 with the finger.
+    val tabPagerState = rememberPagerState(initialPage = tab.ordinal) { RootTab.entries.size }
+    // Tapping the header pill scrolls the pager to that tab (animated, so the
+    // drag-tracking indicator glides along with it).
+    LaunchedEffect(tab) {
+        if (tabPagerState.currentPage != tab.ordinal) {
+            tabPagerState.animateScrollToPage(tab.ordinal)
+        }
+    }
+    // A swipe that settles on the other page reports back, so everything keyed on
+    // the tab (header state, select-all scope, selection rail) follows it.
+    LaunchedEffect(tabPagerState.settledPage) {
+        val settled = RootTab.entries[tabPagerState.settledPage]
+        if (settled != tab) onTabChange(settled)
+    }
+    // Live 0..1 position of the pager, fed to the header pill so it tracks the
+    // finger instead of jumping on settle.
+    val tabFraction =
+        (tabPagerState.currentPage + tabPagerState.currentPageOffsetFraction)
+            .coerceIn(0f, (RootTab.entries.size - 1).toFloat())
     val currentContent by rememberUpdatedState(content)
     val glideItemState by rememberUpdatedState(onGlideItem)
     val glideFolderState by rememberUpdatedState(onGlideFolder)
@@ -2369,6 +2339,7 @@ private fun MainGalleryGrid(
                     } else {
                         RootTabsHeader(
                             tab = tab,
+                            tabFraction = tabFraction,
                             onTabChange = onTabChange,
                             sortOrder = sortOrder,
                             gridSize = gridSize,
@@ -2389,36 +2360,22 @@ private fun MainGalleryGrid(
         ) {
             val current = content
             val statusBarTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
-            AnimatedContent(
-                targetState = tab,
-                transitionSpec = {
-                    (fadeIn(tween(220)) +
-                        slideInHorizontally(tween(260, easing = FastOutSlowInEasing)) {
-                            if (targetState == RootTab.PHOTOS) -it / 12 else it / 12
-                        }) togetherWith fadeOut(tween(140))
-                },
-                modifier = Modifier
-                    .fillMaxSize()
-                    // A left/right swipe over the root grid moves to the
-                    // neighbouring tab (Photos ↔ Albums). Only observes: the grid
-                    // keeps its vertical scroll, and taps/glides are untouched.
-                    .pointerInput(tab, tabSwipeEnabled, selection.active) {
-                        if (!tabSwipeEnabled || selection.active) return@pointerInput
-                        detectHorizontalSwipe(
-                            threshold = TabSwipeThreshold.toPx(),
-                            onSwipeLeft = {
-                                if (tab == RootTab.PHOTOS) onTabChange(RootTab.ALBUMS)
-                            },
-                            onSwipeRight = {
-                                if (tab == RootTab.ALBUMS) onTabChange(RootTab.PHOTOS)
-                            },
-                        )
-                    },
-                label = "rootTabContent",
-            ) { targetTab ->
+            // The two root views are pages of a pager, so a swipe drags the next
+            // view in 1:1 with the finger (the header pill reads the same offset)
+            // instead of playing a cross-fade after the gesture ends.
+            HorizontalPager(
+                state = tabPagerState,
+                modifier = Modifier.fillMaxSize(),
+                // Off while a swipe must not change the view: selection mode, an
+                // open album level, Settings/Search/Insights.
+                userScrollEnabled = tabSwipeEnabled && !selection.active,
+                // Compose the neighbour ahead of the drag, so the first frame of
+                // a swipe already has real content to slide in.
+                beyondViewportPageCount = 1,
+            ) { page ->
             when {
                 current == null -> GalleryLoading()
-                targetTab == RootTab.PHOTOS -> {
+                page == RootTab.PHOTOS.ordinal -> {
                     val timelineItems = remember(current.allItems, sortOrder) {
                         current.allItems.sortedWith(itemComparator(sortOrder))
                     }
