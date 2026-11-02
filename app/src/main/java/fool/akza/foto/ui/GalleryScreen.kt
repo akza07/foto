@@ -95,6 +95,7 @@ import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.PointerInputScope
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
@@ -180,6 +181,56 @@ import java.util.Locale
 
 private val TileShape = RoundedCornerShape(12.dp)
 private val GridSpacing = 8.dp
+
+/** Horizontal travel that switches the root tab (Photos ↔ Albums). */
+private val TabSwipeThreshold = 56.dp
+
+/**
+ * Tracks a single-finger horizontal drag and fires [onSwipeLeft] / [onSwipeRight]
+ * once it travels past [threshold] px. It only observes: nothing is consumed, so
+ * the grid keeps its vertical scroll and tiles keep their taps and glides.
+ *
+ * Past touch slop the gesture must be at least twice as horizontal as it is
+ * vertical — a diagonal or vertical scroll is left entirely alone — and a second
+ * finger abandons the drag, so a pinch or a glide can never switch tabs.
+ */
+private suspend fun PointerInputScope.detectHorizontalSwipe(
+    threshold: Float,
+    onSwipeLeft: () -> Unit,
+    onSwipeRight: () -> Unit,
+) {
+    val touchSlop = viewConfiguration.touchSlop
+    awaitEachGesture {
+        val down = awaitFirstDown(
+            requireUnconsumed = false,
+            pass = PointerEventPass.Initial,
+        )
+        var totalDx = 0f
+        var totalDy = 0f
+        var axisDecided = false
+        while (true) {
+            val event = awaitPointerEvent(PointerEventPass.Initial)
+            if (event.changes.count { it.pressed } >= 2) return@awaitEachGesture
+            val drag = event.changes.firstOrNull { it.id == down.id } ?: return@awaitEachGesture
+            totalDx += drag.position.x - drag.previousPosition.x
+            totalDy += drag.position.y - drag.previousPosition.y
+
+            if (!axisDecided && kotlin.math.hypot(totalDx, totalDy) > touchSlop) {
+                if (kotlin.math.abs(totalDx) < kotlin.math.abs(totalDy) * 2f) {
+                    return@awaitEachGesture
+                }
+                axisDecided = true
+            }
+            if (axisDecided && kotlin.math.abs(totalDx) >= threshold) {
+                if (totalDx < 0f) onSwipeLeft() else onSwipeRight()
+                // One tab change per gesture; awaitEachGesture waits for the
+                // pointers to lift before the next gesture can start.
+                return@awaitEachGesture
+            }
+            if (!drag.pressed) return@awaitEachGesture
+        }
+    }
+}
 
 /** A viewer item removed by a pending delete, with its index for a slide-back Undo. */
 private data class ViewerUndo(val item: MediaItem, val index: Int)
@@ -1382,6 +1433,10 @@ fun GalleryScreen(
             onGridSizeChange = { SettingsRepository.setGridSize(it) },
             isRefreshing = refreshing,
             onRefresh = refresh,
+            // A swipe only switches tabs on the root surface itself: not while a
+            // folder level, selection or a full-screen panel is on top.
+            tabSwipeEnabled = directoryStack.isEmpty() &&
+                !showSettings && !showSearch && !showInsights,
             selection = selection,
             onToggleSelect = { if (directoryStack.isEmpty()) toggleSelect(it) },
             onToggleFolder = { if (directoryStack.isEmpty()) toggleSelectFolder(it) },
@@ -2221,6 +2276,8 @@ private fun MainGalleryGrid(
     onGridSizeChange: (GridSize) -> Unit = {},
     isRefreshing: Boolean = false,
     onRefresh: () -> Unit = {},
+    /** Whether a horizontal swipe switches tabs (off behind overlays/albums). */
+    tabSwipeEnabled: Boolean = true,
     insights: AttentionTile? = null,
     onInsightsClick: () -> Unit = {},
 ) {
@@ -2340,7 +2397,23 @@ private fun MainGalleryGrid(
                             if (targetState == RootTab.PHOTOS) -it / 12 else it / 12
                         }) togetherWith fadeOut(tween(140))
                 },
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier
+                    .fillMaxSize()
+                    // A left/right swipe over the root grid moves to the
+                    // neighbouring tab (Photos ↔ Albums). Only observes: the grid
+                    // keeps its vertical scroll, and taps/glides are untouched.
+                    .pointerInput(tab, tabSwipeEnabled, selection.active) {
+                        if (!tabSwipeEnabled || selection.active) return@pointerInput
+                        detectHorizontalSwipe(
+                            threshold = TabSwipeThreshold.toPx(),
+                            onSwipeLeft = {
+                                if (tab == RootTab.PHOTOS) onTabChange(RootTab.ALBUMS)
+                            },
+                            onSwipeRight = {
+                                if (tab == RootTab.ALBUMS) onTabChange(RootTab.PHOTOS)
+                            },
+                        )
+                    },
                 label = "rootTabContent",
             ) { targetTab ->
             when {

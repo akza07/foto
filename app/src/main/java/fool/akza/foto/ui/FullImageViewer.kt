@@ -179,19 +179,20 @@ internal suspend fun PointerInputScope.detectMultiTouch(
 }
 
 /**
- * Tracks a single-finger vertical drag and fires [onSwipeUp] / [onSwipeDown] once
- * it travels past [threshold] px in either direction. The drag is abandoned the
- * instant a second finger lands, so a two-finger pinch can never reveal the chrome
- * or dismiss the viewer.
+ * Tracks a single-finger vertical drag and fires [onSwipeDown] once it travels
+ * past [threshold] px downwards. An upward drag has no action of its own: it is
+ * consumed and drained like any vertical gesture, so it neither pages nor
+ * reveals anything, it simply does nothing. The drag is abandoned the instant a
+ * second finger lands, so a two-finger pinch can never dismiss the viewer.
  *
  * Once past touch slop, only a gesture at least [VerticalGestureRatio] times
  * more vertical than horizontal counts as vertical. Everything else is left to
  * the pager. Vertical consumes both axes and drains the rest of the gesture, so
- * an angled swipe can never slide the page and reveal the chrome at the same time.
+ * an angled swipe can never slide the page and dismiss the viewer at the same
+ * time.
  */
 internal suspend fun PointerInputScope.detectVerticalSwipe(
     threshold: Float,
-    onSwipeUp: () -> Unit,
     onSwipeDown: () -> Unit,
 ) {
     val touchSlop = viewConfiguration.touchSlop
@@ -231,72 +232,23 @@ internal suspend fun PointerInputScope.detectVerticalSwipe(
             }
 
             if (vertical) {
-                if (totalDy <= -threshold) {
-                    onSwipeUp()
-                    // The chrome reveals mid-gesture. Keep consuming the rest of
-                    // this pointer stream so the pager cannot page with the
-                    // leftover diagonal movement.
+                if (totalDy >= threshold) {
+                    onSwipeDown()
                     drag.consume()
                     drainUntilUp(down.id)
                     return@awaitEachGesture
-                } else if (totalDy >= threshold) {
-                    onSwipeDown()
+                }
+                if (totalDy <= -threshold) {
+                    // Swipe up has no action, but the gesture is still the
+                    // viewer's: consume and drain it to the end so it can neither
+                    // page nor be read as a press on the image, and so the next
+                    // gesture starts cleanly instead of being swallowed here.
                     drag.consume()
                     drainUntilUp(down.id)
                     return@awaitEachGesture
                 }
                 drag.consume()
             }
-        }
-    }
-}
-
-/**
- * Tracks a single-finger horizontal drag and fires [onSwipe] once it travels
- * past [threshold] px, **without consuming anything**: the pager owns the slide
- * and must still get every event. This is the observer that lets a left/right
- * page swipe also flip the chrome, the way a tap does.
- *
- * A gesture that is not clearly horizontal is left alone (the vertical detector
- * handles reveal/dismiss), and the drag is abandoned the instant a second finger
- * lands so a pinch never toggles the chrome.
- */
-internal suspend fun PointerInputScope.detectHorizontalSwipe(
-    threshold: Float,
-    onSwipe: () -> Unit,
-) {
-    val touchSlop = viewConfiguration.touchSlop
-    awaitEachGesture {
-        val down = awaitFirstDown(
-            requireUnconsumed = false,
-            pass = PointerEventPass.Initial,
-        )
-        var totalDx = 0f
-        var totalDy = 0f
-        var axisDecided = false
-        while (true) {
-            val event = awaitPointerEvent(PointerEventPass.Initial)
-            if (event.changes.count { it.pressed } >= 2) return@awaitEachGesture
-            val drag = event.changes.firstOrNull { it.id == down.id } ?: return@awaitEachGesture
-            totalDx += drag.position.x - drag.previousPosition.x
-            totalDy += drag.position.y - drag.previousPosition.y
-
-            if (!axisDecided && kotlin.math.hypot(totalDx, totalDy) > touchSlop) {
-                // Steep drags belong to the vertical detector (reveal / dismiss),
-                // so only a clearly horizontal drag counts as a page swipe here.
-                if (kotlin.math.abs(totalDx) * VerticalGestureRatio < kotlin.math.abs(totalDy)) {
-                    return@awaitEachGesture
-                }
-                axisDecided = true
-            }
-            if (axisDecided && kotlin.math.abs(totalDx) >= threshold) {
-                onSwipe()
-                // One toggle per gesture: the rest of the drag is the pager's.
-                // `awaitEachGesture` waits for the pointers to lift before a new
-                // gesture can start.
-                return@awaitEachGesture
-            }
-            if (!drag.pressed) return@awaitEachGesture
         }
     }
 }
@@ -313,18 +265,18 @@ private suspend fun AwaitPointerEventScope.drainUntilUp(pointerId: androidx.comp
 
 /**
  * Full-image viewer as a horizontal pager.
- * - Swipe left/right: next/previous item (pager slide), and the same swipe flips
- *   the viewer chrome the way a tap does, so browsing stays unobstructed. On video
- *   pages, swiping is locked while the video plays — pause first to navigate.
+ * - Swipe left/right: next/previous item (pager slide). On video pages,
+ *   swiping is locked while the video plays — pause first to navigate.
  * - Images: double-tap zoom, pinch zoom/pan. While two fingers are down,
  *   single-finger gestures yield to pinch-zoom.
  * - Long-press (images + videos): radial action wheel at the finger;
  *   videos offer Delete/Info/Share (no Crop).
- * - Tap an image (or swipe up): frosted action panel. It follows the Selection
- *   actions placement — a floating side rail at ~3/4 height by default, or the bottom
- *   bar when that edge was chosen. Share is omitted entirely when the Allow
- *   sharing setting is off.
- * - Swipe down (at 1x / settled video): dismisses.
+ * - Tap an image: toggles the viewer chrome — the frosted action rail, top bar
+ *   and system bars together. The rail follows the Selection actions placement —
+ *   a floating side rail at ~3/4 height by default, or the bottom bar when that
+ *   edge was chosen. Share is omitted entirely when the Allow sharing setting is
+ *   off.
+ * - Swipe down (at 1x / settled video): dismisses. Swipe up: no action.
  * - Counter pill (top-left): current/total.
  * - Back button (top-left): dismisses.
  */
@@ -493,11 +445,6 @@ fun FullImageViewer(
             imageControlsVisible = false
         }
     }
-    val showChrome = {
-        systemBarsHidden = false
-        showImageControls()
-    }
-
     // True while the current video page is actively playing. While playing,
     // pager swiping is locked so a swipe can never skip to the next item;
     // pausing re-enables it (user decision: swipe navigates only when paused).
@@ -578,11 +525,7 @@ fun FullImageViewer(
             currentPageZoomed = false
         } else {
             videoPlaying = false
-            // Arriving on a photo must not reveal the chrome: the swipe already
-            // decided its state (see `detectHorizontalSwipe`), and forcing it
-            // back on would half-show the UI and fight the toggle. Only re-arm
-            // the auto-hide while the chrome is already on screen.
-            if (imageControlsVisible) showImageControls()
+            showImageControls()
         }
     }
 
@@ -740,12 +683,12 @@ fun FullImageViewer(
                     onMultiTouchEnd = { multiTouchActive = false },
                 )
             }
-            // Vertical drags (at 1x): swipe up -> reveal chrome, swipe down -> dismiss.
-            // Abandoned the instant a second finger joins, so a pinch can't open the
-            // chrome. Re-armed (via key change) once the multi-touch gesture ends.
-            // Applies to images and videos alike: the video pill only covers the
-            // bottom, so a swipe starting on the video surface reaches this
-            // detector cleanly.
+            // Vertical drags (at 1x) only dismiss: swipe down closes the viewer.
+            // Swipe up has no action. Abandoned the instant a second finger joins,
+            // so a pinch can't dismiss. Re-armed (via key change) once the
+            // multi-touch gesture ends. Applies to images and videos alike: the
+            // video pill only covers the bottom, so a swipe starting on the video
+            // surface reaches this detector cleanly.
             .pointerInput(
                 currentPageZoomed,
                 radialPresent,
@@ -760,37 +703,7 @@ fun FullImageViewer(
                 ) {
                     detectVerticalSwipe(
                         threshold = swipeThreshold,
-                        onSwipeUp = {
-                            if (!previewOnly) {
-                                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                                showChrome()
-                            }
-                        },
                         onSwipeDown = { close() },
-                    )
-                }
-            }
-            // Horizontal drags on a photo page flip the whole chrome, exactly
-            // like a tap: a swipe to the next photo is then seen clean, and one
-            // more swipe brings the UI back. The detector only observes (it
-            // never consumes), so the pager still slides. Images only: video
-            // pages keep their own HUD and lock swiping while playing.
-            .pointerInput(
-                currentPageZoomed,
-                currentPageIsVideo,
-                radialPresent,
-                leaving,
-                multiTouchActive,
-                removing,
-                previewOnly,
-                moreMenuVisible,
-            ) {
-                if (!currentPageZoomed && !currentPageIsVideo && !radialPresent && !leaving &&
-                    !multiTouchActive && !removing && !previewOnly && !moreMenuVisible
-                ) {
-                    detectHorizontalSwipe(
-                        threshold = swipeThreshold,
-                        onSwipe = { toggleChrome() },
                     )
                 }
             }

@@ -47,7 +47,7 @@
 - **Skeleton-first loading:** never show empty gaps; show shimmer placeholders while decoding.
 - **Safe deletes:** every delete is undoable. MediaStore files go to Android's system trash (API 30+) — instant, no byte copies. SAF documents (added folders, `.nomedia` content), which have no platform trash, are copied into Foto's private trash first. Both kinds offer Undo.
 - **Non-destructive editing:** crop always writes a new copy beside the original; the source file is never modified.
-- **Strict gesture disambiguation:** viewer swipes lock to one axis; only a steep (≥2:1) vertical drag reveals the viewer chrome, so diagonal swipes page instead of doing both.
+- **Strict gesture disambiguation:** viewer swipes lock to one axis; only a steep (≥2:1) vertical drag is the viewer's own (down dismisses, up does nothing), so diagonal swipes page instead of doing both.
 
 ---
 
@@ -112,7 +112,7 @@ No custom font family; system default with Material3 defaults. Exact usages:
 ### 3.4 Edge-to-edge & system bars
 
 - `windowBackground` black; status/nav bars transparent; light icons (not dark); content draws behind both.
-- Status-bar icon tint is enforced at the window level in `MainActivity` (light icons regardless of the system light/dark theme, because the app is always black). The full-screen viewer toggles both system bars and its own chrome (top bar) with a tap or a left/right page swipe. While the bars are hidden, `WindowInsetsGuard` pins the window's status/navigation insets to their pre-hide values, so the platform's hide/show animation cannot reflow the grid, headers or viewer chrome in the middle of the tile-morph transition.
+- Status-bar icon tint is enforced at the window level in `MainActivity` (light icons regardless of the system light/dark theme, because the app is always black). The full-screen viewer toggles both system bars and its own chrome (top bar) with a tap. While the bars are hidden, `WindowInsetsGuard` pins the window's status/navigation insets to their pre-hide values, so the platform's hide/show animation cannot reflow the grid, headers or viewer chrome in the middle of the tile-morph transition.
 - Every screen insets via status-bar top padding and navigation-bar bottom padding. Frosted bars sit in the status zone; grids/lists add top padding to clear them and scroll underneath.
 - Optional 120Hz: when “Prefer 120Hz” is on and hardware supports >60.5Hz, window prefers 120Hz and root votes 120fps via frame-rate hint; applied live, no restart.
 
@@ -241,8 +241,10 @@ No custom font family; system default with Material3 defaults. Exact usages:
 ### 6.1 Header
 
 - Frosted bar (scrim + blur). Row: status-bar padding + 56dp + 20dp sides, centered vertically.
-- Normal: left “Albums” 28sp SemiBold white −0.5sp tracking (weight 1); right three 24dp white icon buttons: `FilterList` (“Filter”) opens a dark dropdown with “Sort order” and “Grid size” sections (check on the current option), then `Search` (“Search”) and `Settings` (“Settings”).
-- Selection mode (replaces title): left `Close` outlined (“Exit selection”) → exits; 4dp gap + “N selected” 16sp SemiBold white (weight 1); right `SelectAll` outlined (“Select all”) → toggles all. Filter/search/settings are hidden.
+- Root tabs (replaces the title on the home surface): a 12dp-round `Surface`-filled, 1dp `Border` pill holding “Photos” and “Albums” in two 76dp segments with a sliding white indicator (240ms). Tapping either label — or the gap between them — switches view.
+- **Swipe left/right over the grid switches tabs:** a left swipe goes to the next tab (Photos → Albums), a right swipe back to the previous one, and a swipe past the last tab does nothing. Threshold 56dp horizontal, one change per gesture, and the drag must be at least 2× more horizontal than vertical, so vertical scrolling and tile taps/long-press glides are untouched (the detector only observes, it never consumes). Disabled in selection mode and while an album level, Settings, Search or Insights is on top.
+- Right side: three 24dp white icon buttons: `FilterList` (“Filter”) opens a dark dropdown with “Sort order” and “Grid size” sections (check on the current option), then `Search` (“Search”) and `Settings` (“Settings”).
+- Selection mode (replaces the tabs): left `Close` outlined (“Exit selection”) → exits; 4dp gap + “N selected” 16sp SemiBold white (weight 1); right `SelectAll` outlined (“Select all”) → toggles all. Filter/search/settings are hidden.
 
 ### 6.2 Folder stack tile
 
@@ -327,7 +329,7 @@ Sources: (1) the file name; (2) a local SQLite index (`metadata.db`) holding eac
 - Container: status-bar inset + 8dp top/start, 8dp spacing row. The inset is pinned while the bars are hidden, so the row never jumps; behind it a full-width 112dp vertical scrim black 62%→transparent, alpha p×controls.
 - Back: 40dp circle `#09090B` 8dp shadow, 22dp auto-mirrored `ArrowBack` `#FAFAFA` → animated close (disabled when chrome hidden).
 - Counter pill: 50dp round `#09090B` no border, “3/12” 13sp Medium white, 14dp horizontal / 8dp vertical padding.
-- Chrome fades 200ms; images auto-hide 3s after show. A tap — or a left/right page swipe — toggles the whole chrome (top bar, action rail and system bars together, never half of it). Arriving on the next photo never reveals the chrome on its own: the swipe already decided its state. Videos follow the video HUD.
+- Chrome fades 200ms; images auto-hide 3s after show. A tap toggles the whole chrome. Videos follow the video HUD.
 
 ### 9.3 Viewer actions (radial + More card)
 
@@ -338,9 +340,8 @@ Sources: (1) the file name; (2) a local SQLite index (`metadata.db`) holding eac
 
 ### 9.4 Gestures (images)
 
-- **Swipe down (1× only):** dismisses viewer. **Tap:** toggles the whole viewer chrome. **Swipe up:** reveals the chrome when hidden (haptic). Threshold 56dp vertical; single finger; second finger aborts. Once past touch slop, only a gesture at least 2× more vertical than horizontal counts as vertical; everything else is left entirely to the pager. Vertical consumes both axes and drains the rest of the gesture, so a diagonal (e.g. bottom-right → top-left) swipe pages instead of opening the panel, and a vertical swipe never pages. Disabled when zoomed/radial/leaving/multi-touch/removing.
+- **Swipe down (1× only):** dismisses viewer. **Tap:** toggles the whole viewer chrome. **Swipe up:** no action — the drag is consumed so it can never page, but it reveals nothing. Threshold 56dp vertical; single finger; second finger aborts. Once past touch slop, only a gesture at least 2× more vertical than horizontal counts as vertical; everything else is left entirely to the pager. Vertical consumes both axes and drains the rest of the gesture, so a diagonal (e.g. bottom-right → top-left) swipe pages instead of dismissing, and a vertical swipe never pages. Disabled when zoomed/radial/leaving/multi-touch/removing.
 - **Single tap:** toggles chrome. **Double-tap:** if zoomed → animate reset to 1×; else animate to 3× anchored at tap (target offset = (tap−center)×−2), spring `NoBouncy/MediumLow`, cancels fling. Dead during multi-touch.
-- **Swipe left/right:** pages, and toggles the whole chrome like a tap — a swipe to the next photo is then seen clean, and one more swipe brings the UI back. The detector only observes the drag in the Initial pass (it never consumes), so the pager still slides; threshold 56dp horizontal, one toggle per gesture, abandoned on a second finger or a vertical-dominant drag, disabled while zoomed/radial/leaving/multi-touch/removing and on video pages (which own their HUD and lock swiping while playing).
 - **Pinch:** 1–5×, centroid-anchored, pan only when ≠1×, offsets clamped ±W×(scale−1)/2, ±H×(scale−1)/2. 2+ fingers suppress taps/swipes/pager; re-keys input; cancels fling on start/page change.
 - **Momentum:** 1:1 drag; on release if >250px/s and >1.01× → exponential decay (friction 0.6) clamped to bounds.
 - **Long-press anywhere:** radial menu (see §10). **No rotation gesture** (ignored).
@@ -395,7 +396,7 @@ Real playback via single ExoPlayer per viewer session (no per-page players). Aud
 
 **Poster veil + surface:** active page: full-bleed texture (Fit) + black shutter + identical Fit poster veil fading 150ms on first frame (2.5s timeout fades anyway) + entry bridge poster. All inside shared correction layer; HUD outside (never distorts). Memory cache avoids placeholder on re-open.
 
-**Gestures:** single tap on upper area toggles HUD. Double-tap left/right seeks ∓10s + shows HUD. No pinch/double-zoom. Vertical swipes are handled by the host viewer: up reveals the chrome, down dismisses. Pager swipe locked while playing (pause to swipe). Long-press still summons radial (pauses + hides HUD).
+**Gestures:** single tap on upper area toggles HUD. Double-tap left/right seeks ∓10s + shows HUD. No pinch/double-zoom. Vertical swipes are handled by the host viewer: down dismisses, up does nothing. Pager swipe locked while playing (pause to swipe). Long-press still summons radial (pauses + hides HUD).
 
 **Center button:** 56dp circle black 60%, 30dp white Play/Pause, alpha follows HUD; disabled when hidden.
 
