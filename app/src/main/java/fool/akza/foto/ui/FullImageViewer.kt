@@ -251,6 +251,56 @@ internal suspend fun PointerInputScope.detectVerticalSwipe(
     }
 }
 
+/**
+ * Tracks a single-finger horizontal drag and fires [onSwipe] once it travels
+ * past [threshold] px, **without consuming anything**: the pager owns the slide
+ * and must still get every event. This is the observer that lets a left/right
+ * page swipe also flip the chrome, the way a tap does.
+ *
+ * A gesture that is not clearly horizontal is left alone (the vertical detector
+ * handles reveal/dismiss), and the drag is abandoned the instant a second finger
+ * lands so a pinch never toggles the chrome.
+ */
+internal suspend fun PointerInputScope.detectHorizontalSwipe(
+    threshold: Float,
+    onSwipe: () -> Unit,
+) {
+    val touchSlop = viewConfiguration.touchSlop
+    awaitEachGesture {
+        val down = awaitFirstDown(
+            requireUnconsumed = false,
+            pass = PointerEventPass.Initial,
+        )
+        var totalDx = 0f
+        var totalDy = 0f
+        var axisDecided = false
+        while (true) {
+            val event = awaitPointerEvent(PointerEventPass.Initial)
+            if (event.changes.count { it.pressed } >= 2) return@awaitEachGesture
+            val drag = event.changes.firstOrNull { it.id == down.id } ?: return@awaitEachGesture
+            totalDx += drag.position.x - drag.previousPosition.x
+            totalDy += drag.position.y - drag.previousPosition.y
+
+            if (!axisDecided && kotlin.math.hypot(totalDx, totalDy) > touchSlop) {
+                // Steep drags belong to the vertical detector (reveal / dismiss),
+                // so only a clearly horizontal drag counts as a page swipe here.
+                if (kotlin.math.abs(totalDx) * VerticalGestureRatio < kotlin.math.abs(totalDy)) {
+                    return@awaitEachGesture
+                }
+                axisDecided = true
+            }
+            if (axisDecided && kotlin.math.abs(totalDx) >= threshold) {
+                onSwipe()
+                // One toggle per gesture: the rest of the drag is the pager's.
+                // `awaitEachGesture` waits for the pointers to lift before a new
+                // gesture can start.
+                return@awaitEachGesture
+            }
+            if (!drag.pressed) return@awaitEachGesture
+        }
+    }
+}
+
 /** Consume every remaining change for [pointerId] until it lifts. */
 private suspend fun AwaitPointerEventScope.drainUntilUp(pointerId: androidx.compose.ui.input.pointer.PointerId) {
     while (true) {
@@ -263,8 +313,9 @@ private suspend fun AwaitPointerEventScope.drainUntilUp(pointerId: androidx.comp
 
 /**
  * Full-image viewer as a horizontal pager.
- * - Swipe left/right: next/previous item (pager slide). On video pages,
- *   swiping is locked while the video plays — pause first to navigate.
+ * - Swipe left/right: next/previous item (pager slide), and the same swipe flips
+ *   the viewer chrome the way a tap does, so browsing stays unobstructed. On video
+ *   pages, swiping is locked while the video plays — pause first to navigate.
  * - Images: double-tap zoom, pinch zoom/pan. While two fingers are down,
  *   single-finger gestures yield to pinch-zoom.
  * - Long-press (images + videos): radial action wheel at the finger;
@@ -527,7 +578,11 @@ fun FullImageViewer(
             currentPageZoomed = false
         } else {
             videoPlaying = false
-            showImageControls()
+            // Arriving on a photo must not reveal the chrome: the swipe already
+            // decided its state (see `detectHorizontalSwipe`), and forcing it
+            // back on would half-show the UI and fight the toggle. Only re-arm
+            // the auto-hide while the chrome is already on screen.
+            if (imageControlsVisible) showImageControls()
         }
     }
 
@@ -712,6 +767,30 @@ fun FullImageViewer(
                             }
                         },
                         onSwipeDown = { close() },
+                    )
+                }
+            }
+            // Horizontal drags on a photo page flip the whole chrome, exactly
+            // like a tap: a swipe to the next photo is then seen clean, and one
+            // more swipe brings the UI back. The detector only observes (it
+            // never consumes), so the pager still slides. Images only: video
+            // pages keep their own HUD and lock swiping while playing.
+            .pointerInput(
+                currentPageZoomed,
+                currentPageIsVideo,
+                radialPresent,
+                leaving,
+                multiTouchActive,
+                removing,
+                previewOnly,
+                moreMenuVisible,
+            ) {
+                if (!currentPageZoomed && !currentPageIsVideo && !radialPresent && !leaving &&
+                    !multiTouchActive && !removing && !previewOnly && !moreMenuVisible
+                ) {
+                    detectHorizontalSwipe(
+                        threshold = swipeThreshold,
+                        onSwipe = { toggleChrome() },
                     )
                 }
             }
