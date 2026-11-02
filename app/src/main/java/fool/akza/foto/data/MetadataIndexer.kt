@@ -100,18 +100,26 @@ object MetadataIndexer {
 
     private val mutex = Mutex()
 
-    /** Indexes whatever is stale in [items]. Returns the number of files read. */
-    suspend fun sync(context: Context, items: List<MediaItem>): Int {
+    /**
+     * Indexes whatever is stale in [items]. Returns the number of files read.
+     *
+     * [complete] says whether [items] is the whole visible library. A partial list
+     * — the launch snapshot's first screen, which is painted before the real scan
+     * lands — must not prune, or every row outside that screen would be deleted
+     * and then read again (EXIF and all) by the pass that follows, which is an
+     * index rebuild on every launch.
+     */
+    suspend fun sync(context: Context, items: List<MediaItem>, complete: Boolean = true): Int {
         // One pass at a time, but queue rather than drop: a pass can be requested
         // while another is still unwinding (an invalidation restarts the effect),
         // and a dropped pass would leave the index empty or half-built. A queued
         // pass is cheap — it reads the stamps, finds nothing pending, and prunes.
         return mutex.withLock {
-            withContext(Dispatchers.IO) { index(context, items) }
+            withContext(Dispatchers.IO) { index(context, items, complete) }
         }
     }
 
-    private suspend fun index(context: Context, items: List<MediaItem>): Int {
+    private suspend fun index(context: Context, items: List<MediaItem>, complete: Boolean): Int {
         val locationGranted = hasPhotoLocationAccess(context)
         val known = MetadataStore.stamps(context)
         val keys = items.associate {
@@ -127,7 +135,7 @@ object MetadataIndexer {
 
         val startedAt = System.currentTimeMillis()
         if (pending.isEmpty()) {
-            pruneIfSafe(context, items, keys.keys)
+            pruneIfSafe(context, items, keys.keys, complete)
             _progress.value = Progress()
             return 0
         }
@@ -176,7 +184,7 @@ object MetadataIndexer {
             writes = writer.await()
         }
 
-        pruneIfSafe(context, items, keys.keys)
+        pruneIfSafe(context, items, keys.keys, complete)
         // The final counts stay published: that is what lets the pill show a
         // completed pass instead of resetting to 0/0 and vanishing.
         AppLog.d(
@@ -295,13 +303,30 @@ object MetadataIndexer {
     }
 
     /**
-     * Drops rows for files that no longer exist. An empty list is *not* proof of
-     * an empty library — settings (require-explicit, .nomedia) and transient
-     * provider misses can filter everything out — so never prune on it.
+     * Drops rows for files that no longer exist, but only from a list that can be
+     * trusted to be the whole library. See [shouldPrune].
      */
-    private suspend fun pruneIfSafe(context: Context, items: List<MediaItem>, keep: Set<String>) {
-        if (items.isNotEmpty()) MetadataStore.prune(context, keep)
+    private suspend fun pruneIfSafe(
+        context: Context,
+        items: List<MediaItem>,
+        keep: Set<String>,
+        complete: Boolean,
+    ) {
+        if (shouldPrune(complete, items.size)) MetadataStore.prune(context, keep)
     }
+
+    /**
+     * Whether a pass over [itemCount] items may delete the rows it did not see.
+     *
+     * Two things make a list unsafe to prune from. An empty list is *not* proof of
+     * an empty library — settings (require-explicit, .nomedia) and transient
+     * provider misses can filter everything out. A partial list is not one either:
+     * the launch snapshot paints only its first screen, so pruning from it deleted
+     * every row outside that screen and the real scan then re-read the whole
+     * library (EXIF and all) on every launch.
+     */
+    internal fun shouldPrune(complete: Boolean, itemCount: Int): Boolean =
+        complete && itemCount > 0
 
     /**
      * Identity of an index row. It carries the photo-location grant because GPS

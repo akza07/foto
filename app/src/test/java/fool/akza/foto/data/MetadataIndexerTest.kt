@@ -1,7 +1,9 @@
 package fool.akza.foto.data
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -42,6 +44,25 @@ class MetadataIndexerTest {
             MetadataIndexer.stampFor("s", "a:b", "c", true),
             MetadataIndexer.stampFor("s", "a", "b:c", true),
         )
+    }
+
+    @Test
+    fun `a complete non-empty list prunes files that are gone`() {
+        assertTrue(MetadataIndexer.shouldPrune(complete = true, itemCount = 3))
+    }
+
+    @Test
+    fun `a partial list never prunes`() {
+        // The launch snapshot carries only its first screen: pruning from it wiped
+        // the rest of the index, and the real scan re-indexed everything.
+        assertFalse(MetadataIndexer.shouldPrune(complete = false, itemCount = 3))
+    }
+
+    @Test
+    fun `an empty list never prunes`() {
+        // Not proof of an empty library: filters or a provider miss can empty it.
+        assertFalse(MetadataIndexer.shouldPrune(complete = true, itemCount = 0))
+        assertFalse(MetadataIndexer.shouldPrune(complete = false, itemCount = 0))
     }
 
     private fun stamp(

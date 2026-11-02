@@ -576,8 +576,11 @@ fun GalleryScreen(
         ThumbCache.enqueueAllIfMissing(loaded.take(CACHE_WARM_CAP))
 
         // Keep the metadata search index in step with the library. Incremental
-        // and throttled: only files whose stamp changed are read.
-        MetadataIndexer.sync(context, loaded)
+        // and throttled: only files whose stamp changed are read. A provisional
+        // snapshot only carries the first screen, so that pass must not prune —
+        // doing so deleted every row it did not see, and the real scan then read
+        // the whole library again on every launch.
+        MetadataIndexer.sync(context, loaded, complete = !snapshot.provisional)
     }
 
     val closeFolder = {
