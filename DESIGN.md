@@ -335,7 +335,7 @@ Sources: (1) the file name; (2) a local SQLite index (`metadata.db`) holding eac
 
 - The viewer has no persistent action bar or rail. Actions live in the long-press radial, at the finger.
 - Images: four sectors — Delete (top), Info, Share, More. Videos: Delete, Info, Share, Rename. Delete stays at the top away from the thumb; Share sits at the bottom, closest to the thumb. Share is omitted when Settings → Privacy → Allow sharing is off.
-- More opens a compact frosted card at the wheel centre with Crop / Rename / Wallpaper. Haze with a 50dp blur and black 18% tint, 200dp wide, 16dp corners, 1dp `Border` hairline, 20dp icons and 14sp labels. Tapping outside dismisses it; system back closes it before the viewer.
+- More opens a compact frosted card at the wheel centre with Crop / Rename / Wallpaper. Haze with a 50dp blur and black 18% tint, 200dp wide, 16dp corners, 1dp `Border` hairline, 20dp icons and 14sp labels, with a 1dp `Border` hairline between rows (inset 14dp, same colour as the card border) so the three actions read as separate targets. Tapping outside dismisses it; system back closes it before the viewer.
 - Tap toggles the viewer chrome independently; the wheel and More card are not part of the chrome and stay put while it auto-hides.
 
 ### 9.4 Gestures (images)

@@ -41,6 +41,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -1383,7 +1384,17 @@ private fun ViewerMoreMenu(
                 .pointerInput(Unit) { detectTapGestures { } }
                 .padding(vertical = 6.dp),
         ) {
-            MoreMenuActions.forEach { action ->
+            MoreMenuActions.forEachIndexed { index, action ->
+                // Hairline between the rows, inset to the icon edge, so Crop /
+                // Rename / Wallpaper read as three separate actions instead of one
+                // block of text. Same colour as the card's own border.
+                if (index > 0) {
+                    HorizontalDivider(
+                        modifier = Modifier.padding(horizontal = 14.dp),
+                        thickness = 1.dp,
+                        color = Border.copy(alpha = 0.45f),
+                    )
+                }
                 MoreMenuRow(action = action, onClick = { onAction(action) })
             }
         }
