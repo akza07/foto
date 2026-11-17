@@ -61,7 +61,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.lerp
 import androidx.compose.ui.unit.sp
 import fool.akza.foto.R
-import fool.akza.foto.data.MetadataIndexer
+import fool.akza.foto.data.semantic.SemanticIndexer
 import fool.akza.foto.data.thumbnails.ThumbCache
 import fool.akza.foto.ui.theme.Border
 import fool.akza.foto.ui.theme.Surface as ThemeSurface
@@ -101,7 +101,7 @@ private const val CompletedGraceMs = 300L
 
 /**
  * Background work indicators for the albums screen: one row per pass, preview
- * caching and metadata indexing (which feeds search).
+ * caching and content indexing (which feeds search and grouping).
  *
  * Both can run for a while, and a permanent banner in the middle of the screen
  * turns into noise. Each row therefore behaves the same way: the full pill shows
@@ -125,7 +125,7 @@ private const val CompletedGraceMs = 300L
 @Composable
 fun BackgroundWorkIndicator(modifier: Modifier = Modifier) {
     val thumbs by ThumbCache.progress.collectAsState()
-    val metadata by MetadataIndexer.progress.collectAsState()
+    val content by SemanticIndexer.progress.collectAsState()
 
     BoxWithConstraints(
         modifier = modifier
@@ -145,10 +145,10 @@ fun BackgroundWorkIndicator(modifier: Modifier = Modifier) {
                 availableWidth = rowWidth,
             )
             PassRow(
-                label = R.string.indexing_metadata,
-                done = metadata.done,
-                total = metadata.total,
-                active = metadata.isIndexing,
+                label = R.string.indexing_content,
+                done = content.done,
+                total = content.total,
+                active = content.isIndexing,
                 availableWidth = rowWidth,
             )
         }

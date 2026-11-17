@@ -7,6 +7,7 @@ import fool.akza.foto.R
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlin.math.roundToInt
 
 /** How the gallery orders media within folders and folders themselves. */
 enum class MediaSort(@StringRes val labelRes: Int) {
@@ -33,6 +34,27 @@ enum class SelectionActionPlacement(@StringRes val labelRes: Int) {
     BOTTOM(R.string.selection_placement_bottom),
 }
 
+/**
+ * Which LiteRT-LM backend computes photo/text embeddings.
+ *
+ * There is deliberately no automatic fallback: a GPU failure disables content
+ * search instead of silently pegging the CPU, and [CPU] is an explicit opt-in.
+ *
+ * NPU is absent because LiteRT-LM only ships NPU builds for specific MediaTek
+ * SoCs (MT6991/MT6993), not Dimensity 8000-class chips.
+ */
+enum class SemanticAccelerator(@StringRes val labelRes: Int) {
+    GPU(R.string.semantic_accelerator_gpu),
+    CPU(R.string.semantic_accelerator_cpu),
+}
+
+/** When the content index may run. */
+enum class SemanticIndexing(@StringRes val labelRes: Int) {
+    AUTOMATIC(R.string.semantic_indexing_auto),
+    CHARGING(R.string.semantic_indexing_charging),
+    PAUSED(R.string.semantic_indexing_paused),
+}
+
 data class AppSettings(
     val respectNoMedia: Boolean = true,
     val requireExplicit: Boolean = false,
@@ -54,7 +76,27 @@ data class AppSettings(
     /** Whether the (optional) photo-location permission was already requested.
      * Asking once keeps a denial from turning into a dialog on every launch. */
     val photoLocationAsked: Boolean = false,
-)
+    /** Hold duration in ms before the viewer's radial action wheel opens. */
+    val wheelActivationDelayMs: Int = DEFAULT_WHEEL_DELAY_MS,
+    /** Backend preference for the on-device embedding engine. */
+    val semanticAccelerator: SemanticAccelerator = SemanticAccelerator.GPU,
+    /** Whether the content index may run automatically, only on power, or not. */
+    val semanticIndexing: SemanticIndexing = SemanticIndexing.AUTOMATIC,
+) {
+    companion object {
+        const val DEFAULT_WHEEL_DELAY_MS = 400
+        const val WHEEL_DELAY_MIN_MS = 150
+        const val WHEEL_DELAY_MAX_MS = 1200
+        const val WHEEL_DELAY_STEP_MS = 50
+
+        /** Snaps an arbitrary value to the nearest step within the supported range. */
+        fun snapWheelDelay(value: Int): Int {
+            val stepped = (value.toFloat() / WHEEL_DELAY_STEP_MS).roundToInt() *
+                WHEEL_DELAY_STEP_MS
+            return stepped.coerceIn(WHEEL_DELAY_MIN_MS, WHEEL_DELAY_MAX_MS)
+        }
+    }
+}
 
 object SettingsRepository {
     private const val PREFS = "foto_settings"
@@ -72,6 +114,9 @@ object SettingsRepository {
     private const val KEY_ALLOW_SHARING = "allow_sharing"
     private const val KEY_STRIP_SHARE_METADATA = "strip_share_metadata"
     private const val KEY_PHOTO_LOCATION_ASKED = "photo_location_asked"
+    private const val KEY_WHEEL_ACTIVATION_DELAY_MS = "wheel_activation_delay_ms"
+    private const val KEY_SEMANTIC_ACCELERATOR = "semantic_accelerator"
+    private const val KEY_SEMANTIC_INDEXING = "semantic_indexing"
 
     private val _settings = MutableStateFlow(AppSettings())
     val settings: StateFlow<AppSettings> = _settings.asStateFlow()
@@ -106,6 +151,21 @@ object SettingsRepository {
             allowSharing = prefs.getBoolean(KEY_ALLOW_SHARING, true),
             stripShareMetadata = prefs.getBoolean(KEY_STRIP_SHARE_METADATA, true),
             photoLocationAsked = prefs.getBoolean(KEY_PHOTO_LOCATION_ASKED, false),
+            wheelActivationDelayMs = AppSettings.snapWheelDelay(
+                prefs.getInt(KEY_WHEEL_ACTIVATION_DELAY_MS, AppSettings.DEFAULT_WHEEL_DELAY_MS),
+            ),
+            semanticAccelerator = runCatching {
+                SemanticAccelerator.valueOf(
+                    prefs.getString(KEY_SEMANTIC_ACCELERATOR, null)
+                        ?: SemanticAccelerator.GPU.name,
+                )
+            }.getOrDefault(SemanticAccelerator.GPU),
+            semanticIndexing = runCatching {
+                SemanticIndexing.valueOf(
+                    prefs.getString(KEY_SEMANTIC_INDEXING, null)
+                        ?: SemanticIndexing.AUTOMATIC.name,
+                )
+            }.getOrDefault(SemanticIndexing.AUTOMATIC),
         )
     }
 
@@ -118,6 +178,12 @@ object SettingsRepository {
     /** Persists a string and applies [transform] to the in-memory settings. */
     private fun setString(key: String, value: String, transform: (AppSettings) -> AppSettings) {
         prefs.edit().putString(key, value).apply()
+        _settings.value = transform(_settings.value)
+    }
+
+    /** Persists an int and applies [transform] to the in-memory settings. */
+    private fun setInt(key: String, value: Int, transform: (AppSettings) -> AppSettings) {
+        prefs.edit().putInt(key, value).apply()
         _settings.value = transform(_settings.value)
     }
 
@@ -173,6 +239,25 @@ object SettingsRepository {
 
     fun setPhotoLocationAsked(value: Boolean) {
         setBoolean(KEY_PHOTO_LOCATION_ASKED, value) { it.copy(photoLocationAsked = value) }
+    }
+
+    fun setWheelActivationDelayMs(value: Int) {
+        val snapped = AppSettings.snapWheelDelay(value)
+        setInt(KEY_WHEEL_ACTIVATION_DELAY_MS, snapped) {
+            it.copy(wheelActivationDelayMs = snapped)
+        }
+    }
+
+    fun setSemanticAccelerator(value: SemanticAccelerator) {
+        setString(KEY_SEMANTIC_ACCELERATOR, value.name) {
+            it.copy(semanticAccelerator = value)
+        }
+    }
+
+    fun setSemanticIndexing(value: SemanticIndexing) {
+        setString(KEY_SEMANTIC_INDEXING, value.name) {
+            it.copy(semanticIndexing = value)
+        }
     }
 
     fun addTreeUri(uri: String) {

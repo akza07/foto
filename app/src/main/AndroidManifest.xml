@@ -19,11 +19,23 @@
 
     <application
         android:allowBackup="false"
+        android:largeHeap="true"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
         android:theme="@style/Theme.Foto">
+
+        <!-- Optional vendor GPU/NPU runtime hooks so LiteRT-LM can accelerate on
+             Mali/Immortalis (MediaTek), Adreno (Snapdragon), Tensor and Exynos.
+             required=false keeps the app installable when a vendor lacks a
+             library; LiteRT-LM then falls back to the next backend or CPU. -->
+        <uses-native-library android:name="libOpenCL.so" android:required="false" />
+        <uses-native-library android:name="libOpenCL-pixel.so" android:required="false" />
+        <uses-native-library android:name="libGLES_mali.so" android:required="false" />
+        <uses-native-library android:name="libPVROCL.so" android:required="false" />
+        <uses-native-library android:name="libneuron_adapter.so" android:required="false" />
+        <uses-native-library android:name="libcdsprpc.so" android:required="false" />
 
         <!-- Hands metadata-free share copies to the chooser without exposing the
              original file. The authority is namespaced off the application id. -->

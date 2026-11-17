@@ -117,6 +117,9 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.repeatOnLifecycle
 import fool.akza.foto.AppLog
 import fool.akza.foto.data.GalleryContent
 import fool.akza.foto.data.GalleryDirectory
@@ -133,8 +136,19 @@ import fool.akza.foto.data.MediaSharing
 import fool.akza.foto.data.ShareResult
 import fool.akza.foto.data.buildDirectoryHierarchy
 import fool.akza.foto.data.isExcluded
-import fool.akza.foto.data.MetadataIndexer
-import fool.akza.foto.data.MetadataStore
+import fool.akza.foto.data.semantic.SemanticIndexer
+import fool.akza.foto.data.semantic.SemanticModel
+import fool.akza.foto.data.SemanticIndexing
+import fool.akza.foto.data.similar.DuplicateGroup
+import fool.akza.foto.data.similar.FolderNameQuery
+import fool.akza.foto.data.similar.GroupMoveConsent
+import fool.akza.foto.data.similar.GroupMoveRequest
+import fool.akza.foto.data.similar.GroupMoveResult
+import fool.akza.foto.data.similar.GroupMoveStart
+import fool.akza.foto.data.similar.SimilarGroup
+import fool.akza.foto.data.similar.SimilarReport
+import fool.akza.foto.data.similar.SimilarityRepository
+import fool.akza.foto.data.similar.nextGroupedName
 import fool.akza.foto.data.RenameResult
 import fool.akza.foto.data.PrivateTrash
 import fool.akza.foto.data.SettingsRepository
@@ -378,6 +392,22 @@ fun GalleryScreen(
     LaunchedEffect(attentionVersion) {
         insightsTile = AttentionRepository.tile(context)
     }
+    // Similar/duplicate recommendations. The visual pass only runs while the
+    // Albums tab is visible and is cached by the library identity.
+    val similarReport by SimilarityRepository.report.collectAsState()
+    val similarAnalyzing by SimilarityRepository.isAnalyzing.collectAsState()
+    val contentProgress by SemanticIndexer.progress.collectAsState()
+    val semanticModel by SemanticModel.status.collectAsState()
+    LaunchedEffect(Unit) { SemanticModel.refresh(context) }
+    var showSimilar by remember { mutableStateOf(false) }
+    var keepBestGroup by remember { mutableStateOf<DuplicateGroup?>(null) }
+    var groupDetail by remember { mutableStateOf<SimilarGroup?>(null) }
+    var groupFolder by remember { mutableStateOf<SimilarGroup?>(null) }
+    // Destination path -> existing child folder names. Both candidate
+    // destinations are loaded so Grouped(n) is collision-free in each.
+    var groupExistingNames by remember { mutableStateOf<Map<String, Set<String>>?>(null) }
+    var groupingFolder by remember { mutableStateOf(false) }
+    var pendingGroupMove by remember { mutableStateOf<GroupMoveRequest?>(null) }
     // Full library (folders + loose), used for name search. Populated by the
     // same pass that warms the thumbnail cache.
     var allItems by remember { mutableStateOf<List<MediaItem>>(emptyList()) }
@@ -480,6 +510,14 @@ fun GalleryScreen(
         )
     }
 
+    LaunchedEffect(rootTab, rootGalleryContent, showSimilar, contentProgress.isIndexing) {
+        val current = rootGalleryContent ?: return@LaunchedEffect
+        if (current.provisional) return@LaunchedEffect
+        if (rootTab == RootTab.ALBUMS || showSimilar) {
+            SimilarityRepository.refresh(context, current.allItems)
+        }
+    }
+
     LaunchedEffect(reloadKey) {
         val loaded = MediaRepository.load(context, removedUris, removedPaths)
         // Diagnostic: if the provider still returns a suppressed item, the UI
@@ -551,8 +589,7 @@ fun GalleryScreen(
     // same identity-derived keys the UI reads. Folder contents are then
     // AoT-warmed so opening any album is instant — all of this drives the same
     // "Caching previews" progress pill (only real work is counted).
-    val metadataIndexVersion by MetadataStore.version.collectAsState()
-    LaunchedEffect(visibleContent, metadataIndexVersion) {
+    LaunchedEffect(visibleContent) {
         val snapshot = visibleContent ?: return@LaunchedEffect
         snapshot.folders.forEach { folder ->
             folder.previews.forEach { item -> ThumbCache.enqueueIfMissing(item) }
@@ -574,13 +611,27 @@ fun GalleryScreen(
             .distinctBy { it.uri }
         allItems = loaded
         ThumbCache.enqueueAllIfMissing(loaded.take(CACHE_WARM_CAP))
+    }
 
-        // Keep the metadata search index in step with the library. Incremental
-        // and throttled: only files whose stamp changed are read. A provisional
-        // snapshot only carries the first screen, so that pass must not prune —
-        // doing so deleted every row it did not see, and the real scan then read
-        // the whole library again on every launch.
-        MetadataIndexer.sync(context, loaded, complete = !snapshot.provisional)
+    // Keep the content index in step with the library. Incremental: only files
+    // whose identity stamp changed are embedded, and finished vectors survive
+    // process death. A provisional snapshot only carries the first screen, so
+    // that pass must not prune what it did not see. RESUMED keeps the pass from
+    // burning CPU while the app is in the background.
+    val libraryComplete = visibleContent?.provisional == false
+    val lifecycleOwner = LocalLifecycleOwner.current
+    LaunchedEffect(
+        allItems,
+        libraryComplete,
+        lifecycleOwner,
+        semanticModel.isReady,
+        appSettings.semanticIndexing,
+    ) {
+        if (allItems.isEmpty() || !semanticModel.isReady) return@LaunchedEffect
+        if (appSettings.semanticIndexing == SemanticIndexing.PAUSED) return@LaunchedEffect
+        lifecycleOwner.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+            SemanticIndexer.sync(context, allItems, complete = libraryComplete)
+        }
     }
 
     val closeFolder = {
@@ -732,18 +783,20 @@ fun GalleryScreen(
     // BackHandler so system back runs the animated scale-out instead of removing
     // the viewer in a single frame.
     BackHandler(
-        enabled = isSelecting || openFolder != null || showSettings || showSearch || showInsights,
+        enabled = isSelecting || openFolder != null || showSettings || showSearch ||
+            showInsights || showSimilar || keepBestGroup != null ||
+            groupDetail != null || groupFolder != null,
         onBack = {
-            if (showSearch) {
-                showSearch = false
-            } else if (showInsights) {
-                showInsights = false
-            } else if (isSelecting) {
-                clearSelection()
-            } else if (showSettings) {
-                showSettings = false
-            } else {
-                closeFolder()
+            when {
+                groupFolder != null -> groupFolder = null
+                groupDetail != null -> groupDetail = null
+                keepBestGroup != null -> keepBestGroup = null
+                showSimilar -> showSimilar = false
+                showSearch -> showSearch = false
+                showInsights -> showInsights = false
+                isSelecting -> clearSelection()
+                showSettings -> showSettings = false
+                else -> closeFolder()
             }
         },
     )
@@ -802,6 +855,59 @@ fun GalleryScreen(
     // is still recoverable from the system trash even if Foto is uninstalled.
     // SAF documents have no trash, so they are deleted outright.
     val scope = rememberCoroutineScope()
+    // Loads the child-folder names for both possible destinations. The sheet
+    // stays disabled until both are known, so it can never create a collision.
+    val loadGroupNames: (SimilarGroup) -> Unit = { group ->
+        groupExistingNames = null
+        scope.launch {
+            val sameKey = group.sameFolder.orEmpty()
+            val parentKey = group.parentFolder.orEmpty()
+            val same = FolderNameQuery.existingNames(context, group.sameFolder, group.items)
+            val parent = group.parentFolder?.let { parentFolder ->
+                FolderNameQuery.existingNames(context, parentFolder, group.items)
+            }.orEmpty()
+            groupExistingNames = mapOf(sameKey to same, parentKey to parent)
+        }
+    }
+    // Shared completion for both the SAF path (no dialog) and the MediaStore
+    // write-consent path. Closing the Similar surface avoids leaving a stale
+    // group on screen after its files moved.
+    val finishGroupMove: (GroupMoveResult, String) -> Unit = { result, name ->
+        groupingFolder = false
+        groupFolder = null
+        groupDetail = null
+        showSimilar = false
+        SimilarityRepository.invalidate()
+        toastKey += 1
+        toastMessage = when {
+            result.succeeded -> UiText.Res(
+                R.string.group_folder_moved,
+                listOf(result.moved, result.folder ?: name),
+            )
+            result.moved > 0 -> UiText.Res(
+                R.string.group_folder_partial,
+                listOf(result.moved, result.failed),
+            )
+            else -> UiText.Res(R.string.group_folder_failed)
+        }
+        reload()
+    }
+    val groupMoveConsentLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartIntentSenderForResult(),
+    ) { result ->
+        val request = pendingGroupMove
+        pendingGroupMove = null
+        if (request == null) return@rememberLauncherForActivityResult
+        if (result.resultCode != android.app.Activity.RESULT_OK) {
+            groupingFolder = false
+            toastKey += 1
+            toastMessage = UiText.Res(R.string.group_folder_denied)
+            return@rememberLauncherForActivityResult
+        }
+        scope.launch {
+            finishGroupMove(GroupMoveConsent.complete(context, request), request.folderName)
+        }
+    }
     // Batches waiting on the consent dialog opened by [consentLauncher].
     var pendingTrashItems by remember { mutableStateOf<List<MediaItem>>(emptyList()) }
     var pendingRestoreItems by remember { mutableStateOf<List<MediaItem>>(emptyList()) }
@@ -1378,6 +1484,13 @@ fun GalleryScreen(
             onTabChange = { rootTab = it },
             insights = insightsTile,
             onInsightsClick = { if (directoryStack.isEmpty()) showInsights = true },
+            similar = similarReport,
+            onSimilarClick = {
+                if (directoryStack.isEmpty()) {
+                    showSimilar = true
+                    SimilarityRepository.invalidate()
+                }
+            },
             minTileSize = appSettings.gridSize.minTileDp.dp,
             sortOrder = appSettings.sortOrder,
             gridSize = appSettings.gridSize,
@@ -1389,7 +1502,9 @@ fun GalleryScreen(
             // A swipe only switches tabs on the root surface itself: not while a
             // folder level, selection or a full-screen panel is on top.
             tabSwipeEnabled = directoryStack.isEmpty() &&
-                !showSettings && !showSearch && !showInsights,
+                !showSettings && !showSearch && !showInsights &&
+                !showSimilar && keepBestGroup == null &&
+                groupDetail == null && groupFolder == null,
             selection = selection,
             onToggleSelect = { if (directoryStack.isEmpty()) toggleSelect(it) },
             onToggleFolder = { if (directoryStack.isEmpty()) toggleSelectFolder(it) },
@@ -1430,7 +1545,9 @@ fun GalleryScreen(
             // hidden behind the opaque viewer, but keeping the haze warm means the
             // entry and exit never reveal a transparent-then-blurred header.
             frostEnabled = (directoryStack.isEmpty() || directoryStack.size == 1 && closing) &&
-                !showSettings && !showSearch && !showInsights,
+                !showSettings && !showSearch && !showInsights &&
+                !showSimilar && keepBestGroup == null &&
+                groupDetail == null && groupFolder == null,
         )
 
         androidx.compose.animation.AnimatedVisibility(
@@ -1462,6 +1579,122 @@ fun GalleryScreen(
                 // ranked list again; no source rect means a clean fade in/out.
                 onOpen = { list, index -> openViewer(list, index, Rect.Zero) },
             )
+        }
+
+        androidx.compose.animation.AnimatedVisibility(
+            visible = showSimilar,
+            enter = slideInHorizontally(initialOffsetX = { it }) + fadeIn(),
+            exit = slideOutHorizontally(targetOffsetX = { it }) + fadeOut(),
+        ) {
+            SimilarScreen(
+                report = similarReport,
+                isAnalyzing = similarAnalyzing,
+                onBack = { showSimilar = false },
+                onReviewDuplicates = { keepBestGroup = it },
+                onOpenGroup = { groupDetail = it },
+                onReviewPossible = { group ->
+                    // A possible pair gets the same inspect-and-group screen as
+                    // a larger similar group, so it is never a dead-end viewer.
+                    groupDetail = SimilarGroup(
+                        id = "possible_${group.id}",
+                        items = group.items,
+                        folder = group.folder,
+                        averageSimilarity = group.averageSimilarity,
+                        suggestedName = nextGroupedName(emptySet()),
+                    )
+                },
+                onRescan = {
+                    SimilarityRepository.invalidate()
+                    scope.launch {
+                        SimilarityRepository.refresh(
+                            context,
+                            rootGalleryContent?.allItems.orEmpty(),
+                        )
+                    }
+                },
+            )
+        }
+
+        androidx.compose.animation.AnimatedVisibility(
+            visible = groupDetail != null,
+            enter = slideInHorizontally(initialOffsetX = { it }) + fadeIn(),
+            exit = slideOutHorizontally(targetOffsetX = { it }) + fadeOut(),
+        ) {
+            groupDetail?.let { group ->
+                SimilarGroupScreen(
+                    group = group,
+                    onBack = { groupDetail = null },
+                    onOpenItem = { list, index, rect -> openViewer(list, index, rect) },
+                    onGroupFolder = {
+                        loadGroupNames(group)
+                        groupFolder = group
+                    },
+                )
+            }
+        }
+
+        androidx.compose.animation.AnimatedVisibility(
+            visible = keepBestGroup != null,
+            enter = slideInHorizontally(initialOffsetX = { it }) + fadeIn(),
+            exit = slideOutHorizontally(targetOffsetX = { it }) + fadeOut(),
+        ) {
+            keepBestGroup?.let { group ->
+                KeepBestScreen(
+                    group = group,
+                    onBack = { keepBestGroup = null },
+                    onKeepBest = { keeper ->
+                        val trash = group.items.filterNot { it.uri == keeper.uri }
+                        keepBestGroup = null
+                        showSimilar = false
+                        SimilarityRepository.invalidate()
+                        trashAndDelete(trash)
+                    },
+                    onView = { item, rect ->
+                        openViewer(group.items, group.items.indexOf(item), rect)
+                    },
+                )
+            }
+        }
+
+        androidx.compose.animation.AnimatedVisibility(
+            visible = groupFolder != null,
+            enter = slideInVertically(initialOffsetY = { it }) + fadeIn(),
+            exit = slideOutVertically(targetOffsetY = { it }) + fadeOut(),
+        ) {
+            groupFolder?.let { group ->
+                GroupFolderSheet(
+                    group = group,
+                    existingNames = groupExistingNames,
+                    isCreating = groupingFolder,
+                    onDismiss = { if (!groupingFolder) groupFolder = null },
+                    onCreate = { name, destination ->
+                        groupingFolder = true
+                        scope.launch {
+                            when (val start = GroupMoveConsent.start(
+                                context = context,
+                                items = group.items,
+                                destination = destination,
+                                folderName = name,
+                            )) {
+                                is GroupMoveStart.NeedsConsent -> {
+                                    pendingGroupMove = start.request
+                                    groupMoveConsentLauncher.launch(
+                                        androidx.activity.result.IntentSenderRequest
+                                            .Builder(start.intentSender)
+                                            .build(),
+                                    )
+                                }
+                                is GroupMoveStart.Done -> finishGroupMove(start.result, name)
+                                is GroupMoveStart.Failed -> {
+                                    groupingFolder = false
+                                    toastKey += 1
+                                    toastMessage = UiText.Res(R.string.group_folder_failed)
+                                }
+                            }
+                        }
+                    },
+                )
+            }
         }
 
         directoryStack.forEachIndexed { levelIndex, level ->
@@ -1585,6 +1818,7 @@ fun GalleryScreen(
                 onCrop = { item -> cropItem = item },
                 onWallpaper = { item -> wallpaperItem = item },
                 loopVideos = appSettings.loopVideos,
+                wheelActivationDelayMs = appSettings.wheelActivationDelayMs.toLong(),
                 shareEnabled = appSettings.allowSharing,
             )
 
@@ -2233,6 +2467,8 @@ private fun MainGalleryGrid(
     tabSwipeEnabled: Boolean = true,
     insights: AttentionTile? = null,
     onInsightsClick: () -> Unit = {},
+    similar: SimilarReport? = null,
+    onSimilarClick: () -> Unit = {},
 ) {
     val gridState = rememberLazyGridState()
     val timelineGridState = rememberLazyGridState()
@@ -2473,6 +2709,18 @@ private fun MainGalleryGrid(
                                 tile = tile,
                                 onClick = onInsightsClick,
                                 // Deletes/reloads reflow the grid instead of jumping.
+                                modifier = Modifier.animateItem(
+                                    fadeInSpec = tween(180),
+                                    fadeOutSpec = tween(180),
+                                ),
+                            )
+                        }
+                    }
+                    similar?.takeIf { !selection.active && it.recommendations > 0 }?.let { report ->
+                        item(key = "similar") {
+                            SimilarTile(
+                                report = report,
+                                onClick = onSimilarClick,
                                 modifier = Modifier.animateItem(
                                     fadeInSpec = tween(180),
                                     fadeOutSpec = tween(180),

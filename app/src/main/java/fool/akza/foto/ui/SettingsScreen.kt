@@ -2,6 +2,7 @@ package fool.akza.foto.ui
 
 import android.content.Intent
 import android.net.Uri
+import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -41,6 +42,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -60,11 +62,15 @@ import fool.akza.foto.data.AppSettings
 import fool.akza.foto.data.GalleryEvents
 import fool.akza.foto.data.GridSize
 import fool.akza.foto.data.MediaSort
-import fool.akza.foto.data.MetadataIndexer
-import fool.akza.foto.data.MetadataStore
+import fool.akza.foto.data.SemanticAccelerator
+import fool.akza.foto.data.SemanticIndexing
 import fool.akza.foto.data.SelectionActionPlacement
 import fool.akza.foto.data.SettingsRepository
 import fool.akza.foto.data.attention.AttentionRepository
+import fool.akza.foto.data.semantic.GemmaEmbedder
+import fool.akza.foto.data.semantic.PhotoVectorStore
+import fool.akza.foto.data.semantic.SemanticIndexer
+import fool.akza.foto.data.semantic.SemanticModel
 import fool.akza.foto.data.TrashRepository
 import fool.akza.foto.data.thumbnails.ThumbCache
 import fool.akza.foto.data.thumbnails.VideoFrameCache
@@ -76,6 +82,7 @@ import fool.akza.foto.ui.theme.TextPrimary
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlin.math.roundToInt
 
 /**
  * Settings, grouped by intent:
@@ -84,6 +91,7 @@ import kotlinx.coroutines.withContext
  * - Playback: how videos play.
  * - Library: which media is shown and where it comes from. Changes here affect
  *   the media list, so they call [onSettingsChanged] to reload the gallery.
+ * - Content search: the on-device embedding model and its photo index.
  * - Storage: cache management.
  *
  * The folder list lives in a nested [FoldersScreen] so this root stays short.
@@ -159,11 +167,9 @@ private fun SettingsRoot(
     var cacheBytes by remember { mutableStateOf<Long?>(null) }
     var clearing by remember { mutableStateOf(false) }
     var showClearConfirm by remember { mutableStateOf(false) }
-    // Search index summary; null while loading.
-    var indexFiles by remember { mutableStateOf<Int?>(null) }
-    var indexBytes by remember { mutableStateOf(0L) }
-    var clearingIndex by remember { mutableStateOf(false) }
-    var showClearIndexConfirm by remember { mutableStateOf(false) }
+    var showRemoveModelConfirm by remember { mutableStateOf(false) }
+    var showAcceleratorDialog by remember { mutableStateOf(false) }
+    var showIndexingDialog by remember { mutableStateOf(false) }
     var showClearHistoryConfirm by remember { mutableStateOf(false) }
     // Recorded visits, shown as the clear-history summary; null while loading.
     var historySessions by remember { mutableStateOf<Int?>(null) }
@@ -171,7 +177,16 @@ private fun SettingsRoot(
     // Live work: the storage rows double as the place to see that a pass is
     // running, since this is where its cost is reported.
     val previews by ThumbCache.progress.collectAsState()
-    val indexing by MetadataIndexer.progress.collectAsState()
+    val contentProgress by SemanticIndexer.progress.collectAsState()
+    val modelStatus by SemanticModel.status.collectAsState()
+    val indexedCount by PhotoVectorStore.indexedCount.collectAsState()
+    val backend by GemmaEmbedder.backend.collectAsState()
+    val gemmaError by GemmaEmbedder.error.collectAsState()
+    // Slider position is kept locally so a drag stays smooth; it is committed
+    // to SharedPreferences once the user lifts their finger.
+    var wheelDelayMs by remember {
+        mutableFloatStateOf(settings.wheelActivationDelayMs.toFloat())
+    }
     var showSortDialog by remember { mutableStateOf(false) }
     var showGridDialog by remember { mutableStateOf(false) }
     var showSelectionPlacementDialog by remember { mutableStateOf(false) }
@@ -183,6 +198,27 @@ private fun SettingsRoot(
 
     LaunchedEffect(Unit) {
         crashLog = withContext(Dispatchers.IO) { CrashLog.read(context) }
+    }
+
+    LaunchedEffect(Unit) {
+        SemanticModel.refresh(context)
+        PhotoVectorStore.refreshCount(context)
+    }
+
+    val importModel = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument(),
+    ) { uri ->
+        if (uri != null) {
+            scope.launch {
+                SemanticModel.import(context, uri).onFailure { error ->
+                    Toast.makeText(
+                        context,
+                        error.message ?: context.getString(R.string.content_model_import_failed),
+                        Toast.LENGTH_LONG,
+                    ).show()
+                }
+            }
+        }
     }
 
     suspend fun refreshTrash() {
@@ -200,12 +236,6 @@ private fun SettingsRoot(
         if (cacheBytes == null) {
             cacheBytes = with(Dispatchers.IO) { ThumbCache.totalCacheBytes() }
         }
-        if (indexFiles == null) {
-            indexFiles = with(Dispatchers.IO) {
-                indexBytes = MetadataStore.diskBytes(context)
-                MetadataStore.count(context)
-            }
-        }
         refreshTrash()
     }
 
@@ -215,15 +245,6 @@ private fun SettingsRoot(
     LaunchedEffect(previews.isIndexing) {
         if (!previews.isIndexing) {
             cacheBytes = with(Dispatchers.IO) { ThumbCache.totalCacheBytes() }
-        }
-    }
-
-    LaunchedEffect(indexing.isIndexing) {
-        if (!indexing.isIndexing) {
-            indexFiles = with(Dispatchers.IO) {
-                indexBytes = MetadataStore.diskBytes(context)
-                MetadataStore.count(context)
-            }
         }
     }
 
@@ -308,6 +329,27 @@ private fun SettingsRoot(
                         checked = settings.confirmBeforeDelete,
                         onCheckedChange = { SettingsRepository.setConfirmBeforeDelete(it) },
                     )
+                    SettingsDivider()
+                    SettingsSliderRow(
+                        title = stringResource(R.string.behavior_wheel_delay_title),
+                        subtitle = stringResource(R.string.behavior_wheel_delay_subtitle),
+                        value = wheelDelayMs,
+                        valueRange = AppSettings.WHEEL_DELAY_MIN_MS.toFloat()..
+                            AppSettings.WHEEL_DELAY_MAX_MS.toFloat(),
+                        steps = (AppSettings.WHEEL_DELAY_MAX_MS -
+                            AppSettings.WHEEL_DELAY_MIN_MS) /
+                            AppSettings.WHEEL_DELAY_STEP_MS - 1,
+                        valueLabel = stringResource(
+                            R.string.behavior_wheel_delay_value,
+                            wheelDelayMs.roundToInt(),
+                        ),
+                        onValueChange = { wheelDelayMs = it },
+                        onValueChangeFinished = {
+                            val snapped = AppSettings.snapWheelDelay(wheelDelayMs.roundToInt())
+                            wheelDelayMs = snapped.toFloat()
+                            SettingsRepository.setWheelActivationDelayMs(snapped)
+                        },
+                    )
                 }
             }
 
@@ -343,6 +385,114 @@ private fun SettingsRoot(
                         title = stringResource(R.string.library_manage_folders),
                         trailingText = folderCountLabel(settings.selectedTreeUris.size),
                         onClick = onManageFolders,
+                    )
+                }
+            }
+
+            // ── Content search ───────────────────────────────────────
+            item {
+                SettingsSectionHeader(
+                    title = stringResource(R.string.section_content_search),
+                    topPadding = 16.dp,
+                )
+            }
+            item {
+                SettingsGroup {
+                    SettingsActionRow(
+                        title = stringResource(R.string.content_model_title),
+                        subtitle = when (modelStatus.state) {
+                            SemanticModel.State.Importing -> stringResource(
+                                R.string.content_model_importing,
+                                (modelStatus.progress * 100f).roundToInt(),
+                            )
+                            SemanticModel.State.Ready -> stringResource(
+                                R.string.content_model_ready,
+                                formatCacheSize(modelStatus.sizeBytes),
+                            )
+                            SemanticModel.State.Invalid ->
+                                stringResource(R.string.content_model_invalid)
+                            SemanticModel.State.Missing ->
+                                stringResource(R.string.content_model_missing)
+                        },
+                        enabled = modelStatus.state != SemanticModel.State.Importing,
+                        showChevron = !modelStatus.isReady &&
+                            modelStatus.state != SemanticModel.State.Importing,
+                        loading = modelStatus.state == SemanticModel.State.Importing,
+                        onClick = { importModel.launch(arrayOf("*/*")) },
+                    )
+                    if (modelStatus.exists) {
+                        SettingsDivider()
+                        SettingsActionRow(
+                            title = stringResource(R.string.content_model_remove_title),
+                            subtitle = stringResource(
+                                R.string.content_model_remove_subtitle,
+                                formatCacheSize(modelStatus.sizeBytes),
+                            ),
+                            enabled = !contentProgress.isIndexing,
+                            onClick = { showRemoveModelConfirm = true },
+                        )
+                    }
+                    SettingsDivider()
+                    SettingsActionRow(
+                        title = stringResource(R.string.content_accelerator_title),
+                        subtitle = if (gemmaError != null) {
+                            stringResource(R.string.content_accelerator_unavailable)
+                        } else {
+                            stringResource(R.string.content_accelerator_subtitle)
+                        },
+                        trailingText = stringResource(settings.semanticAccelerator.labelRes),
+                        onClick = { showAcceleratorDialog = true },
+                    )
+                    SettingsDivider()
+                    SettingsActionRow(
+                        title = stringResource(R.string.content_indexing_title),
+                        subtitle = stringResource(
+                            when (settings.semanticIndexing) {
+                                SemanticIndexing.AUTOMATIC ->
+                                    R.string.content_indexing_auto_subtitle
+                                SemanticIndexing.CHARGING ->
+                                    R.string.content_indexing_charging_subtitle
+                                SemanticIndexing.PAUSED ->
+                                    R.string.content_indexing_paused_subtitle
+                            },
+                        ),
+                        trailingText = stringResource(settings.semanticIndexing.labelRes),
+                        onClick = { showIndexingDialog = true },
+                    )
+                    SettingsDivider()
+                    SettingsActionRow(
+                        title = stringResource(R.string.content_index_title),
+                        subtitle = when {
+                            contentProgress.backendFailed ->
+                                stringResource(R.string.content_index_backend_failed)
+                            contentProgress.paused -> stringResource(
+                                R.string.content_index_paused,
+                                contentProgress.done,
+                                contentProgress.total,
+                            )
+                            contentProgress.isIndexing -> stringResource(
+                                R.string.work_progress_summary,
+                                stringResource(R.string.indexing_content),
+                                contentProgress.done,
+                                contentProgress.total,
+                            )
+                            !modelStatus.isReady ->
+                                stringResource(R.string.content_index_needs_model)
+                            indexedCount == 0 ->
+                                stringResource(R.string.content_index_empty)
+                            backend != null -> stringResource(
+                                R.string.content_index_summary_backend,
+                                indexedCount,
+                                backend!!,
+                            )
+                            else -> stringResource(
+                                R.string.content_index_summary,
+                                indexedCount,
+                            )
+                        },
+                        enabled = false,
+                        showChevron = false,
+                        onClick = {},
                     )
                 }
             }
@@ -411,30 +561,6 @@ private fun SettingsRoot(
                         showChevron = !clearing,
                         loading = clearing || previews.isIndexing,
                         onClick = { showClearConfirm = true },
-                    )
-                    SettingsDivider()
-                    SettingsActionRow(
-                        title = stringResource(R.string.storage_clear_index_title),
-                        subtitle = when {
-                            clearingIndex -> stringResource(R.string.storage_clearing)
-                            indexing.isIndexing -> stringResource(
-                                R.string.work_progress_summary,
-                                stringResource(R.string.indexing_metadata),
-                                indexing.done,
-                                indexing.total,
-                            )
-                            indexFiles == null -> stringResource(R.string.storage_calculating)
-                            indexFiles == 0 -> stringResource(R.string.storage_index_empty)
-                            else -> stringResource(
-                                R.string.storage_index_summary,
-                                indexFiles!!,
-                                formatCacheSize(indexBytes),
-                            )
-                        },
-                        enabled = !clearingIndex && (indexFiles ?: 0) > 0,
-                        showChevron = !clearingIndex,
-                        loading = clearingIndex || indexing.isIndexing,
-                        onClick = { showClearIndexConfirm = true },
                     )
                     SettingsDivider()
                     SettingsActionRow(
@@ -521,23 +647,21 @@ private fun SettingsRoot(
         )
     }
 
-    if (showClearIndexConfirm) {
+    if (showRemoveModelConfirm) {
         ConfirmDialog(
-            title = stringResource(R.string.clear_index_confirm_title),
-            message = stringResource(R.string.clear_index_confirm_message),
-            confirmLabel = stringResource(R.string.action_clear),
-            destructive = false,
+            title = stringResource(R.string.content_model_remove_confirm_title),
+            message = stringResource(R.string.content_model_remove_confirm_message),
+            confirmLabel = stringResource(R.string.action_remove),
+            destructive = true,
             onConfirm = {
-                showClearIndexConfirm = false
-                clearingIndex = true
+                showRemoveModelConfirm = false
                 scope.launch {
-                    MetadataStore.clear(context)
-                    indexFiles = 0
-                    indexBytes = 0L
-                    clearingIndex = false
+                    SemanticModel.delete(context)
+                    SemanticIndexer.invalidate()
+                    GalleryEvents.requestReload()
                 }
             },
-            onDismiss = { showClearIndexConfirm = false },
+            onDismiss = { showRemoveModelConfirm = false },
         )
     }
 
@@ -555,6 +679,37 @@ private fun SettingsRoot(
                 }
             },
             onDismiss = { showClearHistoryConfirm = false },
+        )
+    }
+
+    if (showAcceleratorDialog) {
+        OptionPickerDialog(
+            title = stringResource(R.string.content_accelerator_title),
+            options = SemanticAccelerator.entries,
+            current = settings.semanticAccelerator,
+            labelRes = { it.labelRes },
+            onSelect = { accelerator ->
+                showAcceleratorDialog = false
+                SettingsRepository.setSemanticAccelerator(accelerator)
+                // The engine is bound to the backend it was created with; drop
+                // it so the next search/index pass starts on the new one.
+                scope.launch { GemmaEmbedder.close() }
+            },
+            onDismiss = { showAcceleratorDialog = false },
+        )
+    }
+
+    if (showIndexingDialog) {
+        OptionPickerDialog(
+            title = stringResource(R.string.content_indexing_title),
+            options = SemanticIndexing.entries,
+            current = settings.semanticIndexing,
+            labelRes = { it.labelRes },
+            onSelect = { policy ->
+                showIndexingDialog = false
+                SettingsRepository.setSemanticIndexing(policy)
+            },
+            onDismiss = { showIndexingDialog = false },
         )
     }
 

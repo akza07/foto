@@ -70,9 +70,12 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import fool.akza.foto.R
 import fool.akza.foto.data.MediaItem
-import fool.akza.foto.data.MetadataIndexer
-import fool.akza.foto.data.MetadataStore
 import fool.akza.foto.data.matchesAllTokens
+import fool.akza.foto.data.semantic.GemmaEmbedder
+import fool.akza.foto.data.semantic.PhotoVectorStore
+import fool.akza.foto.data.semantic.SemanticIndexer
+import fool.akza.foto.data.semantic.SemanticModel
+import fool.akza.foto.data.semantic.SemanticSearch
 import fool.akza.foto.data.tokenizeForSearch
 import fool.akza.foto.ui.theme.AmoledBlack
 import fool.akza.foto.ui.theme.Border
@@ -81,10 +84,10 @@ import fool.akza.foto.ui.theme.TextPrimary
 
 private val SearchGridSpacing = 8.dp
 
-/** Quiet period before a metadata query runs, so per-keystroke scans can't queue. */
-private const val SearchDebounceMs = 150L
+/** Quiet period before a content query runs, so per-keystroke embeds can't queue. */
+private const val SearchDebounceMs = 220L
 
-/** Quiet progress line: search results improve while the background pass runs. */
+/** Quiet progress line: results improve while the background pass runs. */
 @Composable
 private fun IndexingNotice(remaining: Int, total: Int) {
     Row(
@@ -109,11 +112,11 @@ private fun IndexingNotice(remaining: Int, total: Int) {
     }
 }
 
-/** One search result tile; metadata-only hits are marked so the match is clear. */
+/** One search result tile; [badge] marks a content-only hit. */
 @Composable
 private fun SearchHit(
     item: MediaItem,
-    metadataOnly: Boolean,
+    badge: String?,
     modifier: Modifier = Modifier,
     results: List<MediaItem>,
     keyboard: androidx.compose.ui.platform.SoftwareKeyboardController?,
@@ -133,7 +136,7 @@ private fun SearchHit(
                 onItemClick(results, results.indexOf(item), rect)
             },
         )
-        if (metadataOnly) {
+        if (badge != null) {
             // A quiet marker instead of a second row of text: the tile keeps its
             // 12dp corner language and nothing covers the photo.
             Box(
@@ -143,7 +146,7 @@ private fun SearchHit(
                     .padding(horizontal = 6.dp, vertical = 2.dp),
             ) {
                 Text(
-                    text = stringResource(R.string.search_metadata_badge),
+                    text = badge,
                     color = TextPrimary,
                     fontSize = 10.sp,
                     fontWeight = FontWeight.Medium,
@@ -161,15 +164,15 @@ private fun monthLabel(epochSeconds: Long, unknown: String): String {
 }
 
 /**
- * Flat search over the whole library. [items] is the full set of loaded media
+ * Search across the whole library. [items] is the full set of loaded media
  * (MediaStore + SAF-browsed), so results include content inside `.nomedia`
  * folders that MediaStore alone would miss.
  *
- * A hit is either a file name match or a metadata match: the background index
- * (see `MetadataIndexer`) stores each file's EXIF/PNG text, so queries like a
- * camera model, a lens, "ISO 400", a place or a PNG keyword find photos whose
- * names say nothing. Name hits keep the month grouping; metadata-only hits are
- * listed under their own header so it is obvious why they matched.
+ * Two signals feed one list: a forgiving file-name match, and content search
+ * from EmbeddingGemma 2 (everything the photo shows, not its EXIF). Content
+ * hits rank by semantic score and are marked so it is clear why they matched;
+ * name hits keep the month grouping. The on-device model is optional — without
+ * it search still works by name, with a pointer to install it.
  */
 @Composable
 fun SearchScreen(
@@ -191,23 +194,38 @@ fun SearchScreen(
     }
 
     val context = LocalContext.current
-    var metadataHits by remember { mutableStateOf<Set<String>>(emptySet()) }
+    val modelStatus by SemanticModel.status.collectAsState()
+    val engineError by GemmaEmbedder.error.collectAsState()
+    val indexProgress by SemanticIndexer.progress.collectAsState()
+    val vectorGeneration by PhotoVectorStore.generation.collectAsState()
 
-    // Indexing is background work; surface it and let results fill in as files
-    // are read rather than making the user retype the query later.
-    val indexProgress by MetadataIndexer.progress.collectAsState()
-    val indexGeneration by MetadataIndexer.generation.collectAsState()
+    LaunchedEffect(Unit) {
+        SemanticModel.refresh(context)
+    }
 
-    LaunchedEffect(query, indexGeneration) {
+    var contentHits by remember { mutableStateOf<List<MediaItem>>(emptyList()) }
+    var contentSearching by remember { mutableStateOf(false) }
+    val itemsByUri = remember(items) { items.associateBy { it.uri.toString() } }
+
+    // Content search re-runs when the query changes or the index grows, so
+    // results fill in instead of asking the user to retype the query.
+    LaunchedEffect(query, vectorGeneration, modelStatus.isReady) {
         val q = query.trim()
-        if (q.isEmpty()) {
-            metadataHits = emptySet()
+        // A single letter embeds to a meaningless anchor and makes every photo
+        // "match"; name search still covers that case.
+        if (q.length < 2 || !modelStatus.isReady) {
+            contentHits = emptyList()
+            contentSearching = false
             return@LaunchedEffect
         }
-        // Typing (or a batch of newly indexed files) can outpace a lookup; a
-        // short pause keeps one query in flight instead of a queue of them.
         delay(SearchDebounceMs)
-        metadataHits = MetadataStore.search(context, q)
+        contentSearching = true
+        try {
+            val hits = SemanticSearch.byText(context, q)
+            contentHits = hits.mapNotNull { itemsByUri[it.uri] }
+        } finally {
+            contentSearching = false
+        }
     }
 
     val trimmedQuery = query.trim()
@@ -216,26 +234,24 @@ fun SearchScreen(
         if (queryTokens.isEmpty()) {
             emptyList()
         } else {
-            // Same forgiving rules as the metadata index: any word order,
-            // prefixes and small typos, so "lighthosue" still finds
-            // "Lighthouse-at-dusk.png".
+            // Same forgiving rules as before: any word order, prefixes and
+            // small typos, so "lighthosue" still finds "Lighthouse-at-dusk.png".
             items.filter { item ->
                 item.displayName?.let { matchesAllTokens(queryTokens, tokenizeForSearch(it)) } == true
             }
         }
     }
-    val metadataOnlyResults = remember(items, metadataHits, nameResults) {
-        if (metadataHits.isEmpty()) {
+    val contentOnly = remember(contentHits, nameResults) {
+        if (contentHits.isEmpty()) {
             emptyList()
         } else {
             val named = nameResults.mapTo(HashSet()) { it.uri.toString() }
-            items
-                .filter { it.uri.toString() in metadataHits && it.uri.toString() !in named }
-                .sortedByDescending { it.dateAdded }
+            contentHits.filter { it.uri.toString() !in named }
         }
     }
-    // Combined list: the viewer pages through everything the query found.
-    val results = nameResults + metadataOnlyResults
+    // One list feeds the viewer, so swiping pages through everything the query
+    // found: content matches (ranked) first, then name matches.
+    val results = contentOnly + nameResults
     val unknownDateLabel = stringResource(R.string.search_unknown_date)
 
     FrostedHeaderScaffold(
@@ -314,7 +330,8 @@ fun SearchScreen(
         val bottomInset = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
         val state = when {
             query.isBlank() -> SearchState.Hint
-            results.isEmpty() -> SearchState.Empty
+            results.isEmpty() && !contentSearching -> SearchState.Empty
+            results.isEmpty() -> SearchState.Results
             else -> SearchState.Results
         }
         // Typing swaps three different layouts (hint, empty state, results).
@@ -330,7 +347,13 @@ fun SearchScreen(
             SearchState.Hint -> {
                 Box(modifier = contentModifier, contentAlignment = Alignment.Center) {
                     Text(
-                        text = stringResource(R.string.search_hint),
+                        text = stringResource(
+                            when {
+                                engineError != null -> R.string.search_hint_backend_error
+                                modelStatus.isReady -> R.string.search_hint
+                                else -> R.string.search_hint_offline
+                            },
+                        ),
                         color = TextMuted,
                         fontSize = 14.sp,
                         textAlign = TextAlign.Center,
@@ -343,10 +366,15 @@ fun SearchScreen(
             SearchState.Empty -> {
                 Box(modifier = contentModifier, contentAlignment = Alignment.Center) {
                     Text(
-                        text = if (indexProgress.isIndexing) {
-                            stringResource(R.string.search_no_results_indexing, indexProgress.remaining)
-                        } else {
-                            stringResource(R.string.search_no_results)
+                        text = when {
+                            engineError != null ->
+                                stringResource(R.string.search_no_results_backend_error)
+                            indexProgress.isIndexing -> stringResource(
+                                R.string.search_no_results_indexing,
+                                indexProgress.remaining,
+                            )
+                            !modelStatus.isReady -> stringResource(R.string.search_no_results_offline)
+                            else -> stringResource(R.string.search_no_results)
                         },
                         color = TextMuted,
                         fontSize = 14.sp,
@@ -376,11 +404,44 @@ fun SearchScreen(
                         contentType = "caption",
                     ) {
                         Text(
-                            text = stringResource(R.string.search_scope),
+                            text = stringResource(
+                                if (modelStatus.isReady) {
+                                    R.string.search_scope_content
+                                } else {
+                                    R.string.search_scope
+                                },
+                            ),
                             color = TextMuted,
                             fontSize = 13.sp,
                             modifier = Modifier.padding(start = 4.dp, top = 4.dp),
                         )
+                    }
+                    if (contentSearching && results.isEmpty()) {
+                        item(
+                            key = "search-content-searching",
+                            span = { GridItemSpan(maxLineSpan) },
+                            contentType = "notice",
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(start = 4.dp, top = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(12.dp),
+                                    strokeWidth = 1.5.dp,
+                                    color = TextMuted,
+                                    trackColor = Border,
+                                )
+                                Spacer(Modifier.width(8.dp))
+                                Text(
+                                    text = stringResource(R.string.search_content_searching),
+                                    color = TextMuted,
+                                    fontSize = 13.sp,
+                                )
+                            }
+                        }
                     }
                     if (indexProgress.isIndexing) {
                         item(
@@ -391,8 +452,57 @@ fun SearchScreen(
                             IndexingNotice(indexProgress.remaining, indexProgress.total)
                         }
                     }
-                    // Name hits first, grouped by month so long result sets
-                    // stay navigable.
+
+                    // Content hits first: they are the reason this search can
+                    // find a photo whose name says nothing.
+                    if (contentOnly.isNotEmpty()) {
+                        item(
+                            key = "header:content",
+                            span = { GridItemSpan(maxLineSpan) },
+                            contentType = "month",
+                        ) {
+                            AnimatedContent(
+                                targetState = contentOnly.size,
+                                transitionSpec = {
+                                    fadeIn(tween(160)) togetherWith fadeOut(tween(100))
+                                },
+                                label = "content-count",
+                            ) { count ->
+                                Text(
+                                    text = stringResource(R.string.search_content_header, count),
+                                    color = TextPrimary,
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    modifier = Modifier
+                                        .animateItem()
+                                        .padding(start = 4.dp, top = 12.dp, bottom = 2.dp),
+                                )
+                            }
+                        }
+                        items(
+                            contentOnly,
+                            key = { "content:${it.uri}" },
+                        ) { item ->
+                            SearchHit(
+                                item = item,
+                                badge = stringResource(R.string.search_content_badge),
+                                modifier = Modifier.animateItem(
+                                    fadeInSpec = tween(180),
+                                    fadeOutSpec = tween(140),
+                                    placementSpec = spring(
+                                        stiffness = Spring.StiffnessMediumLow,
+                                    ),
+                                ),
+                                results = results,
+                                keyboard = keyboard,
+                                onItemClick = onItemClick,
+                                onTilePositioned = onTilePositioned,
+                                onTileDisposed = onTileDisposed,
+                            )
+                        }
+                    }
+
+                    // Name hits grouped by month so long result sets stay navigable.
                     nameResults
                         .groupBy { monthLabel(it.dateAdded, unknownDateLabel) }
                         .forEach { (label, group) ->
@@ -414,7 +524,7 @@ fun SearchScreen(
                             items(group, key = { "search:${it.uri}" }) { item ->
                                 SearchHit(
                                     item = item,
-                                    metadataOnly = false,
+                                    badge = null,
                                     modifier = Modifier.animateItem(
                                         fadeInSpec = tween(180),
                                         fadeOutSpec = tween(140),
@@ -430,72 +540,6 @@ fun SearchScreen(
                                 )
                             }
                         }
-
-                    // Files whose name doesn't match but whose metadata does.
-                    if (metadataOnlyResults.isNotEmpty()) {
-                        item(
-                            key = "header:metadata",
-                            span = { GridItemSpan(maxLineSpan) },
-                            contentType = "month",
-                        ) {
-                            // The count grows while the background pass runs, so
-                            // it fades between values instead of flickering.
-                            AnimatedContent(
-                                targetState = metadataOnlyResults.size,
-                                transitionSpec = {
-                                    fadeIn(tween(160)) togetherWith fadeOut(tween(100))
-                                },
-                                label = "metadata-count",
-                            ) { count ->
-                                Text(
-                                    text = stringResource(R.string.search_metadata_header, count),
-                                    color = TextPrimary,
-                                    fontSize = 13.sp,
-                                    fontWeight = FontWeight.SemiBold,
-                                    modifier = Modifier
-                                        .animateItem()
-                                        .padding(start = 4.dp, top = 16.dp, bottom = 2.dp),
-                                )
-                            }
-                        }
-                        metadataOnlyResults
-                            .groupBy { monthLabel(it.dateAdded, unknownDateLabel) }
-                            .forEach { (label, group) ->
-                                item(
-                                    key = "header:meta:$label",
-                                    span = { GridItemSpan(maxLineSpan) },
-                                    contentType = "month",
-                                ) {
-                                    Text(
-                                        text = label,
-                                        color = TextMuted,
-                                        fontSize = 13.sp,
-                                        fontWeight = FontWeight.SemiBold,
-                                        modifier = Modifier
-                                            .animateItem()
-                                            .padding(start = 4.dp, top = 8.dp, bottom = 2.dp),
-                                    )
-                                }
-                                items(group, key = { "search:${it.uri}" }) { item ->
-                                    SearchHit(
-                                        item = item,
-                                        metadataOnly = true,
-                                        modifier = Modifier.animateItem(
-                                            fadeInSpec = tween(180),
-                                            fadeOutSpec = tween(140),
-                                            placementSpec = spring(
-                                                stiffness = Spring.StiffnessMediumLow,
-                                            ),
-                                        ),
-                                        results = results,
-                                        keyboard = keyboard,
-                                        onItemClick = onItemClick,
-                                        onTilePositioned = onTilePositioned,
-                                        onTileDisposed = onTileDisposed,
-                                    )
-                                }
-                            }
-                    }
                 }
             }
         }

@@ -23,8 +23,8 @@ android {
         targetSdk = 37
         // Date-based versioning (see AGENTS.md): YYMMDD * 100 + daily build
         // number (00 for the first build of the day).
-        versionCode = 26110205
-        versionName = "2026.11.02-r6"
+        versionCode = 26111722
+        versionName = "2026.11.17-r23"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -57,6 +57,18 @@ android {
             optimization {
                 enable = true
             }
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro",
+            )
+        }
+        debug {
+            // LiteRT-LM ships both ABIs; keep x86_64 in debug so the semantic
+            // pipeline can be exercised in the emulator. Release stays arm64.
+            ndk {
+                abiFilters.clear()
+                abiFilters += listOf("arm64-v8a", "x86_64")
+            }
         }
     }
     buildFeatures {
@@ -87,6 +99,15 @@ dependencies {
     implementation(libs.haze)
     implementation(libs.media3.exoplayer)
     implementation(libs.media3.ui.compose)
+
+    // Fully offline content search: EmbeddingGemma 2 on LiteRT-LM, vectors in
+    // AndroidX AppSearch's on-device local storage.
+    implementation(libs.litertlm.android)
+    implementation(libs.androidx.appsearch)
+    implementation(libs.androidx.appsearch.local.storage)
+    implementation(libs.androidx.concurrent.futures.ktx)
+    implementation(libs.guava.listenablefuture)
+
     debugImplementation(libs.androidx.compose.ui.tooling)
 
     testImplementation(libs.junit)

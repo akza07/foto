@@ -20,6 +20,8 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
@@ -252,5 +254,67 @@ fun SettingsActionRow(
                 }
             }
         }
+    }
+}
+
+/**
+ * Continuous value row for settings that want a direct drag instead of a
+ * choices dialog (e.g. the viewer's action-wheel hold duration). The current
+ * value is shown as a trailing readout, and the track uses the app's palette.
+ */
+@Composable
+fun SettingsSliderRow(
+    title: String,
+    subtitle: String? = null,
+    value: Float,
+    valueRange: ClosedFloatingPointRange<Float>,
+    steps: Int = 0,
+    valueLabel: String,
+    onValueChange: (Float) -> Unit,
+    onValueChangeFinished: () -> Unit = {},
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 14.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = title,
+                    color = TextPrimary,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.Medium,
+                )
+                if (subtitle != null) {
+                    Spacer(Modifier.height(2.dp))
+                    Text(
+                        text = subtitle,
+                        color = TextMuted,
+                        fontSize = 13.sp,
+                        lineHeight = 18.sp,
+                    )
+                }
+            }
+            Spacer(Modifier.width(12.dp))
+            Text(
+                text = valueLabel,
+                color = TextMuted,
+                fontSize = 13.sp,
+            )
+        }
+        Spacer(Modifier.height(8.dp))
+        Slider(
+            value = value,
+            onValueChange = onValueChange,
+            valueRange = valueRange,
+            steps = steps,
+            onValueChangeFinished = onValueChangeFinished,
+            colors = SliderDefaults.colors(
+                thumbColor = TextPrimary,
+                activeTrackColor = TextPrimary,
+                inactiveTrackColor = Border,
+            ),
+        )
     }
 }

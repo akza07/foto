@@ -18,7 +18,6 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.foundation.gestures.awaitLongPressOrCancellation
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.rememberTransformableState
 import androidx.compose.foundation.gestures.transformable
@@ -72,6 +71,8 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.AwaitPointerEventScope
 import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.PointerId
+import androidx.compose.ui.input.pointer.PointerInputChange
 import androidx.compose.ui.input.pointer.PointerInputScope
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.util.VelocityTracker
@@ -112,6 +113,7 @@ import fool.akza.foto.ui.theme.TextPrimary
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.math.roundToInt
 
 private val MoreMenuShape = RoundedCornerShape(16.dp)
@@ -255,13 +257,50 @@ internal suspend fun PointerInputScope.detectVerticalSwipe(
 }
 
 /** Consume every remaining change for [pointerId] until it lifts. */
-private suspend fun AwaitPointerEventScope.drainUntilUp(pointerId: androidx.compose.ui.input.pointer.PointerId) {
+private suspend fun AwaitPointerEventScope.drainUntilUp(pointerId: PointerId) {
     while (true) {
         val event = awaitPointerEvent(PointerEventPass.Initial)
         val change = event.changes.firstOrNull { it.id == pointerId } ?: break
         change.consume()
         if (!change.pressed) break
     }
+}
+
+/**
+ * Long-press detector with a caller-supplied hold duration. Compose's
+ * `awaitLongPressOrCancellation` hardcodes the platform timeout, so this mirrors
+ * its logic (cancel on lift or movement beyond touch slop) but races the events
+ * against [timeoutMs] to make the wheel's activation time configurable.
+ */
+private suspend fun AwaitPointerEventScope.awaitLongPressWithTimeout(
+    pointerId: PointerId,
+    timeoutMs: Long,
+): PointerInputChange? {
+    if (currentEvent.changes.firstOrNull { it.id == pointerId }?.pressed != true) return null
+    val touchSlop = viewConfiguration.touchSlop
+    var pressPosition = currentEvent.changes.firstOrNull { it.id == pointerId }?.position
+        ?: return null
+    var lastChange: PointerInputChange? =
+        currentEvent.changes.firstOrNull { it.id == pointerId }?.takeIf { it.pressed }
+    var cancelled = false
+
+    withTimeoutOrNull(timeoutMs) {
+        while (true) {
+            val event = awaitPointerEvent()
+            val change = event.changes.firstOrNull { it.id == pointerId }
+            if (change == null || !change.pressed ||
+                (change.position - pressPosition).getDistance() > touchSlop
+            ) {
+                cancelled = true
+                return@withTimeoutOrNull
+            }
+            pressPosition = change.position
+            lastChange = change
+        }
+    }
+    // A null result from withTimeoutOrNull means the hold elapsed (the loop only
+    // returns Unit on cancellation, tracked by [cancelled]).
+    return if (cancelled) null else lastChange
 }
 
 /**
@@ -295,6 +334,8 @@ fun FullImageViewer(
     onCrop: (MediaItem) -> Unit,
     onWallpaper: (MediaItem) -> Unit,
     loopVideos: Boolean = false,
+    /** Hold duration in ms before the radial action wheel opens. */
+    wheelActivationDelayMs: Long = 400L,
     /** Whether the wheel offers Share. */
     shareEnabled: Boolean = true,
     /** View/play only: no action wheel, delete, share, info, crop or wallpaper. */
@@ -714,13 +755,17 @@ fun FullImageViewer(
             // longer owns a long-press of its own, so this detector serves
             // images and videos alike; opening the wheel pauses video so the
             // action applies to a frozen frame (no auto-resume).
-            .pointerInput(leaving, multiTouchActive, removing, previewOnly, moreMenuVisible) {
+            .pointerInput(
+                leaving, multiTouchActive, removing, previewOnly, moreMenuVisible,
+                wheelActivationDelayMs,
+            ) {
                 if (previewOnly || leaving || multiTouchActive || removing || moreMenuVisible) {
                     return@pointerInput
                 }
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false)
-                    val longPress = awaitLongPressOrCancellation(down.id) ?: return@awaitEachGesture
+                    val longPress = awaitLongPressWithTimeout(down.id, wheelActivationDelayMs)
+                        ?: return@awaitEachGesture
                     haptics.performHapticFeedback(HapticFeedbackType.LongPress)
                     // Freeze the sector set for this gesture: a swipe across a
                     // page boundary mid-press must not remap the wheel under it.
