@@ -28,13 +28,13 @@ in favour of content search.
 
 | Piece | Choice |
 |---|---|
-| Model | `embeddinggemma-2-text-vision-440m.litertlm` (440M text+vision, 768-D, Matryoshka 256-D) |
+| Model | `embeddinggemma-2-text-vision-440m.litertlm` (440M text+vision, 768-D) |
 | Runtime | `com.google.ai.edge.litertlm:litertlm-android:0.19.1` |
 | Vector store | `androidx.appsearch:appsearch:1.1.0` + `appsearch-local-storage` |
 | Search expression | `semanticSearch(getEmbeddingParameter(0), min, 1.0, "COSINE")` |
 | Schema | hand-built `AppSearchSchema` (no KSP / `@Document` processor) |
-| Vector size | 256 floats, L2-normalised |
-| Model signature | `embeddinggemma-2-tv-440m-256d` |
+| Vector size | 768 floats, L2-normalised |
+| Model signature | `embeddinggemma-2-tv-440m-768d-vt140-s512` |
 
 Kotlin is raised to **2.4.21** via a KGP classpath override because LiteRT-LM
 0.19.1 ships Kotlin 2.4 metadata (AGP 9's built-in Kotlin is 2.2.10).
@@ -54,8 +54,8 @@ data/semantic/
 ├── GemmaEmbedder.kt      LiteRT-LM engine lifecycle, backend cascade, embeddings
 ├── PhotoVectorStore.kt   AppSearch schema, put/remove/search, in-memory mirror
 ├── SemanticIndexer.kt    Incremental library pass, progress, pacing, resume
-├── SemanticSearch.kt     Text query facade + score-margin filtering
-├── SemanticScoring.kt    Pure cosine / nearest-best helpers (unit tested)
+├── SemanticSearch.kt     Query normalization/expansion + confidence-gated ranking
+├── SemanticScoring.kt    Cosine, z-score stats, margin filtering (unit tested)
 └── SemanticUtil.kt       Cancellation-safe runCatching
 
 ui/
@@ -118,16 +118,24 @@ search/index initialises the selected backend.
 - Text queries use the EmbeddingGemma 2 retrieval prompt:
   `task: search result | query: <query>` (EmbeddingGemma 1's
   `task: search query | text:` format is not used).
-- Embeddings are 256-D, L2-normalised (`outputSize = 256`, `normalize = true`).
-- `visionTokensPerImage = 70` and `maxInputLength = 256` keep the runtime's GPU
-  buffers small.
+- Embeddings are the full **768-D** output, L2-normalised
+  (`outputSize = 768`, `normalize = true`). The earlier 256-D Matryoshka slice
+  saved index space but discarded the attribute dimensions that separate
+  "blue shirt" from a generally blue photo.
+- `visionTokensPerImage = 140` preserves small objects and clothing attributes.
+  Note that the runtime normalizes an image to the token-derived patch budget: a
+  512 px source is upscaled (a 512×384 test image became 624×480 / ~1170
+  patches), so the 512 px pre-scale does **not** by itself lower the peak GPU
+  buffer size at 140 tokens — it only avoids feeding larger images. Peak memory
+  is bounded over time by the 90 s idle release, the resource backoff and the
+  explicit indexing policy. `maxInputLength = 256` bounds the text-side buffers.
 
 ### Memory lifecycle
 
 - Inference runs at `THREAD_PRIORITY_BACKGROUND`.
 - The engine is closed **90 s after the last embedding**. This returns the
-  vision encoder's GPU memory (~1 GB on the test device) to the system instead
-  of holding it for the whole process lifetime.
+  vision encoder's GPU buffers (hundreds of MB to ~1 GB depending on the token
+  budget) to the system instead of holding them for the whole process lifetime.
 
 ### Why no NPU
 
@@ -148,14 +156,18 @@ and **CPU**, and the row explains that NPU is unavailable for this model/chip.
 
 ## 6. Vector index (AppSearch)
 
-Schema `FotoPhotoVector` in DB `foto_semantic`:
+Schema `FotoPhotoVector` in DB `foto_semantic_v2`:
 
 | Property | Type | Indexing |
 |---|---|---|
 | `uri` | String | none |
 | `stamp` | String | none |
 | `addedAt` | Long | none |
-| `embedding` | Embedding (256-D) | `INDEXING_TYPE_SIMILARITY`, no quantisation |
+| `embedding` | Embedding (768-D) | `INDEXING_TYPE_SIMILARITY`, no quantisation |
+
+The dimension switch uses a **new database name**. AppSearch fixes the embedding
+dimension per property, so a 256-D index cannot be upgraded in place; the old
+database is simply abandoned and the new `stamp` config id re-embeds every photo.
 
 - Document id = photo URI.
 - `putAll` batches 8 embeddings.
@@ -168,19 +180,35 @@ Schema `FotoPhotoVector` in DB `foto_semantic`:
 
 ### Text search
 
-1. Embed the query, then run the AppSearch cosine query with a permissive
-   provider floor (`0.15`).
-2. Recompute the exact cosine from the returned embeddings (the stored vector is
-   already in the document).
-3. Keep results within **0.05 of the best score** (`SemanticScoring.nearestBest`),
-   capped at 60.
+1. Normalize the query (see below), then embed it.
+2. Run the AppSearch cosine query with a permissive provider floor (`0.15`) to
+   get a real distribution of candidates.
+3. Recompute the exact cosine from the returned embeddings.
+4. **Confidence gate** (`SemanticScoring.stats` / `nearestBest`): compute the
+   candidate mean and standard deviation and reject the whole result set when
+   the top score is below `mean + 1.75·stdDev` or below `0.60`. For candidate
+   sets under 20, a clear gap over the mean (`top >= mean + 0.03`) is also
+   accepted, because the z-test is unstable when several candidates are true
+   matches (a 10-photo library with three sunsets otherwise looks "flat").
+5. Keep results within **0.05 of the best score**, capped at 60.
 
-The margin is deliberate: text/image scores on this model are compressed (a good
-match ≈ 0.70–0.80, unrelated photos still ≈ 0.60), so a fixed cutoff either
-leaks the library or cuts a good set short.
+#### Query normalization / visual phrase expansion
+
+`SemanticSearch.normalizeQuery` runs before the task prefix is added:
+
+- camelCase boundaries become spaces (`BlueShirt` → `Blue Shirt`),
+- simple colour+object concatenations are split (`blueshirt` → `blue shirt`),
+- whitespace is trimmed and collapsed,
+- **1–2 word** queries become a visual phrase (`sunset` → `a photo of sunset`,
+  `blue shirt` → `a photo of blue shirt`); **3+ word** queries are already
+  descriptive and pass through unchanged.
+
+The EmbeddingGemma prefix stays `task: search result | query: ` and is applied by
+`GemmaEmbedder`.
 
 `FotoSemantic` debug logging (`adb shell setprop log.tag.FotoSemantic DEBUG`)
-prints the top scores for threshold tuning.
+prints `top`, `mean`, `std`, `threshold`, `confident`, and the raw/normalized
+query for calibration.
 
 ---
 
@@ -260,26 +288,36 @@ for large libraries. This can be revisited if libraries grow much larger.
 
 ## 10. Measured on the iQOO (MT6896Z)
 
-First pass: **291 photos**, model already imported.
+First pass: **291 photos**, model already imported. Only the middle column was
+measured on-device; the 140-token / 768-D build is the current configuration and
+still needs a device pass.
 
-| | Original tuning | Current tuning |
-|---|---|---|
-| Image input | 768 px | **512 px** |
-| Vision tokens | 140 | **70** |
-| Patches / image | ~1071–1170 | **~540** |
-| Runtime signature | `vision_140` | **`vision_70` → `LITERT_CL` (OpenCL)** |
-| GPU memory (`GL mtrack`) | ~2.05 GB | **~1.03 GB** |
-| Native heap | ~164 MB | ~73 MB after idle release |
-| Throughput | ~1.7 s/photo | **~1.1 s/photo** |
-| After 90 s idle | engine held | **121 MB GL, engine closed** |
+| | Original (768 px / 140 tok / 256-D) | Measured (512 px / 70 tok / 256-D) | Current (512 px / 140 tok / 768-D) |
+|---|---|---|---|
+| Image input | 768 px | 512 px | 512 px |
+| Vision tokens | 140 | 70 | **140** |
+| Patches / image | ~1071–1170 | ~540 | **~1170** (140-token budget; smaller input is upscaled) |
+| Runtime signature | `vision_140` | `vision_70` → `LITERT_CL` (OpenCL) | `vision_140` → OpenCL |
+| GPU memory (`GL mtrack`) | ~2.05 GB | ~1.03 GB | not yet measured; peak is set by the 140-token buffers |
+| Native heap | ~164 MB | ~73 MB after idle release | same lifecycle |
+| Throughput | ~1.7 s/photo | ~1.1 s/photo | not yet measured |
+| After 90 s idle | engine held | 121 MB GL, engine closed | engine closed |
 
-The earlier settings pushed the 7.6 GB phone into ~2.5–2.8 GB of swap, which is
-what made the whole device lag. The current pass is bounded, paced, memory-aware
-and releases the runtime when idle.
+The 768 px / 140-token settings pushed the 7.6 GB phone into ~2.5–2.8 GB of
+swap, which is what made the whole device lag. The current 140-token build has
+the same ~1170-patch budget, but `maxInputLength = 256` (instead of the default
+long-text signatures), the 90 s idle release, pacing and resource backoff bound
+how long the buffers are held and how hard the pass pushes the device. If peak
+GPU memory matters more than small-attribute detail, the practical alternatives
+are 70 vision tokens (bounded at ~630 patches) or the explicit CPU accelerator —
+512 px alone does not reduce the 140-token patch count.
 
-Real-library quality checks: "receipt" returned the paper receipts first, then
-document/ticket screenshots; "sunset" returned the sunset shots; "a photo from
-inside a house" returned the indoor photo first.
+Real-library quality checks (at 70 tokens / 256-D): "receipt" returned the paper
+receipts first, then document/ticket screenshots; "sunset" returned the sunset
+shots; "a photo from inside a house" returned the indoor photo first. The
+140-token / 768-D build is expected to improve attribute queries such as
+"blueshirt"; the z-score gate is there to reject them when the library has no
+real match.
 
 ---
 
@@ -292,8 +330,10 @@ inside a house" returned the indoor photo first.
   photos.
 - **800-photo cap per pass**: the newest 800 photos are indexed. Older ones can
   be added by raising `MaxPhotosPerPass`.
-- **Thresholds are heuristic** until calibrated on a larger real library; the
-  debug score log exists for that.
+- **Thresholds are heuristic** until calibrated on a larger real library: a
+  1.75σ confidence gate, a 0.60 top-score floor, a 0.03 gap gate for small
+  candidate sets (<20), and a 0.05 margin. The `FotoSemantic` debug log prints
+  the distribution for tuning.
 - **Re-encoded image input** (512 px JPEG) can hurt tiny-text retrieval compared
   with the original bytes, but it is what keeps memory/GPU use sane on mobile.
 - **Model file is not in the repo**; it is imported on-device and is ~388 MB.
@@ -318,4 +358,4 @@ Release artifacts (main branch):
 - `apk-output/foto-arm64-android16-release.apk`
 - `/media/XYZ/DiffusionArt/foto-arm64-android16-release.apk`
 
-Current version: **2026.11.17-r23**, `versionCode 26111722`.
+Current version: **2026.11.17-r24**, `versionCode 26111723`.

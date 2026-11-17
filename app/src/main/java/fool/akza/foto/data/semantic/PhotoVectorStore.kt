@@ -45,7 +45,7 @@ data class VectorHit(val id: String, val uri: String, val addedAt: Long, val sco
  */
 object PhotoVectorStore {
 
-    private const val DB_NAME = "foto_semantic"
+    private const val DB_NAME = "foto_semantic_v2"
     private const val NAMESPACE = "photos"
     private const val SCHEMA = "FotoPhotoVector"
     private const val PROP_URI = "uri"
@@ -54,8 +54,10 @@ object PhotoVectorStore {
     private const val PROP_VECTOR = "embedding"
 
     /** Changes when the model family/dimension changes, so old vectors never
-     *  match a query from a different embedding space. */
-    const val MODEL_SIGNATURE = "embeddinggemma-2-tv-440m-256d"
+     *  match a query from a different embedding space. The 768-D switch uses a
+     *  fresh database because AppSearch fixes the dimension per embedding
+     *  property; a mixed-dimension index would reject writes. */
+    const val MODEL_SIGNATURE = "embeddinggemma-2-tv-440m-768d-vt140-s512"
 
     private val mutex = Mutex()
     private var session: AppSearchSession? = null

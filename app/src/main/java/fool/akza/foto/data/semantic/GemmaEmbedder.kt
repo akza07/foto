@@ -47,24 +47,27 @@ import kotlin.math.sqrt
  */
 object GemmaEmbedder {
 
-    /** Matryoshka truncation: 768 → 256 dims, 3x smaller index and queries. */
-    const val DIM = 256
+    /** Full 768-D embedding. The 256-D Matryoshka slice saved index space but
+     *  dropped the attribute dimensions that separate "blue shirt" from a
+     *  generally blue photo. */
+    const val DIM = 768
 
     /** Bump when the image/vision settings below change: stored vectors then
-     *  carry a different stamp and are rebuilt with the new encoder settings. */
-    const val EmbeddingConfigId = "tv440-v70-s512"
+     *  carry a different stamp, and a new dimension also gets its own AppSearch
+     *  database, so old vectors never mix with a new embedding space. */
+    const val EmbeddingConfigId = "embeddinggemma-2-tv-440m-768d-vt140-s512"
 
     private const val TAG = "GemmaEmbedder"
 
-    /** The vision encoder patchifies at 16px. 768px was producing ~1100 patches
-     *  and ~2 GB of GPU buffers on a Dimensity 8000, which made the whole phone
-     *  swap. 512px keeps the scene semantics that search/grouping need while
-     *  cutting patches (and GPU memory) by roughly 2.3x. */
+    /** The vision encoder patchifies at 16px. 768px produced ~1100 patches and
+     *  ~2 GB of GPU buffers on a Dimensity 8000, which made the phone swap.
+     *  512px keeps patches near 540, so the larger 140-token budget still stays
+     *  far below the original memory spike while preserving fine detail. */
     private const val ImageMaxDimension = 512
 
-    /** 140 vs 70 soft tokens: 70 halves the vision-to-text attention work and is
-     *  enough for gallery retrieval. */
-    private const val VisionTokensPerImage = 70
+    /** 140 soft tokens preserve small objects and clothing attributes; the 512px
+     *  bound above is what keeps the vision patch count (and GPU memory) down. */
+    private const val VisionTokensPerImage = 140
 
     /** EmbeddingGemma 2 retrieval prompt. (EmbeddingGemma 1 used
      *  `task: search query | text:`; that format is wrong for this model.) */
